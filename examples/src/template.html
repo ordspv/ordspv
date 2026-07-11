@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>verify inscription 0 in your browser</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #ffffff; --dim: #666; --line: #e2e2e2;
+    --pass: #0a7d33; --fail: #b3261e; --accent: #f7931a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --bg: #131313; --dim: #9a9a9a; --line: #2c2c2c;
+            --pass: #4cc272; --fail: #ff6b61; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 44rem; padding: 2.5rem 1.25rem 4rem;
+         font: 16px/1.55 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.55rem; margin: 0 0 .4rem; }
+  h1 b { color: var(--accent); }
+  p.lede { color: var(--dim); margin: 0 0 1.6rem; }
+  button { font: inherit; padding: .55rem 1.1rem; border-radius: .5rem; cursor: pointer;
+           border: 1px solid var(--line); background: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: wait; }
+  ol#steps { list-style: none; padding: 0; margin: 1.5rem 0; }
+  .step { display: flex; gap: .7rem; padding: .6rem .2rem; border-bottom: 1px solid var(--line); }
+  .step .mark { width: 1.4rem; flex: none; text-align: center; font-weight: 700; }
+  .step.pass .mark { color: var(--pass); }
+  .step.fail .mark { color: var(--fail); }
+  .step .title { font-weight: 600; }
+  .step .detail { color: var(--dim); font-size: .86rem; overflow-wrap: anywhere; }
+  .card { display: flex; gap: 1.2rem; align-items: flex-start; border: 1px solid var(--line);
+          border-radius: .75rem; padding: 1rem; margin-top: 1.4rem; }
+  .card img { width: 128px; image-rendering: pixelated; border-radius: .4rem; flex: none; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .15rem .8rem; font-size: .88rem; }
+  dt { color: var(--dim); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .mono { font-family: ui-monospace, monospace; font-size: .82rem; }
+  .note, .failnote { font-size: .85rem; color: var(--dim); margin-top: 1.1rem; }
+  .failnote { color: var(--fail); font-weight: 600; }
+  footer { margin-top: 2.5rem; font-size: .8rem; color: var(--dim); border-top: 1px solid var(--line); padding-top: .9rem; }
+  a { color: inherit; }
+</style>
+<body>
+  <h1>Verify a Bitcoin inscription — <b>in this browser</b></h1>
+  <p class="lede">
+    This page fetches inscription 0 from public Bitcoin data sources and
+    cryptographically verifies every byte client-side: transaction hashing,
+    merkle inclusion against a proof-of-work-checked header, and the BIP-341
+    tapscript commitment. The servers are treated as untrusted. No backend, no
+    build step — view source; the single trust anchor is one pinned block hash
+    you can check against any explorer.
+  </p>
+  <button id="run">Fetch &amp; verify inscription 0</button>
+  <ol id="steps"></ol>
+  <div id="result"></div>
+  <footer>
+    Verification levels, proof format, and the resolver library live in the
+    ord-resolver repository (placeholder name — see SPEC-VERIFICATION for L0–L3).
+    Static page; works offline-from-file. Data sources: mempool.space,
+    blockstream.info (failover).
+  </footer>
+  <script>
+/*BUNDLE*/
+  </script>
+</body>
+</html>
