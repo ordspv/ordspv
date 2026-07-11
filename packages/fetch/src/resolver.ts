@@ -67,6 +67,13 @@ export interface ResolveResult {
   contentType?: string;
   /** on-chain content-encoding, if the body is still encoded */
   contentEncoding?: string;
+  /**
+   * tag-9 content-encoding declared by the SERVED source's envelope, from the
+   * envelope parse (attestation-grade — transport headers are ambiguous through
+   * CDNs). Unlike `contentEncoding` it survives decoding; only set on verified
+   * paths, where the envelope was actually parsed.
+   */
+  storedContentEncoding?: string;
   /** true when the resolver decoded the on-chain content-encoding */
   decoded: boolean;
   verification: Verification;
@@ -197,9 +204,10 @@ export class OrdResolver {
     const stored = source.body;
     this.checkIntegrity(parsed, stored);
 
+    const storedContentEncoding = source.contentEncoding;
     let body = stored;
     let decoded = false;
-    let contentEncoding = source.contentEncoding;
+    let contentEncoding = storedContentEncoding;
     if (contentEncoding) {
       const attempt = await this.decompressor(contentEncoding, stored);
       if (attempt) {
@@ -214,6 +222,7 @@ export class OrdResolver {
       body,
       contentType: source.contentType,
       contentEncoding,
+      storedContentEncoding,
       decoded,
       inscription,
       viaDelegate,
@@ -332,6 +341,11 @@ export function toResponse(result: ResolveResult): Response {
   const headers = new Headers();
   headers.set('content-type', result.contentType ?? 'application/octet-stream');
   if (result.contentEncoding) headers.set('content-encoding', result.contentEncoding);
+  // attestation: the envelope's tag-9 encoding, NEVER copied from transport
+  // headers (SPEC-GATEWAY §5 — Content-Encoding is ambiguous through CDNs)
+  if (result.storedContentEncoding) {
+    headers.set('x-ord-content-encoding', result.storedContentEncoding);
+  }
   headers.set('x-ord-verification', result.verification.level);
   if (result.verification.blockHash) headers.set('x-ord-block', result.verification.blockHash);
   if (result.verification.height !== undefined) {

@@ -244,6 +244,19 @@ one ~1.3 KB bundle instead of a megabyte block download.
 - IPFS specifics worth copying: trustless-gateway's explicit dual signaling
   (Accept + `?format=`), immutable cache semantics, subdomain-gateway origin isolation
   for active HTML content, verified-fetch's `fetch()`-shaped API.
+- **ordpool-parser** ([ordpool-space/ordpool-parser](https://github.com/ordpool-space/ordpool-parser),
+  TypeScript, powers ordpool.space) is the closest envelope-parsing prior art: it
+  decodes inscriptions (plus runes/atomicals/src-20) straight from transaction hex in
+  the browser, and its published test vectors for exotic shapes (multi-input reveals,
+  >520-byte chunked metadata, brotli/gzip content-encoding) seeded this repo's
+  extended fixture corpus — see `scripts/parity-sweep.ts`. The differentiation is
+  scope: ordpool-parser answers *"what does this transaction say?"* (display-grade
+  parsing of bytes you already trust), while this repo answers *"prove these bytes
+  are the inscription"* — consensus-serialization txid/wtxid recomputation, BIP-341
+  commitment checks, merkle inclusion against a PoW-checked header (L2/L3 proof
+  bundles), and byte-level ord-corpus parity locks on the parser itself. Parsing is
+  the shared substrate; PoW-bound verification is the layer ordpool-parser doesn't
+  attempt and this repo exists to provide.
 
 **Decision:** canonical scheme = upstream's `ord:<id>` with upstream's undelegated
 referent (don't fork the ecosystem over slashes); accept `ord://` as a compatibility

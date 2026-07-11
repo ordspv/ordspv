@@ -10,7 +10,7 @@ import {
   verifyProofBundle,
   type ProofBundleJson,
 } from '@ord-resolver/core';
-import { OrdResolver, nodeDecompressor } from '../src/index.js';
+import { OrdResolver, nodeDecompressor, toResponse } from '../src/index.js';
 import type { FetchFn } from '../src/backends.js';
 
 /**
@@ -188,10 +188,16 @@ describe('OrdResolver offline against extended bundles', () => {
     const result = await resolver.resolve(`ord:${IDS.brotli}`);
     expect(result.decoded).toBe(true);
     expect(result.contentEncoding).toBeUndefined();
+    // the tag-9 attestation survives decoding (SPEC-GATEWAY §5)
+    expect(result.storedContentEncoding).toBe('br');
     expect(result.body.length).toBeGreaterThan(summary.bodyLength!);
     // integrity pins hash STORED bytes, not decoded bytes
     expect(result.verification.bodySha256).toBe(summary.bodySha256);
     expect(result.contentType).toBe('text/javascript');
+
+    const response = toResponse(result);
+    expect(response.headers.get('x-ord-content-encoding')).toBe('br');
+    expect(response.headers.get('content-encoding')).toBeNull();
   });
 
   it('follows the delegate for /content but serves the empty own-body bare', async () => {

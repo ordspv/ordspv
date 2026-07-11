@@ -73,6 +73,26 @@ responses MUST include:
 Divergence from ord (deliberate, safe): gateways SHOULD add
 `X-Content-Type-Options: nosniff` (ord sets none).
 
+**`Content-Encoding` is ambiguous through CDNs.** Transport compression applied by
+CDNs/reverse proxies — and transparently removed by HTTP clients — is
+indistinguishable on the wire from the inscription's stored tag-9 encoding:
+`content-encoding: br` may mean "an intermediary compressed this response" or "the
+stored bytes are brotli", and intermediaries may stack, strip, or rewrite the header.
+(Observed in the wild: ordinals.com behind Cloudflare serves *unencoded* text
+inscriptions with `content-encoding: br`.) Therefore:
+
+- Consumers MUST determine an inscription's encoding from the envelope parse
+  (tag 9) — via a proof bundle, their own reveal-tx parse, or the
+  `x-ord-content-encoding` attestation header (§5) — and MUST NOT infer it from
+  `Content-Encoding` or any other transport header.
+- Gateways SHOULD emit `x-ord-content-encoding: <tag-9 value>` (§5) whenever the
+  envelope declares an encoding, sourced from the envelope parse and never copied
+  from an upstream response header.
+- Integrity pins (`#integrity=`) hash STORED bytes, so on encoded inscriptions they
+  cannot be evaluated against a transport-decoded body; clients seeing this
+  combination fall back to L2+ verification (the resolver's
+  `INTEGRITY_INDETERMINATE` behavior).
+
 Root-relative recursion (`/content/…`, `/r/…`) inside HTML inscriptions requires the
 gateway to answer those paths on the same origin — hence §6. Deployments hosting
 untrusted HTML SHOULD consider per-inscription origin isolation (subdomain-per-id, the
@@ -81,12 +101,20 @@ IPFS subdomain-gateway lesson); specifying that scheme is future work.
 ## 5. Attestation headers (verify personality and `/ord/v1/verified`)
 
 ```
-x-ord-verification: L2|L3
-x-ord-block:        <display block hash>
-x-ord-height:       <height>
-x-ord-body-sha256:  <hex sha256 of stored body bytes>
-x-ord-delegate:     <delegate id, when content came via delegation>
+x-ord-verification:      L2|L3
+x-ord-block:             <display block hash>
+x-ord-height:            <height>
+x-ord-body-sha256:       <hex sha256 of stored body bytes>
+x-ord-delegate:          <delegate id, when content came via delegation>
+x-ord-content-encoding:  <tag-9 value, when the served envelope declares one>
 ```
+
+`x-ord-content-encoding` is the unambiguous channel for the stored encoding (§4:
+transport `Content-Encoding` is CDN-ambiguous). It MUST be sourced from the
+gateway's own envelope parse of the verified reveal tx — never copied from an
+upstream response — and reflects the SERVED source (the delegate's envelope when
+content came via delegation). It is emitted even when the gateway decompressed the
+body server-side, so clients can always recover what the on-chain bytes are.
 
 Attestation headers are claims by the gateway, useful for monitoring and debugging;
 clients with adversarial gateways in their threat model MUST ignore them and verify
