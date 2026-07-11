@@ -38,8 +38,15 @@
 
 ## Layout
 
-core (primitives+proof) → fetch (resolver/backends/trust) → gateway, cli
-specs in docs/spec/; research synthesis in docs/RESEARCH.md; roadmap in HANDOFF.md.
+core (primitives+proof) → fetch (resolver/backends/trust incl. `/headersync`
+node-only subpath) → gateway, cli, sidecar (proof bundles over Core RPC).
+specs in docs/spec/; research synthesis in docs/RESEARCH.md; roadmap in HANDOFF.md;
+upstream drafts (DRAFT-ONLY, pseudonymous) in docs/upstream/. The electrs fork
+lives at `../electrs`, branch `witness-merkle-proof` (needs
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and
+`CXXFLAGS="-isystem $SDKROOT/usr/include/c++/v1"` to build on this machine —
+CLT is missing toolchain libc++ headers; electrumd dev-dep doesn't build on
+macos-arm64, so `cargo test --test rest` works but `--test electrum` is Linux-only).
 
 ## Gotchas encountered
 

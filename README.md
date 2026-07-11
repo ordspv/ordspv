@@ -47,12 +47,13 @@ inscriber-level caveat precisely characterized, tested, and surfaced as assuranc
 | `@ord-resolver/fetch` | `ordFetch()` / `OrdResolver`: URI parsing, esplora/ord backends with failover, proof building, header trust (checkpoints + M-of-N), delegation, integrity pins |
 | `@ord-resolver/gateway` | reference HTTP gateway: ord-parity `/content` + `/r/*`, `/ord/v1/proof` bundles, verify-before-serve mode |
 | `@ord-resolver/cli` | `ord-resolve <uri>`, `proof`, `verify`, `parse` |
+| `@ord-resolver/proof-sidecar` | proof bundles straight from a Bitcoin Core node (txindex) — L2/L3 without hosting esplora |
 
 ## Quick start
 
 ```bash
 npm install
-npm test                                  # 143 tests, incl. real mainnet vectors, offline
+npm test                                  # 165 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json

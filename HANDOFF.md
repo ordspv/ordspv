@@ -10,7 +10,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), cross-chain
   embedding guide (docs/CROSS-CHAIN.md), all grounded in the cited research synthesis
   (docs/RESEARCH.md).
-- **Working code, 143 tests, all offline-runnable**: `@ord-resolver/core`
+- **Working code, 165 tests, all offline-runnable**: `@ord-resolver/core`
   (consensus primitives, ord-exact envelope parser, L2/L3 proof verification),
   `@ord-resolver/fetch` (verified resolver: failover backends, checkpoint + M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling),
@@ -82,10 +82,15 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
    gap is real while L3 closes it).
 
 **P1 — make it adoptable**
-4. Build pipeline: tsup/tsc dual ESM+types, browser bundle for core+fetch (core is
-   already browser-safe; swap `decompress.ts` node path), publish dry-run.
-5. Header sync module: Electrum `cp_height`-style checkpointed sync or P2P headers
-   (~77 MB), replacing M-of-N hash-at-height as the default anchor. Design sketch in
+4. ~~Build pipeline~~ **DONE 2026-07-11** — CI (GitHub Actions: test + tsc + build)
+   plus scripts/build.ts: tsup ESM + TS7-tsc declarations, fetch browser bundle
+   (decompress swapped), publish staging + pack/publish dry-runs under the
+   PLACEHOLDER @ord-resolver scope; consumer-shaped smoke test of staged dists.
+5. ~~Header sync module~~ **DONE 2026-07-11** — `@ord-resolver/fetch/headersync`
+   (node-only subpath): Electrum-synced, locally validated chain (linkage/PoW/exact
+   retarget/MTP/checkpoints), disk persistence w/ revalidating load, cp_height
+   root/branch verification, drop-in `trustHeader` (resolver option). Real 2120-header
+   mainnet fixture crossing the 768096 retarget boundary. Browser story documented in
    SPEC-VERIFICATION §4.
 6. Gateway productionization: streaming bodies, LRU + immutable CDN headers (done),
    rate limits, metrics, Docker; subdomain-per-inscription origin isolation option.
@@ -93,10 +98,19 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
    `ord:` and gateway URLs through `ordFetch`.
 
 **P2 — ecosystem moves** (sequencing rationale in CROSS-CHAIN.md)
-8. Coordinate with upstream ord on: the `ord://` alias + path extensions (open a
-   discussion referencing #3780 and the uris.md draft), IANA provisional registration,
-   and — highest leverage — a `/tx/:txid/witness-merkle-proof` endpoint upstreamed to
-   esplora/electrs so L3 gets cheap everywhere (kills the last infrastructure gap).
+8. Upstream coordination — **BUILT 2026-07-11, POSTING PENDING SIGN-OFF**:
+   - electrs fork at `../electrs`, branch `witness-merkle-proof` (PR-ready, 1 commit):
+     `/tx/:txid/witness-merkle-proof` + `blockchain.transaction.get_witness_merkle`,
+     integration-tested against regtest bitcoind (full BIP-141 commitment loop; whole
+     REST suite 25/25) + criterion benches (~5.25ms wtxids + ~1.53ms branch, ~1000-tx
+     block). Patch vendored at docs/upstream/patches/. NOTE: the electrumd wallet
+     test-harness dev-dep doesn't build on macos-arm64 (pre-existing) — the electrum
+     protocol test compiles/runs on Linux CI only.
+   - `@ord-resolver/proof-sidecar`: proof bundles over Bitcoin Core RPC (txindex) so
+     node operators serve L2/L3 without esplora.
+   - Drafts in docs/upstream/ (DRAFT-ONLY, do not post without sign-off): ord
+     URI-extensions discussion (#3780 + uris.md + IANA offer), esplora witness-proof
+     PR text with the patch attached. All pseudonymous.
 9. CAIP-19 namespace profile for inscriptions (none exists; open lane).
 10. Rust port of core verification (share test vectors) for wallet embedding.
 11. zk wrapper exploration: proof bundles are already the right witness format for a
