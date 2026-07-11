@@ -8,6 +8,18 @@ keyboard by their nature (account creation, payments, store listings).
 
 ## 0. Preconditions (blockers for everything else)
 
+- [x] **Identity rewrite (completed 2026-07-11).** Full history of this repo
+      and the electrs branch commits (`new-index..witness-merkle-proof` only —
+      upstream Blockstream history untouched so the fork still shares commit
+      ids with upstream) rewritten via git-filter-repo: all author/committer
+      names+emails → `ordspv <ordspv@users.noreply.github.com>`, all
+      author/committer date offsets normalized to +0000; reflogs expired and
+      old objects pruned in both repos; the vendored format-patch series
+      regenerated from the rewritten branch. Local `git config user.*` set in
+      both repos. Conventions going forward: commit with `TZ=UTC` so offsets
+      stay +0000, and after the GitHub account exists, swap the email to the
+      id-prefixed noreply form (`<id>+ordspv@users.noreply.github.com`) in
+      both repos' local config — the plain form is a placeholder until then.
 - [ ] Final name decided; `@<scope>` npm availability + GitHub org availability
       confirmed; then land the NAMING.md rename commit (one commit, includes
       rebuilt demo/extension artifacts and draft-link fills).
