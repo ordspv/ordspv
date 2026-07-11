@@ -17,9 +17,10 @@ keyboard by their nature (account creation, payments, store listings).
       old objects pruned in both repos; the vendored format-patch series
       regenerated from the rewritten branch. Local `git config user.*` set in
       both repos. Conventions going forward: commit with `TZ=UTC` so offsets
-      stay +0000, and after the GitHub account exists, swap the email to the
-      id-prefixed noreply form (`<id>+ordspv@users.noreply.github.com`) in
-      both repos' local config — the plain form is a placeholder until then.
+      stay +0000. **Standing committer identity (set 2026-07-11, both repos,
+      repo-local config): `ordspv <302645753+ordspv@users.noreply.github.com>`**
+      — the id-prefixed noreply form, now that the GitHub account exists. All
+      future commits use it.
 - [x] **Name decided + rename executed (2026-07-11):** `ordspv` — scope
       `@ordspv/*`, canonical repo `github.com/ordspv/ordspv`, electrs fork
       `github.com/ordspv/electrs`. NAMING.md inventory applied in one commit
@@ -38,6 +39,15 @@ keyboard by their nature (account creation, payments, store listings).
       `grep -rniE -f private/sweep-terms.txt . | grep -v node_modules`
 - [ ] Git history authorship check: `git log --format='%an %ae %cn %ce' | sort -u`
       → only the pseudonymous identity + the tool trailer.
+- [ ] **Local-path / machine sweep (STANDING — run with every sweep):**
+      `grep -rn "$HOME path\|machine hostname" …` (the literal home path and the
+      machine hostname) across BOTH worktrees, packed tarball contents
+      (`npm pack` each staged package and grep the extraction), the demo
+      inline bundle, extension dist-unpacked, all `*.js.map` source maps, and
+      the vendored `.patch` files. Zero hits expected everywhere; the only
+      permitted exception is the untracked, gitignored
+      `private/settings.local.json` (local harness config, never pushed).
+      *(First run 2026-07-11: zero hits in all publishable artifacts.)*
 
 ## 1. Accounts 【identity】
 
@@ -50,6 +60,8 @@ keyboard by their nature (account creation, payments, store listings).
 
 ## 2. Repo push (CI goes live here)
 
+- [x] Remote configured (2026-07-11): `origin = git@github-ordspv:ordspv/ordspv.git`
+      (SSH alias `github-ordspv` present in ~/.ssh/config). NOTHING pushed yet.
 - [ ] Create the GitHub repo (public), push `master`.
 - [ ] Confirm Actions run green on push (the workflow already runs
       test + tsc + build; it is fully offline).
@@ -60,9 +72,13 @@ keyboard by their nature (account creation, payments, store listings).
 
 ## 3. electrs fork push
 
-- [ ] Fork Blockstream/electrs under the pseudonym on GitHub.
-- [ ] `git -C ../electrs remote add fork <fork-url>` and push the
-      `witness-merkle-proof` branch (1 commit on top of `new-index`).
+- [ ] Fork Blockstream/electrs under the pseudonym on GitHub (fork repo does
+      NOT exist yet).
+- [x] Fork remote configured (2026-07-11):
+      `fork = git@github-ordspv:ordspv/electrs.git` (Blockstream stays
+      `origin`). NOTHING pushed yet.
+- [ ] Push the `witness-merkle-proof` branch to `fork` (1 commit on top of
+      `new-index`).
 - [ ] Verify the fork's CI (if any) or at minimum that the branch shows the
       commit cleanly. The format-patch series in
       `docs/upstream/patches/electrs-witness-merkle-proof/` is the backup if
