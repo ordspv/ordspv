@@ -9,10 +9,24 @@ import {
   type InscriptionId,
   type ProofBundleJson,
 } from '@ord-resolver/core';
-import type { EsploraBackend } from './backends.js';
+import type { EsploraBlockInfo, EsploraMerkleProof, EsploraTxStatus } from './backends.js';
 
 /**
- * Assemble a proof bundle for an inscription from any esplora instance.
+ * Anything that can serve the proof ingredients. EsploraBackend satisfies this
+ * structurally; so does the proof-sidecar's Bitcoin Core RPC backend — the
+ * bundle builder is data-source agnostic.
+ */
+export interface ProofBackend {
+  getTxStatus(txid: string): Promise<EsploraTxStatus>;
+  getTxHex(txid: string): Promise<string>;
+  getMerkleProof(txid: string): Promise<EsploraMerkleProof>;
+  getHeaderHex(blockHash: string): Promise<string>;
+  getBlockInfo(blockHash: string): Promise<EsploraBlockInfo>;
+  getBlockRaw(blockHash: string): Promise<Uint8Array>;
+}
+
+/**
+ * Assemble a proof bundle for an inscription from any proof backend.
  * Everything fetched here is UNTRUSTED input — the caller verifies the bundle
  * with `verifyProofBundle` afterwards; nothing here is trusted for soundness,
  * only availability.
@@ -23,7 +37,7 @@ import type { EsploraBackend } from './backends.js';
  *          from which both merkle branches and the coinbase are derived.
  */
 export async function buildProofBundle(
-  esplora: EsploraBackend,
+  esplora: ProofBackend,
   id: InscriptionId,
   level: 'L2' | 'L3',
 ): Promise<ProofBundleJson> {

@@ -94,8 +94,16 @@ async function buildAll(): Promise<void> {
     banner: { js: '#!/usr/bin/env node' },
   });
 
+  await build({
+    ...COMMON,
+    entry: { index: join(ROOT, 'packages/sidecar/src/index.ts') },
+    outDir: join(ROOT, 'packages/sidecar/dist'),
+    platform: 'node',
+    banner: { js: '#!/usr/bin/env node' },
+  });
+
   // declarations via TS7's own tsc (per-file .d.ts tree into dist/)
-  for (const dir of ['core', 'fetch', 'gateway']) {
+  for (const dir of ['core', 'fetch', 'gateway', 'sidecar']) {
     execFileSync('npx', ['tsc', '-p', join(ROOT, 'packages', dir, 'tsconfig.build.json')], {
       cwd: ROOT,
       stdio: 'inherit',
@@ -164,10 +172,16 @@ function stage(): void {
     exports: { '.': './dist/main.js' },
     main: './dist/main.js',
   });
+  stagedManifest('sidecar', {
+    bin: { 'ord-proof-sidecar': './dist/index.js' },
+    exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } },
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+  });
 }
 
 function npmDryRuns(publish: boolean): void {
-  for (const dir of ['core', 'fetch', 'gateway', 'cli']) {
+  for (const dir of ['core', 'fetch', 'gateway', 'cli', 'sidecar']) {
     const cwd = join(STAGING, dir);
     console.log(`\n── ${dir}: npm pack --dry-run ──`);
     execFileSync('npm', ['pack', '--dry-run'], { cwd, stdio: 'inherit' });

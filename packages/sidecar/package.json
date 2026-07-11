@@ -1,0 +1,12 @@
+{
+  "name": "@ord-resolver/proof-sidecar",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Serve SPEC-VERIFICATION proof bundles straight from a Bitcoin Core node (txindex) — L2/L3 for ord: resolvers without hosting esplora.",
+  "exports": { ".": "./src/index.ts" },
+  "bin": { "ord-proof-sidecar": "./src/index.ts" },
+  "dependencies": {
+    "@ord-resolver/core": "0.1.0",
+    "@ord-resolver/fetch": "0.1.0"
+  }
+}
