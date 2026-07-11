@@ -1,0 +1,8 @@
+{
+  "name": "@ord-resolver/fetch",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ord:// resolver: verified fetch of inscription content over untrusted gateways/backends.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@ord-resolver/core": "0.1.0" }
+}

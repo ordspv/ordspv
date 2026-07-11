@@ -1,0 +1,8 @@
+{
+  "name": "@ord-resolver/gateway",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "HTTP gateway serving ord:// content and SPV proof bundles.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@ord-resolver/core": "0.1.0", "@ord-resolver/fetch": "0.1.0" }
+}

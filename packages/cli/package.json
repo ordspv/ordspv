@@ -1,0 +1,9 @@
+{
+  "name": "@ord-resolver/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CLI for resolving and verifying ord:// URIs.",
+  "bin": { "ord-resolve": "./src/main.ts" },
+  "exports": { ".": "./src/main.ts" },
+  "dependencies": { "@ord-resolver/core": "0.1.0", "@ord-resolver/fetch": "0.1.0" }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@ord-resolver/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Zero-IO primitives for trustless Bitcoin ordinals inscription resolution: tx/header parsing, merkle + witness-commitment proofs, BIP-341 tapscript commitment checks, envelope parsing.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@noble/hashes": "^2.2.0", "@noble/curves": "^2.2.0" }
+}
