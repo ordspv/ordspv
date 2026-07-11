@@ -1,4 +1,4 @@
-From 03a4d402cbf8ec830625264dff17cfaef14c3683 Mon Sep 17 00:00:00 2001
+From 3167906011ed235a5197584326d86f29c3c26ae2 Mon Sep 17 00:00:00 2001
 From: ordspv <302645753+ordspv@users.noreply.github.com>
 Date: Sat, 11 Jul 2026 20:16:23 +0000
 Subject: [PATCH] Add witness-merkle-proof endpoints (REST + Electrum)
