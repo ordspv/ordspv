@@ -16,7 +16,7 @@ format, conformance test corpus), and along the way wrote a small extension prof
 draft specifies. This discussion proposes upstreaming the extension points (or
 hearing why not), and offers legwork on IANA registration.
 
-**What exists today** (all open source, Apache/ISC-style, links at the end):
+**What exists today** (all open source, ISC, links at the end):
 
 - A resolver that takes `ord:<id>` and returns verified bytes: BIP-341 tapscript
   commitment + txid merkle proof against a PoW-checked header ("L2"), or the full
@@ -66,6 +66,9 @@ against the draft was to avoid forking the referent semantics, and the parity
 corpus means we notice immediately if we drift.
 
 *Links: [resolver + specs + corpus](https://github.com/ordspv/ordspv),
+[in-browser demo verifying inscription 0 client-side](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html)
+(`examples/verify-inscription-0.html` in the repo; the Pages URL goes live
+once GitHub Pages is enabled),
 [witness-proof electrs branch](https://github.com/ordspv/electrs/tree/witness-merkle-proof)
 (companion infrastructure so L3 verification is cheap everywhere).*
 
@@ -75,6 +78,8 @@ corpus means we notice immediately if we drift.
 
 - Links are concrete (github.com/ordspv/…); they go live at GOING-PUBLIC
   steps 2–3. Verify no identifying info in repo metadata before posting.
+- Enable GitHub Pages (deploy from `master`, root) at step 2 so the demo
+  link resolves; verify it renders before posting.
 - Post AFTER the esplora witness-proof PR exists so the "cheap L3" claim has a
   concrete artifact behind it (see esplora-witness-proof-draft.md).
 - Tone calibration: casey historically rejects scope creep in the scheme itself;

@@ -72,7 +72,7 @@ class with instances.
 
 ## Rationale
 
-Inscriptions are the largest class of non-native Bitcoin assets; wallets and
+Inscriptions are a major class of non-native Bitcoin assets; wallets and
 marketplaces exchanging chain-agnostic asset descriptors (CAIP-19 consumers:
 WalletConnect, indexer APIs, token lists) currently have no standard way to
 name one. The `ordinals` namespace reuses the ecosystem's existing canonical

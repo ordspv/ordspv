@@ -118,6 +118,8 @@ with an ordinary txid proof at position 0). Not available on Liquid.
 - The fork is github.com/ordspv/electrs, branch `witness-merkle-proof`
   (GOING-PUBLIC step 3); `patches/electrs-witness-merkle-proof/*.patch` is
   the format-patch backup. Arrive with code.
+- Check Blockstream/electrs `CONTRIBUTING.md` and issue-first norms at post
+  time; open a tracking issue first if the repo expects one before the PR.
 - Platform caveat to mention if CI asks: the electrumd wallet test-harness
   dev-dependency doesn't build on macos-arm64 (pre-existing, unrelated);
   everything else validated locally on macOS + expected green on Linux CI.
