@@ -68,6 +68,80 @@ export function checkProofOfWork(header: BlockHeader): boolean {
 }
 
 /**
+ * Compress a target into compact "bits" — exact port of arith_uint256::GetCompact
+ * (round-trips consensus semantics: retarget comparisons happen in compact form,
+ * so precision loss here is consensus-correct, not a bug).
+ */
+export function targetToBits(target: bigint): number {
+  if (target < 0n) throw new Error('negative target');
+  if (target === 0n) return 0;
+  let size = 0;
+  for (let t = target; t > 0n; t >>= 8n) size++;
+  let compact: number;
+  if (size <= 3) {
+    compact = Number(target << (8n * BigInt(3 - size)));
+  } else {
+    compact = Number(target >> (8n * BigInt(size - 3)));
+  }
+  // if the sign bit would be set, shift the mantissa and bump the exponent
+  if ((compact & 0x00800000) !== 0) {
+    compact >>= 8;
+    size++;
+  }
+  return (compact | (size << 24)) >>> 0;
+}
+
+export interface ChainParams {
+  /** blocks per difficulty period (mainnet 2016) */
+  retargetInterval: number;
+  /** target seconds per period (mainnet 1209600 = 14 days) */
+  targetTimespan: number;
+  /** compact encoding of the maximum (easiest) allowed target */
+  powLimitBits: number;
+  /** regtest-style chains skip retargeting entirely */
+  noRetarget?: boolean;
+}
+
+export const MAINNET_CHAIN_PARAMS: ChainParams = {
+  retargetInterval: 2016,
+  targetTimespan: 14 * 24 * 3600,
+  powLimitBits: 0x1d00ffff,
+};
+
+/**
+ * Difficulty retarget — exact port of pow.cpp CalculateNextWorkRequired.
+ * `firstTime` is the timestamp of the FIRST block of the closing period
+ * (height H-interval for a boundary at H), `lastTime` of its LAST block
+ * (height H-1) — Bitcoin's off-by-one 2015-block window, faithfully kept.
+ * Multiplication precedes division (consensus truncation order).
+ */
+export function calcNextBits(
+  prevBits: number,
+  firstTime: number,
+  lastTime: number,
+  params: ChainParams = MAINNET_CHAIN_PARAMS,
+): number {
+  let actualTimespan = lastTime - firstTime;
+  const min = Math.floor(params.targetTimespan / 4);
+  const max = params.targetTimespan * 4;
+  if (actualTimespan < min) actualTimespan = min;
+  if (actualTimespan > max) actualTimespan = max;
+
+  const powLimit = bitsToTarget(params.powLimitBits);
+  let target = bitsToTarget(prevBits);
+  target *= BigInt(actualTimespan);
+  target /= BigInt(params.targetTimespan);
+  if (target > powLimit) target = powLimit;
+  return targetToBits(target);
+}
+
+/** Expected work encoded by `bits`: floor(2^256 / (target + 1)) — chainwork summand. */
+export function workFromBits(bits: number): bigint {
+  const target = bitsToTarget(bits);
+  return (1n << 256n) / (target + 1n);
+}
+
+/**
  * Verify a contiguous chain of headers: each header's prevBlock must equal the
  * previous header's hash, and each must satisfy its own embedded PoW target.
  * NOTE: this does NOT validate difficulty retargeting rules against consensus;

@@ -4,6 +4,7 @@ import {
   hexToBytes,
   sha256,
   verifyProofBundle,
+  type BlockHeader,
   type Inscription,
   type L2Assurances,
   type VerifiedInscription,
@@ -45,6 +46,12 @@ export interface ResolverOptions {
   minHeaderAgreement?: number;
   minConfirmations?: number;
   checkpoints?: ReadonlyMap<number, string>;
+  /**
+   * Replace checkpoint/M-of-N anchoring entirely with a custom header anchor
+   * (e.g. headerSyncTrust over a locally synced chain — see
+   * `@ord-resolver/fetch/headersync`). Throw to reject the header.
+   */
+  trustHeader?: (header: BlockHeader, height: number) => Promise<HeaderTrustReport>;
   fetchFn?: FetchFn;
   decompressor?: Decompressor;
 }
@@ -150,12 +157,14 @@ export class OrdResolver {
     } catch (e) {
       throw new OrdResolveError('VERIFY_FAILED', (e as Error).message);
     }
-    const trust = makeHeaderTrust({
-      esploras: this.esploras,
-      minAgreement: this.options.minHeaderAgreement,
-      minConfirmations: this.options.minConfirmations,
-      checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS,
-    });
+    const trust =
+      this.options.trustHeader ??
+      makeHeaderTrust({
+        esploras: this.esploras,
+        minAgreement: this.options.minHeaderAgreement,
+        minConfirmations: this.options.minConfirmations,
+        checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS,
+      });
     let headerTrust: HeaderTrustReport;
     try {
       headerTrust = await trust(verified.header, verified.height);

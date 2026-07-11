@@ -57,9 +57,14 @@ async function buildAll(): Promise<void> {
   });
 
   // fetch: node build (dynamic node:zlib stays) + browser build (decompress swapped)
+  // headersync is a NODE-ONLY subpath entry, deliberately absent from the
+  // browser bundle (raw TCP/TLS + filesystem persistence)
   await build({
     ...COMMON,
-    entry: { index: join(ROOT, 'packages/fetch/src/index.ts') },
+    entry: {
+      index: join(ROOT, 'packages/fetch/src/index.ts'),
+      headersync: join(ROOT, 'packages/fetch/src/headersync.ts'),
+    },
     outDir: join(ROOT, 'packages/fetch/dist'),
     platform: 'neutral',
   });
@@ -139,6 +144,11 @@ function stage(): void {
         types: './dist/index.d.ts',
         browser: './dist/index.browser.js',
         default: './dist/index.js',
+      },
+      // node-only: Electrum TCP/TLS + file persistence (no browser condition)
+      './headersync': {
+        types: './dist/headersync.d.ts',
+        default: './dist/headersync.js',
       },
     },
     main: './dist/index.js',

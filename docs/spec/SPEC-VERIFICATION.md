@@ -137,9 +137,21 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   (verified cryptographically in-repo), 824544 (Jubilee).
 - **M-of-N independent sources** (SHOULD, default 2): hash-at-height agreement across
   operator-diverse esplora/electrum endpoints; optional min-confirmations gate.
-- **Header sync** (roadmap): P2P or Electrum `cp_height` sync (~77 MB full, prunable to
-  checkpoints) removes the server-honesty assumption entirely; retarget validation is
-  straightforward BigInt arithmetic.
+- **Header sync** (implemented: `@ord-resolver/fetch/headersync`, node-only subpath):
+  a locally validated header chain — Electrum `blockchain.block.headers` batches,
+  per-header linkage + PoW + exact pow.cpp retarget arithmetic + median-time-past +
+  compiled checkpoint crossings — persisted to disk (fully revalidated on load) and
+  exposed as a drop-in `trustHeader` anchor (`headerSyncTrust`). Chains start from a
+  retarget-ALIGNED trusted base; the default base 766080 (period start below
+  inscription 0) covers every inscription in ~15 MB, or use genesis for the full
+  ~77 MB chain. Optional Electrum `cp_height` root/branch verification is supported
+  once roots are pinned (derivable from any fully synced chain via
+  `blockHashMerkleRoot`). Browser story: the validation core (`HeaderChain`) is
+  IO-free, but raw TCP/TLS sockets and file persistence do not exist in browsers —
+  either keep checkpoint + M-of-N anchoring there, or supply a WebSocket→Electrum
+  bridge as a custom `ElectrumTransport` with an in-memory chain; the built-in
+  transport/persistence stay node-only and the subpath is excluded from the browser
+  bundle.
 
 ## 5. Merkle hardening (normative)
 

@@ -39,6 +39,8 @@ export interface HeaderTrustReport {
   sourcesQueried: number;
   sourcesAgreed: number;
   tipHeight?: number;
+  /** set when the anchor was a locally validated header chain (headersync) */
+  anchoredBySync?: boolean;
 }
 
 export class HeaderTrustError extends Error {}
