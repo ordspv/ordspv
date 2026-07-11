@@ -24,47 +24,43 @@ export interface ScriptOp {
 
 /**
  * Iterate script instructions. Returns ops until the end of the script.
- * A truncated push throws unless `lenient`, in which case iteration stops
- * before the malformed instruction (mirrors how ord tolerates trailing junk
- * only by failing the whole envelope; callers decide).
+ * Mirrors rust-bitcoin's non-minimal `Script::instructions()` (the iterator
+ * ord's envelope parser uses): a truncated push is an error (throws here),
+ * non-minimal push encodings are accepted, and every non-push byte — valid,
+ * reserved, or invalid opcode alike — is yielded as an opcode instruction.
  */
-export function parseScript(script: Uint8Array, opts: { lenient?: boolean } = {}): ScriptOp[] {
+export function parseScript(script: Uint8Array): ScriptOp[] {
   const ops: ScriptOp[] = [];
   let i = 0;
   while (i < script.length) {
     const offset = i;
     const opcode = script[i++];
-    try {
-      if (opcode === OP_0) {
-        ops.push({ opcode, data: new Uint8Array(0), offset });
-      } else if (opcode >= 0x01 && opcode <= 0x4b) {
-        ops.push({ opcode, data: take(script, i, opcode), offset });
-        i += opcode;
-      } else if (opcode === OP_PUSHDATA1) {
-        const len = at(script, i);
-        i += 1;
-        ops.push({ opcode, data: take(script, i, len), offset });
-        i += len;
-      } else if (opcode === OP_PUSHDATA2) {
-        const len = at(script, i) | (at(script, i + 1) << 8);
-        i += 2;
-        ops.push({ opcode, data: take(script, i, len), offset });
-        i += len;
-      } else if (opcode === OP_PUSHDATA4) {
-        const len =
-          at(script, i) | (at(script, i + 1) << 8) | (at(script, i + 2) << 16) | (at(script, i + 3) << 24);
-        if (len < 0) throw new Error('push length overflow');
-        i += 4;
-        ops.push({ opcode, data: take(script, i, len), offset });
-        i += len;
-      } else {
-        // non-push opcode (includes OP_1..OP_16, OP_1NEGATE — ord treats these
-        // as opcodes, not data pushes, inside envelopes)
-        ops.push({ opcode, offset });
-      }
-    } catch (e) {
-      if (opts.lenient) return ops;
-      throw e;
+    if (opcode === OP_0) {
+      ops.push({ opcode, data: new Uint8Array(0), offset });
+    } else if (opcode >= 0x01 && opcode <= 0x4b) {
+      ops.push({ opcode, data: take(script, i, opcode), offset });
+      i += opcode;
+    } else if (opcode === OP_PUSHDATA1) {
+      const len = at(script, i);
+      i += 1;
+      ops.push({ opcode, data: take(script, i, len), offset });
+      i += len;
+    } else if (opcode === OP_PUSHDATA2) {
+      const len = at(script, i) | (at(script, i + 1) << 8);
+      i += 2;
+      ops.push({ opcode, data: take(script, i, len), offset });
+      i += len;
+    } else if (opcode === OP_PUSHDATA4) {
+      const len =
+        at(script, i) | (at(script, i + 1) << 8) | (at(script, i + 2) << 16) | (at(script, i + 3) << 24);
+      if (len < 0) throw new Error('push length overflow');
+      i += 4;
+      ops.push({ opcode, data: take(script, i, len), offset });
+      i += len;
+    } else {
+      // non-push opcode (includes OP_1..OP_16, OP_1NEGATE — ord treats these
+      // as opcodes, not data pushes, inside envelopes)
+      ops.push({ opcode, offset });
     }
   }
   return ops;

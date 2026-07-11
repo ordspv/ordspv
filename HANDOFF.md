@@ -10,7 +10,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), cross-chain
   embedding guide (docs/CROSS-CHAIN.md), all grounded in the cited research synthesis
   (docs/RESEARCH.md).
-- **Working code, 67 tests, all offline-runnable**: `@ord-resolver/core`
+- **Working code, 113 tests, all offline-runnable**: `@ord-resolver/core`
   (consensus primitives, ord-exact envelope parser, L2/L3 proof verification),
   `@ord-resolver/fetch` (verified resolver: failover backends, checkpoint + M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling),
@@ -25,7 +25,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network — the build sandbox had none)
 
-1. `npm install && npm test && npx tsc --noEmit` — expect 67 green.
+1. `npm install && npm test && npx tsc --noEmit` — expect 113 green.
 2. `npx tsx scripts/fetch-fixtures.ts` — byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. L3-over-live
    (raw block download → wtxid tree) is the one flow the sandbox could not run;
@@ -39,10 +39,13 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 
 ## Known deltas vs ord to reconcile (small, flagged in code)
 
-- **Stutter semantics are approximated** (`envelope.ts parseEnvelopesFromScript`):
-  ord's exact resume/stutter propagation in `envelope.rs` should be mirrored
-  instruction-for-instruction and locked with ports of ord's own envelope tests.
-  Affects only curse-flag fidelity on pathological pre-Jubilee scripts, never content.
+- ~~**Stutter semantics are approximated**~~ **RESOLVED 2026-07-11**:
+  `parseEnvelopesFromScript` is now an instruction-for-instruction port of ord's
+  `from_tapscript`/`from_instructions`/`accept` (consume-on-failure, assign-not-or
+  stutter, no reset on success, whole-tapscript discard on script error — the old
+  rescanning parser could find envelopes ord never sees). Locked by the full port
+  of ord's envelope.rs test corpus plus consume-semantics tests (envelope.test.ts);
+  the five divergence tests were verified to fail against the old implementation.
 - Parent values: ord's `take_array` keeps invalid encodings in the list (we drop
   non-parsing values when surfacing `parents[]`; raw values remain available via
   `splitPayload`). Decide whether to expose both explicitly.
@@ -53,9 +56,13 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 ## Prioritized roadmap
 
 **P0 — harden the core claim**
-1. Live L3 + extended vectors (above).
-2. Port ord's envelope test corpus (envelope.rs `#[cfg(test)]`) into
-   `envelope.test.ts` for byte-level parity confidence.
+1. Live L3 + extended vectors (above). *L3-over-live confirmed 2026-07-11
+   (checklist items 1–3 all green, checkpoint 824544 re-verified against
+   mempool.space/blockstream/blockchain.info); extended vectors still open.*
+2. ~~Port ord's envelope test corpus~~ **DONE 2026-07-11** — all 41 corpus tests
+   from envelope.rs `mod tests` ported by name into `envelope.test.ts`, plus 5
+   consume-semantics locks beyond the corpus; parser rewritten to match (see
+   Known deltas).
 3. Property/fuzz tests: random scripts through the envelope parser (never panic,
    never mis-index); malformed bundle fuzzing on `verifyProofBundle`.
 

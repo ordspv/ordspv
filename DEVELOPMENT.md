@@ -16,8 +16,11 @@
    `internalToDisplay`/`displayToInternal` (`packages/core/src/bytes.ts` doc comment).
 2. **Envelope parser mirrors ord exactly** (`ordinals/ord` master @ 7effaaaf):
    tag table incl. 17=properties (NOT 15), pushnum acceptance, even-indexed empty push
-   = body separator, duplicate-before-take, leftover-even ⇒ unbound. Any change must
-   cite ord source and add a test.
+   = body separator, duplicate-before-take, leftover-even ⇒ unbound, and
+   `from_tapscript` scan semantics (consume-on-failure/no rescan; stutter ASSIGNED
+   after failures, never reset by success; script error ⇒ whole tapscript discarded).
+   Locked by the ported envelope.rs test corpus in `envelope.test.ts`. Any change
+   must cite ord source and add a test.
 3. **Proof bundles carry `txCount`** and depth checks stay mandatory
    (CVE-2012-2459/2017-12842 hardening) — never relax to "root matched".
 4. **L2 results must surface assurances** (`singleLeafTree`, `singleInputReveal`);

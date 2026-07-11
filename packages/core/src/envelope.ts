@@ -13,7 +13,9 @@ import type { ParsedTx } from './tx.js';
  * Payload rules:
  * - Data pushes (any encoding) are payload items. OP_PUSHNUM_NEG1/OP_PUSHNUM_1..16
  *   are ACCEPTED, decoded to [0x81] / [1]..[16], and set the `pushnum` flag.
- * - Any other opcode, or script end before OP_ENDIF, discards the envelope.
+ * - Any other opcode, or script end before OP_ENDIF, discards the envelope —
+ *   and everything the failed attempt consumed stays consumed (see
+ *   parseEnvelopesFromScript for the scan/stutter rules).
  * - Fields are (tag, value) pairs consumed from the payload; the body starts at
  *   the first EVEN-INDEXED empty push (an empty push in value position is a
  *   legal empty value). Body = concatenation of every payload item after the
@@ -128,72 +130,89 @@ function payloadBytes(op: ScriptOp): { bytes: Uint8Array; pushnum: boolean } | u
   return undefined;
 }
 
-interface Attempt {
-  envelope?: { payload: Uint8Array[]; pushnum: boolean; nextIndex: number };
-  /** the failed attempt's last examined instruction was an empty push */
-  endedOnEmptyPush: boolean;
+/** Instruction::Op(opcode) equality — a data push never equals an opcode. */
+function isOp(op: ScriptOp | undefined, opcode: number): boolean {
+  return op !== undefined && op.data === undefined && op.opcode === opcode;
 }
 
-function attemptEnvelope(ops: ScriptOp[], start: number): Attempt {
-  // ops[start] is an empty push
-  const opIf = ops[start + 1];
-  if (!opIf || opIf.opcode !== OP_IF) {
-    return { endedOnEmptyPush: opIf !== undefined && isEmptyPush(opIf) };
+interface Attempt {
+  /** cursor position after the attempt; consumed instructions are never re-scanned */
+  cursor: number;
+  /** ord's returned stutter value (meaningful only when no envelope was produced) */
+  stutter: boolean;
+  envelope?: Omit<RawEnvelope, 'input' | 'index' | 'offsetInInput'>;
+}
+
+/**
+ * Port of ord's RawEnvelope::from_instructions (envelope.rs @ 7effaaaf).
+ * Called with the cursor just past an empty push. The two `accept` probes
+ * (OP_IF, then the "ord" marker) peek without consuming, so on mismatch the
+ * probed instruction is left for the outer scan to re-examine, and stutter
+ * reports whether that instruction is an empty push. Once inside the payload
+ * loop every instruction is consumed, and failures (disallowed opcode, script
+ * end before OP_ENDIF) return stutter=false.
+ */
+function fromInstructions(ops: ScriptOp[], cursor: number, stutter: boolean): Attempt {
+  if (!isOp(ops[cursor], OP_IF)) {
+    return { cursor, stutter: ops[cursor] !== undefined && isEmptyPush(ops[cursor]) };
   }
-  const marker = ops[start + 2];
-  if (!marker || !isOrdMarker(marker)) {
-    return { endedOnEmptyPush: marker !== undefined && isEmptyPush(marker) };
+  cursor++;
+  if (ops[cursor] === undefined || !isOrdMarker(ops[cursor])) {
+    return { cursor, stutter: ops[cursor] !== undefined && isEmptyPush(ops[cursor]) };
   }
+  cursor++;
   const payload: Uint8Array[] = [];
   let pushnum = false;
-  let i = start + 3;
-  while (i < ops.length) {
-    const op = ops[i];
-    if (op.opcode === OP_ENDIF) {
-      return { envelope: { payload, pushnum, nextIndex: i + 1 }, endedOnEmptyPush: false };
+  for (;;) {
+    const op = ops[cursor];
+    if (op === undefined) return { cursor, stutter: false }; // script end before OP_ENDIF
+    cursor++;
+    if (isOp(op, OP_ENDIF)) {
+      return { cursor, stutter: false, envelope: { payload, pushnum, stutter } };
     }
     const decoded = payloadBytes(op);
-    if (!decoded) {
-      return { endedOnEmptyPush: isEmptyPush(op) };
-    }
+    if (!decoded) return { cursor, stutter: false }; // disallowed opcode
     payload.push(decoded.bytes);
     pushnum ||= decoded.pushnum;
-    i++;
   }
-  // ran off the end without OP_ENDIF
-  return { endedOnEmptyPush: false };
 }
 
-/** Parse all envelopes out of one tapscript, with ord's stutter semantics approximated. */
+/**
+ * Parse all envelopes out of one tapscript — an instruction-for-instruction
+ * port of ord's RawEnvelope::from_tapscript (envelope.rs @ 7effaaaf):
+ *
+ * - A single forward cursor plays the role of ord's shared Instructions
+ *   iterator. A failed attempt never rewinds: instructions it consumed
+ *   (including empty pushes inside a failed payload) are skipped by the outer
+ *   scan, not re-considered as envelope starts.
+ * - `stuttered` is ASSIGNED (not or-ed) after every failed attempt — a later
+ *   failure at a non-empty-push instruction clears it — and is NOT reset when
+ *   an envelope succeeds; ord only writes it in the failure branch.
+ * - Any script parse error (truncated push) discards the entire tapscript,
+ *   envelopes already parsed included (ord: from_tapscript returns Err, and
+ *   from_transaction drops the input's envelopes).
+ */
 export function parseEnvelopesFromScript(
   script: Uint8Array,
 ): Omit<RawEnvelope, 'input' | 'index' | 'offsetInInput'>[] {
   let ops: ScriptOp[];
   try {
-    ops = parseScript(script, { lenient: true });
+    ops = parseScript(script);
   } catch {
     return [];
   }
   const envelopes: Omit<RawEnvelope, 'input' | 'index' | 'offsetInInput'>[] = [];
-  let pendingStutter = false;
-  let i = 0;
-  while (i < ops.length) {
-    if (!isEmptyPush(ops[i])) {
-      i++;
-      continue;
-    }
-    const attempt = attemptEnvelope(ops, i);
+  let stuttered = false;
+  let cursor = 0;
+  while (cursor < ops.length) {
+    const instruction = ops[cursor++];
+    if (!isEmptyPush(instruction)) continue;
+    const attempt = fromInstructions(ops, cursor, stuttered);
+    cursor = attempt.cursor;
     if (attempt.envelope) {
-      envelopes.push({
-        payload: attempt.envelope.payload,
-        pushnum: attempt.envelope.pushnum,
-        stutter: pendingStutter,
-      });
-      pendingStutter = false;
-      i = attempt.envelope.nextIndex;
+      envelopes.push(attempt.envelope);
     } else {
-      pendingStutter ||= attempt.endedOnEmptyPush;
-      i++;
+      stuttered = attempt.stutter;
     }
   }
   return envelopes;

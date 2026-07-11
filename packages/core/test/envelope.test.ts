@@ -537,3 +537,63 @@ describe('ord envelope.rs test corpus (@7effaaaf)', () => {
     ]);
   });
 });
+
+/**
+ * Consume-semantics parity locks derived from ord's implementation
+ * (RawEnvelope::from_tapscript / from_instructions @ 7effaaaf) rather than its
+ * test corpus — these are the behaviors the corpus does not pin down, where a
+ * rescanning parser would diverge from ord.
+ */
+describe('ord from_tapscript consume semantics (beyond the corpus)', () => {
+  it('does not re-scan instructions consumed by a failed envelope attempt', () => {
+    // OP_FALSE OP_IF "ord" OP_FALSE OP_IF "ord" OP_ENDIF OP_DUP: the first
+    // attempt consumes the inner OP_FALSE as payload and dies on the inner
+    // OP_IF; ord never revisits the consumed empty push, so NO envelope
+    // exists here (a rescanning parser would find one).
+    const s = script(0x00, 0x63, 'ord', 0x00, 0x63, 'ord', 0x68, 0x76);
+    expect(parseEnvelopesFromScript(s).length).toBe(0);
+  });
+
+  it('resumes at the instruction that failed an accept probe (peek, not consume)', () => {
+    // the "x" push fails the "ord" accept probe unconsumed; the scan
+    // re-examines it (not an empty push) and the next envelope parses clean
+    const s = script(0x00, 0x63, 'x', 0x00, 0x63, 'ord', 0x68);
+    const envs = parseEnvelopesFromScript(s);
+    expect(envs.length).toBe(1);
+    expect(envs[0].stutter).toBe(false);
+  });
+
+  it('payload-stage failure reports stutter=false even when the next instruction is an empty push', () => {
+    // OP_FALSE OP_IF "ord" OP_DUP then a valid envelope: ord's payload loop
+    // returns (false, None) unconditionally, so the following envelope is
+    // NOT marked stuttered despite starting right after a failure
+    const s = script(0x00, 0x63, 'ord', 0x76, 0x00, 0x63, 'ord', 0x68);
+    const envs = parseEnvelopesFromScript(s);
+    expect(envs.length).toBe(1);
+    expect(envs[0].stutter).toBe(false);
+  });
+
+  it('stutter persists across an intervening successful envelope', () => {
+    // ord assigns `stuttered` only in from_tapscript's failure branch; a
+    // successful envelope does not clear it, so BOTH envelopes report
+    // stutter=true here
+    const s = script(0x00, 0x00, 0x63, 'ord', 0x68, 0x00, 0x63, 'ord', 0x68);
+    const envs = parseEnvelopesFromScript(s);
+    expect(envs.map((e) => e.stutter)).toEqual([true, true]);
+  });
+
+  it('a script error discards the whole tapscript but not other inputs', () => {
+    const good = script(0x00, 0x63, 'ord', Uint8Array.of(1), 'text/plain', new Uint8Array(0), 'ok', 0x68);
+    const bad = concatBytes(good, Uint8Array.of(0x4c)); // OP_PUSHDATA1 with no length byte
+    const inscs = inscriptionsFromTx(
+      txWithWitnesses([
+        [bad, new Uint8Array(0)],
+        [good, new Uint8Array(0)],
+      ]),
+    );
+    expect(inscs.length).toBe(1);
+    expect(inscs[0].input).toBe(1);
+    expect(inscs[0].index).toBe(0);
+    expect(new TextDecoder().decode(inscs[0].body)).toBe('ok');
+  });
+});
