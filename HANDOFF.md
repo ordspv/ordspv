@@ -10,7 +10,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), cross-chain
   embedding guide (docs/CROSS-CHAIN.md), all grounded in the cited research synthesis
   (docs/RESEARCH.md).
-- **Working code, 113 tests, all offline-runnable**: `@ord-resolver/core`
+- **Working code, 143 tests, all offline-runnable**: `@ord-resolver/core`
   (consensus primitives, ord-exact envelope parser, L2/L3 proof verification),
   `@ord-resolver/fetch` (verified resolver: failover backends, checkpoint + M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling),
@@ -25,17 +25,22 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network — the build sandbox had none)
 
-1. `npm install && npm test && npx tsc --noEmit` — expect 113 green.
+1. `npm install && npm test && npx tsc --noEmit` — expect 143 green.
 2. `npx tsx scripts/fetch-fixtures.ts` — byte-compares vendored fixtures against live
-   esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. L3-over-live
-   (raw block download → wtxid tree) is the one flow the sandbox could not run;
-   synthetic coverage says it works, live confirmation is step one.
+   esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
+   green 2026-07-11, before and after the envelope-parser rewrite.)*
 3. Re-verify the 824544 checkpoint hash in `packages/fetch/src/headertrust.ts`
-   against your own node/two explorers (it was cross-checked via two public APIs but
-   is not cryptographically re-verified in tests, unlike 0 and 767430).
-4. Vendor extended vectors: `npx tsx scripts/fetch-fixtures.ts <ids…>` with a
-   delegate-using, a brotli-encoded, an `i>0`, and a chunked-metadata inscription;
-   turn the emitted bundles into offline tests mirroring `resolver.test.ts`.
+   against your own node/two explorers. *(Confirmed identical on mempool.space,
+   blockstream.info, blockchain.info 2026-07-11; still not re-verified in tests.)*
+4. ~~Vendor extended vectors~~ **DONE 2026-07-11** — seven mainnet vectors in
+   `fixtures/extended/` (pushnum pre-Jubilee cursed, i>0+pointer batch, brotli,
+   gzip+note, chunked >520B metadata, delegate with empty body, delegate target),
+   offline-tested in `packages/fetch/test/extended.test.ts`. Additionally
+   `scripts/parity-sweep.ts` cross-checks the parser against a live ord instance
+   (existence/index/count via 404-at-i(count), content_type, content_length,
+   delegate, body sha256 incl. tag-9 encodings, metadata hex, pre-Jubilee curse
+   charm) over a wider corpus incl. a 666-envelope batch and a multi-input
+   reveal — 142 checks green on 2026-07-11, zero mismatches.
 
 ## Known deltas vs ord to reconcile (small, flagged in code)
 
@@ -49,22 +54,32 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 - Parent values: ord's `take_array` keeps invalid encodings in the list (we drop
   non-parsing values when surfacing `parents[]`; raw values remain available via
   `splitPayload`). Decide whether to expose both explicitly.
-- `/r/undelegated-content` nuance: for an inscription with NO body but a delegate,
-  bare-URI resolution correctly fails — add a live conformance check against ordinals.com
-  behavior when extending vectors.
+- ~~`/r/undelegated-content` nuance~~ **CONFIRMED 2026-07-11**: live sweep shows
+  ord 404s `/r/undelegated-content` for a no-body delegate inscription (bare-URI
+  failure is correct, `69696d8f…i0`), and serves 0 bytes for an EMPTY-but-present
+  body (`0028084b…i0`) — our resolver matches both (offline test in
+  extended.test.ts locks the empty-body case). The check is a standing part of
+  scripts/parity-sweep.ts.
 
 ## Prioritized roadmap
 
 **P0 — harden the core claim**
-1. Live L3 + extended vectors (above). *L3-over-live confirmed 2026-07-11
-   (checklist items 1–3 all green, checkpoint 824544 re-verified against
-   mempool.space/blockstream/blockchain.info); extended vectors still open.*
+1. ~~Live L3 + extended vectors~~ **DONE 2026-07-11** — live L3 confirmed,
+   checkpoint re-verified, seven extended vectors vendored + offline-tested,
+   live parity sweep green (checklist above).
 2. ~~Port ord's envelope test corpus~~ **DONE 2026-07-11** — all 41 corpus tests
    from envelope.rs `mod tests` ported by name into `envelope.test.ts`, plus 5
    consume-semantics locks beyond the corpus; parser rewritten to match (see
    Known deltas).
-3. Property/fuzz tests: random scripts through the envelope parser (never panic,
-   never mis-index); malformed bundle fuzzing on `verifyProofBundle`.
+3. ~~Property/fuzz tests~~ **DONE 2026-07-11** — seeded (reproducible) fuzz:
+   `envelope.fuzz.test.ts` (parser total + deterministic over random bytes,
+   grammar-biased soup, and mutations of the real vendored tapscripts; body
+   rule and dense index/offset numbering as properties) and
+   `proofbundle.fuzz.test.ts` (attestation-invariance: ~700 seeded mutations of
+   9 real/synthetic bundles must be rejected or leave the attestation
+   byte-identical; cross-bundle splices, garbage inputs, id re-addressing;
+   explicit locks that height is trustHeader's job and that L2's sig-witness
+   gap is real while L3 closes it).
 
 **P1 — make it adoptable**
 4. Build pipeline: tsup/tsc dual ESM+types, browser bundle for core+fetch (core is
