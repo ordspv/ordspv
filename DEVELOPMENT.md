@@ -11,6 +11,8 @@
 - `npx tsx scripts/parity-sweep.ts` — envelope-parser parity vs a live ord
   instance (`ORD_BASE` to point at your own) over a curated corpus of eras and
   features; ANY mismatch is a P0 bug per invariant 2
+- `npx tsx scripts/build-demo.ts` / `scripts/build-extension.ts` — regenerate the
+  committed demo page (examples/) and extension dist-unpacked/
 - `npm run build` — tsup ESM + tsc declarations + browser bundle (fetch), then
   publish staging + pack dry-run into `build/staging/` (repo package.json keeps
   exporting src/*.ts — dev always runs live sources; staging is the publish shape;

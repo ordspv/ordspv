@@ -53,7 +53,7 @@ inscriber-level caveat precisely characterized, tested, and surfaced as assuranc
 
 ```bash
 npm install
-npm test                                  # 165 tests, incl. real mainnet vectors, offline
+npm test                                  # 185 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json
@@ -70,6 +70,15 @@ GATEWAY_MODE=verify npx tsx packages/gateway/src/index.ts
 import { ordFetch } from '@ord-resolver/fetch';
 const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 ```
+
+## Try it
+
+- **[examples/verify-inscription-0.html](examples/verify-inscription-0.html)** — open
+  the file: your browser fetches inscription 0 and verifies every byte against
+  Bitcoin PoW client-side, then renders it. No server, no build step.
+- **[extension/](extension/README.md)** — MV3 extension: gateway-URL interception,
+  `ord:` links, and an in-browser verifying viewer. `chrome://extensions` → Load
+  unpacked → `extension/dist-unpacked/`.
 
 ## Documents
 

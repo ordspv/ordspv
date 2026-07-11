@@ -10,7 +10,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), cross-chain
   embedding guide (docs/CROSS-CHAIN.md), all grounded in the cited research synthesis
   (docs/RESEARCH.md).
-- **Working code, 165 tests, all offline-runnable**: `@ord-resolver/core`
+- **Working code, 185 tests, all offline-runnable**: `@ord-resolver/core`
   (consensus primitives, ord-exact envelope parser, L2/L3 proof verification),
   `@ord-resolver/fetch` (verified resolver: failover backends, checkpoint + M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling),
@@ -25,7 +25,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network — the build sandbox had none)
 
-1. `npm install && npm test && npx tsc --noEmit` — expect 143 green.
+1. `npm install && npm test && npx tsc --noEmit` — expect 185 green.
 2. `npx tsx scripts/fetch-fixtures.ts` — byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
    green 2026-07-11, before and after the envelope-parser rewrite.)*
@@ -92,10 +92,17 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
    root/branch verification, drop-in `trustHeader` (resolver option). Real 2120-header
    mainnet fixture crossing the 768096 retarget boundary. Browser story documented in
    SPEC-VERIFICATION §4.
-6. Gateway productionization: streaming bodies, LRU + immutable CDN headers (done),
-   rate limits, metrics, Docker; subdomain-per-inscription origin isolation option.
-7. Browser extension / service-worker resolver ("IPFS Companion for ord:") rewriting
-   `ord:` and gateway URLs through `ordFetch`.
+6. ~~Gateway productionization~~ **DONE 2026-07-11** — byte-budget LRU (x-cache),
+   per-IP token bucket, prometheus /metrics + JSON logs, streaming passthrough
+   (verified responses buffered by necessity), graceful shutdown, deploy/
+   Dockerfile+compose (bitcoind→electrs→gateway, signet default). SPEC-GATEWAY §7
+   rewritten. Origin isolation (subdomain-per-id) still future work.
+7. ~~Browser extension~~ **DONE 2026-07-11** — extension/ (MV3): dNR gateway
+   interception → verifying viewer (browser bundle, L2 default/L3 toggle),
+   per-site ord: links via just-in-time host permissions, omnibox; unpacked-
+   loadable dist committed; store submission = identity-gated later step.
+   Also examples/verify-inscription-0.html — the self-contained click-and-watch
+   demo (all steps verified live in-browser).
 
 **P2 — ecosystem moves** (sequencing rationale in CROSS-CHAIN.md)
 8. Upstream coordination — **BUILT 2026-07-11, POSTING PENDING SIGN-OFF**:
@@ -110,7 +117,9 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
      node operators serve L2/L3 without esplora.
    - Drafts in docs/upstream/ (DRAFT-ONLY, do not post without sign-off): ord
      URI-extensions discussion (#3780 + uris.md + IANA offer), esplora witness-proof
-     PR text with the patch attached. All pseudonymous.
+     PR text with the patch attached, CAIP-19 `ordinals` namespace profile. All
+     pseudonymous. Going-public sequencing: docs/upstream/GOING-PUBLIC.md; rename
+     inventory: docs/upstream/NAMING.md (scope/name stay placeholders until then).
 9. CAIP-19 namespace profile for inscriptions (none exists; open lane).
 10. Rust port of core verification (share test vectors) for wallet embedding.
 11. zk wrapper exploration: proof bundles are already the right witness format for a
