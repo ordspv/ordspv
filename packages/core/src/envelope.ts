@@ -13,7 +13,7 @@ import type { ParsedTx } from './tx.js';
  * Payload rules:
  * - Data pushes (any encoding) are payload items. OP_PUSHNUM_NEG1/OP_PUSHNUM_1..16
  *   are ACCEPTED, decoded to [0x81] / [1]..[16], and set the `pushnum` flag.
- * - Any other opcode, or script end before OP_ENDIF, discards the envelope —
+ * - Any other opcode, or script end before OP_ENDIF, discards the envelope,
  *   and everything the failed attempt consumed stays consumed (see
  *   parseEnvelopesFromScript for the scan/stutter rules).
  * - Fields are (tag, value) pairs consumed from the payload; the body starts at
@@ -21,7 +21,7 @@ import type { ParsedTx } from './tx.js';
  *   legal empty value). Body = concatenation of every payload item after the
  *   separator. An odd field count sets `incompleteField`.
  * - `duplicateField` = any tag byte-string appearing more than once (computed
- *   over the raw field list, so chunked metadata also sets it — matching ord).
+ *   over the raw field list, so chunked metadata also sets it, matching ord).
  * - Interpretation ("take") semantics: parent (3) keeps all values;
  *   metadata (5) and properties (17) concatenate all values; every other
  *   recognized tag takes its FIRST value only. After taking, any leftover
@@ -29,7 +29,7 @@ import type { ParsedTx } from './tx.js';
  *   (=> unbound in ord).
  *
  * Envelope index (the `iN` of inscription IDs) counts every successfully
- * parsed envelope — cursed or not — in witness order across all inputs.
+ * parsed envelope, cursed or not, in witness order across all inputs.
  *
  * Tag table (ord tag.rs): 1 content_type, 2 pointer, 3 parent, 5 metadata,
  * 7 metaprotocol, 9 content_encoding, 11 delegate, 13 rune, 15 note (no-op),
@@ -130,7 +130,7 @@ function payloadBytes(op: ScriptOp): { bytes: Uint8Array; pushnum: boolean } | u
   return undefined;
 }
 
-/** Instruction::Op(opcode) equality — a data push never equals an opcode. */
+/** Instruction::Op(opcode) equality; a data push never equals an opcode. */
 function isOp(op: ScriptOp | undefined, opcode: number): boolean {
   return op !== undefined && op.data === undefined && op.opcode === opcode;
 }
@@ -178,15 +178,15 @@ function fromInstructions(ops: ScriptOp[], cursor: number, stutter: boolean): At
 }
 
 /**
- * Parse all envelopes out of one tapscript — an instruction-for-instruction
+ * Parse all envelopes out of one tapscript: an instruction-for-instruction
  * port of ord's RawEnvelope::from_tapscript (envelope.rs @ 7effaaaf):
  *
  * - A single forward cursor plays the role of ord's shared Instructions
  *   iterator. A failed attempt never rewinds: instructions it consumed
  *   (including empty pushes inside a failed payload) are skipped by the outer
  *   scan, not re-considered as envelope starts.
- * - `stuttered` is ASSIGNED (not or-ed) after every failed attempt — a later
- *   failure at a non-empty-push instruction clears it — and is NOT reset when
+ * - `stuttered` is ASSIGNED (not or-ed) after every failed attempt (a later
+ *   failure at a non-empty-push instruction clears it) and is NOT reset when
  *   an envelope succeeds; ord only writes it in the failure branch.
  * - Any script parse error (truncated push) discards the entire tapscript,
  *   envelopes already parsed included (ord: from_tapscript returns Err, and
@@ -265,7 +265,7 @@ export function splitPayload(payload: Uint8Array[]): EnvelopeFields {
 /**
  * Decode an inscription-ID field value: 32-byte txid (internal order) plus up
  * to 4 little-endian index bytes with trailing zeros stripped (canonical form
- * required — ord rejects values with trailing zero index bytes).
+ * required; ord rejects values with trailing zero index bytes).
  */
 export function parseInscriptionIdValue(value: Uint8Array): string | undefined {
   if (value.length < 32 || value.length > 36) return undefined;

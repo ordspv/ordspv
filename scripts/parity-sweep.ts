@@ -8,7 +8,7 @@
  *   - /r/inscription/<id>       exists, content_type, content_length, delegate,
  *                               and (pre-Jubilee, envelope-derivable curses only)
  *                               the `cursed` charm
- *   - /r/inscription/<txid>i<count>  must 404 — locks our per-tx envelope COUNT
+ *   - /r/inscription/<txid>i<count>  must 404, locking our per-tx envelope COUNT
  *   - /r/undelegated-content    byte-for-byte body parity (sha256; for encoded
  *                               bodies our STORED bytes are decompressed first,
  *                               because fetch() transparently decodes transport
@@ -83,7 +83,7 @@ let failures = 0;
 
 function check(ok: boolean, what: string, detail = ''): void {
   if (!ok) failures++;
-  console.log(`    ${ok ? '✓' : '✗ MISMATCH'} ${what}${detail ? ` — ${detail}` : ''}`);
+  console.log(`    ${ok ? '✓' : '✗ MISMATCH'} ${what}${detail ? `: ${detail}` : ''}`);
 }
 
 function note(what: string): void {
@@ -202,7 +202,7 @@ async function sweep(id: string, label: string): Promise<void> {
     check(content.status === 200, '/r/undelegated-content serves the body', `ord HTTP ${content.status}`);
     if (content.status === 200) {
       // fetch() transport-decodes whatever content-encoding the response
-      // carries — the inscription's own tag-9 encoding (ord serves stored
+      // carries: the inscription's own tag-9 encoding (ord serves stored
       // bytes + the header) and CDN transport compression alike. So: if WE
       // parsed a tag-9 encoding, our stored bytes must decode to the fetched
       // bytes; otherwise the fetched bytes must equal our stored bytes as-is.
@@ -278,5 +278,5 @@ for (const txid of new Set(ids.map(([id]) => id.slice(0, 64)))) {
   }
 }
 
-console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED — parity bug, treat as P0`}`);
+console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED: parity bug, treat as P0`}`);
 process.exitCode = failures === 0 ? 0 : 1;

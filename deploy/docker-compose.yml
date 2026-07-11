@@ -1,7 +1,7 @@
 # Reference deployment: bitcoind + electrs (esplora HTTP API) + verify-gateway.
 # Defaults to SIGNET so a laptop can sync it in minutes-to-hours; switch the
 # three *_NETWORK values to mainnet for real deployments (mainnet electrs
-# needs ~1 TB and days to index — see SPEC-GATEWAY §7).
+# needs ~1 TB and days to index; see SPEC-GATEWAY §7).
 # Values marked ADJUST are deployment-specific.
 
 services:

@@ -2,7 +2,7 @@
  * Content-encoding handling. Inscription bodies are stored (and integrity-
  * hashed) in their on-chain encoded form; presentation may require decoding.
  * Node decodes br/gzip via node:zlib; browsers can decode gzip/deflate via
- * DecompressionStream but generally lack brotli — callers there should either
+ * DecompressionStream but generally lack brotli; callers there should either
  * ship a wasm brotli or serve the encoded bytes with a Content-Encoding
  * header and let the browser's HTTP layer handle it.
  */

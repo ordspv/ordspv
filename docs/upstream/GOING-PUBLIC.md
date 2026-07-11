@@ -1,7 +1,7 @@
-# GOING-PUBLIC.md — ordered checklist
+# GOING-PUBLIC.md: ordered checklist
 
 Everything below is sequenced; do not reorder without thinking about why the
-order exists. Identity rule for every step: the pseudonym only — no personal
+order exists. Identity rule for every step: the pseudonym only. No personal
 emails, no real names, no accounts linked to other identities, no reuse of
 API keys/sessions tied to them. Steps marked 【identity】 need a human at the
 keyboard by their nature (account creation, payments, store listings).
@@ -9,7 +9,7 @@ keyboard by their nature (account creation, payments, store listings).
 ## 0. Preconditions (blockers for everything else)
 
 - [x] **Identity rewrite (completed 2026-07-11).** Full history of this repo
-      and the electrs branch commits (`new-index..witness-merkle-proof` only —
+      and the electrs branch commits (`new-index..witness-merkle-proof` only;
       upstream Blockstream history untouched so the fork still shares commit
       ids with upstream) rewritten via git-filter-repo: all author/committer
       names+emails → `ordspv <ordspv@users.noreply.github.com>`, all
@@ -18,10 +18,10 @@ keyboard by their nature (account creation, payments, store listings).
       regenerated from the rewritten branch. Local `git config user.*` set in
       both repos. Conventions going forward: commit with `TZ=UTC` so offsets
       stay +0000. **Standing committer identity (set 2026-07-11, both repos,
-      repo-local config): `ordspv <302645753+ordspv@users.noreply.github.com>`**
-      — the id-prefixed noreply form, now that the GitHub account exists. All
+      repo-local config): `ordspv <302645753+ordspv@users.noreply.github.com>`**,
+      the id-prefixed noreply form, now that the GitHub account exists. All
       future commits use it.
-- [x] **Name decided + rename executed (2026-07-11):** `ordspv` — scope
+- [x] **Name decided + rename executed (2026-07-11):** `ordspv`. Scope
       `@ordspv/*`, canonical repo `github.com/ordspv/ordspv`, electrs fork
       `github.com/ordspv/electrs`. NAMING.md inventory applied in one commit
       (manifests+lock, imports, configs, docs, drafts, extension manifest,
@@ -39,9 +39,10 @@ keyboard by their nature (account creation, payments, store listings).
       `grep -rniE -f private/sweep-terms.txt . | grep -v node_modules`
 - [ ] Git history authorship check: `git log --format='%an %ae %cn %ce' | sort -u`
       → only the pseudonymous identity + the tool trailer.
-- [ ] **Local-path / machine sweep (STANDING — run with every sweep):**
-      `grep -rn "$HOME path\|machine hostname" …` (the literal home path and the
-      machine hostname) across BOTH worktrees, packed tarball contents
+- [ ] **Local-path / machine sweep (STANDING; run with every sweep):**
+      grep for the literal `$HOME` path and the machine hostname (`hostname`),
+      derived locally and never written down, across BOTH worktrees, packed
+      tarball contents
       (`npm pack` each staged package and grep the extraction), the demo
       inline bundle, extension dist-unpacked, all `*.js.map` source maps, and
       the vendored `.patch` files. Zero hits expected everywhere; the only
@@ -55,8 +56,8 @@ keyboard by their nature (account creation, payments, store listings).
       paths through personal accounts).
 - [ ] npm account under the pseudonym; create the org/scope; enable 2FA and
       granular publish tokens.
-- [ ] (optional, for posts) accounts on the forums where the drafts land —
-      GitHub covers ord + esplora + CAIPs.
+- [ ] (optional, for posts) accounts on the forums where the drafts land.
+      GitHub covers ord, esplora, and CAIPs.
 
 ## 2. Repo push (CI goes live here)
 
@@ -84,7 +85,7 @@ keyboard by their nature (account creation, payments, store listings).
       `docs/upstream/patches/electrs-witness-merkle-proof/` is the backup if
       the PR must be re-rolled.
 
-## 4. npm publish (order matters — dependents after dependencies)
+## 4. npm publish (dependents after dependencies)
 
 ```
 core → fetch → gateway, cli, sidecar
@@ -97,14 +98,14 @@ core → fetch → gateway, cli, sidecar
       `npx @ordspv/cli ord:<insc0-id> --json`.
 - [ ] Tag the repo (`v0.1.0`) at the published commit.
 
-## 5. Posts (each is a draft in this directory — final read before sending)
+## 5. Posts (each is a draft in this directory; final read before sending)
 
 Order: code-bearing first, then the discussion that links to it.
 
 - [ ] Blockstream/electrs PR: `esplora-witness-proof-draft.md`
       (branch from step 3; bench numbers already in the draft). Include the
       API.md addition for Blockstream/esplora as noted in the draft.
-- [ ] ordinals/ord Discussion: `ord-uri-extensions-draft.md` — links are
+- [ ] ordinals/ord Discussion: `ord-uri-extensions-draft.md`. Links are
       concrete (github.com/ordspv/…); post referencing #3780.
 - [ ] ChainAgnostic/namespaces PR: `caip19-inscriptions.md` (re-derive the
       signet chain id first, per its posting notes).
@@ -115,14 +116,14 @@ Order: code-bearing first, then the discussion that links to it.
 
 - [ ] Watch the parity sweep weekly against ordinals.com (ord upgrades can
       shift behavior; any mismatch is a P0).
-- [ ] Track upstream review feedback; the electrs branch rebases cleanly —
+- [ ] Track upstream review feedback. The electrs branch rebases cleanly;
       keep it PR-ready.
-- [ ] Browser-extension store submission is deliberately NOT in this list —
-      it is a separate 【identity】 workstream (developer accounts, listing
+- [ ] Browser-extension store submission is deliberately NOT in this list.
+      It is a separate 【identity】 workstream (developer accounts, listing
       assets, privacy policy hosting) queued behind adoption signals.
 
 ## Explicit non-goals right now
 
 - No mainnet-facing hosted gateway under the project's name (operational
   commitment + abuse surface; revisit with infrastructure).
-- No token, no fundraising, no "official" anything — infrastructure only.
+- No token, no fundraising, no "official" anything. Infrastructure only.

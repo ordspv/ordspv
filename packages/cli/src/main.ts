@@ -11,7 +11,7 @@ import {
 } from '@ordspv/fetch';
 
 /**
- * ord-resolve — resolve and verify ord: URIs from the command line.
+ * ord-resolve: resolve and verify ord: URIs from the command line.
  *
  *   ord-resolve <uri>                          resolve, bytes to stdout
  *   ord-resolve <uri> --out file.png           resolve to a file

@@ -3,13 +3,13 @@
  * Build pipeline: tsup (esbuild) ESM builds + bundled .d.ts per package, a
  * browser bundle for core+fetch (node decompress path swapped), and a
  * publish-staging assembly under build/staging/<pkg>/ whose package.json
- * points at dist/ — the repo's own package.json files keep exporting src/*.ts
+ * points at dist/. The repo's own package.json files keep exporting src/*.ts
  * so tsx scripts and vitest always run live sources (no stale-dist hazard).
  *
  *   npx tsx scripts/build.ts                    # build + stage + npm pack --dry-run
  *   npx tsx scripts/build.ts --publish-dry-run  # additionally npm publish --dry-run
  *
- * Scope: @ordspv/* — canonical repo github.com/ordspv/ordspv. Nothing here
+ * Scope: @ordspv/*, canonical repo github.com/ordspv/ordspv. Nothing here
  * posts anywhere; publish is a manual GOING-PUBLIC.md step.
  */
 import { execFileSync } from 'node:child_process';
@@ -48,7 +48,7 @@ const browserDecompress = {
 };
 
 async function buildAll(): Promise<void> {
-  // core: browser-safe as-is (noble only) — one neutral build serves both
+  // core: browser-safe as-is (noble only); one neutral build serves both
   await build({
     ...COMMON,
     entry: { index: join(ROOT, 'packages/core/src/index.ts') },

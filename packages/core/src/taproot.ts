@@ -9,7 +9,7 @@ import { taggedHash } from './hash.js';
  * and the scriptPubKey of the output being spent (from the commit tx, which is
  * txid-committed data), verify that the script is committed by the taproot
  * output key. This binds envelope bytes to the commit output without needing
- * the block's wtxid tree — see the verification spec for exactly what this
+ * the block's wtxid tree; see the verification spec for exactly what this
  * does and does not prove (L2 vs L3).
  */
 

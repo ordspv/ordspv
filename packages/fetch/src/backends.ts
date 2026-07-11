@@ -4,7 +4,7 @@
  * - EsploraBackend: any esplora-API instance (mempool.space, blockstream.info,
  *   self-hosted electrs/esplora). Serves every proof ingredient: raw txs,
  *   txid merkle proofs, headers, block metadata, raw blocks. CANNOT serve
- *   content by inscription id — that's fine; the resolver derives content
+ *   content by inscription id. That's fine; the resolver derives content
  *   from the reveal tx itself.
  *
  * - OrdBackend: any ord server (ordinals.com, self-hosted). Serves content,

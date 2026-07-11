@@ -13,7 +13,7 @@ import type { EsploraBackend } from './backends.js';
  *    operated by unrelated parties) for the hash at the proof's height and
  *    require M agreements including our header.
  * 3. (roadmap) Full header-chain sync from P2P/Electrum with checkpointed
- *    difficulty validation — removes the server honesty assumption entirely.
+ *    difficulty validation, which removes the server honesty assumption entirely.
  */
 
 /** Well-known mainnet checkpoints (height -> display-order block hash). */

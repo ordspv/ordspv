@@ -48,7 +48,7 @@ export interface ResolverOptions {
   checkpoints?: ReadonlyMap<number, string>;
   /**
    * Replace checkpoint/M-of-N anchoring entirely with a custom header anchor
-   * (e.g. headerSyncTrust over a locally synced chain — see
+   * (e.g. headerSyncTrust over a locally synced chain; see
    * `@ordspv/fetch/headersync`). Throw to reject the header.
    */
   trustHeader?: (header: BlockHeader, height: number) => Promise<HeaderTrustReport>;
@@ -76,7 +76,7 @@ export interface ResolveResult {
   contentEncoding?: string;
   /**
    * tag-9 content-encoding declared by the SERVED source's envelope, from the
-   * envelope parse (attestation-grade — transport headers are ambiguous through
+   * envelope parse (attestation-grade; transport headers are ambiguous through
    * CDNs). Unlike `contentEncoding` it survives decoding; only set on verified
    * paths, where the envelope was actually parsed.
    */
@@ -351,7 +351,7 @@ export function toResponse(result: ResolveResult): Response {
   headers.set('content-type', result.contentType ?? 'application/octet-stream');
   if (result.contentEncoding) headers.set('content-encoding', result.contentEncoding);
   // attestation: the envelope's tag-9 encoding, NEVER copied from transport
-  // headers (SPEC-GATEWAY §5 — Content-Encoding is ambiguous through CDNs)
+  // headers (SPEC-GATEWAY §5; Content-Encoding is ambiguous through CDNs)
   if (result.storedContentEncoding) {
     headers.set('x-ord-content-encoding', result.storedContentEncoding);
   }

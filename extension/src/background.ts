@@ -1,7 +1,7 @@
 /**
  * Service worker: owns the declarativeNetRequest rules (gateway → viewer
  * redirects), the omnibox keyword, and per-site content-script registration.
- * Deliberately dependency-free — all resolution/verification happens in the
+ * Deliberately dependency-free; all resolution/verification happens in the
  * viewer page.
  */
 import { DEFAULT_GATEWAY_HOSTS, dnrRuleForHost, normalizeOrdInput, viewerUrl } from './urlmap.js';

@@ -1,6 +1,6 @@
-# NAMING.md — every touch point a scope/name change hits
+# NAMING.md: every touch point a scope/name change hits
 
-**EXECUTED 2026-07-11:** the rename landed as one commit — placeholder
+**EXECUTED 2026-07-11:** the rename landed as one commit: placeholder
 `@ord-resolver/*` → `@ordspv/*`, repo name `ord-resolver` → `ordspv`
 (canonical URL github.com/ordspv/ordspv). Every touch point below was applied:
 manifests + regenerated lockfile, imports, build configs, docs/specs/drafts
@@ -8,7 +8,7 @@ manifests + regenerated lockfile, imports, build configs, docs/specs/drafts
 fields added to all five manifests, and all derived artifacts regenerated
 (demo inline bundle, extension dist-unpacked, publish staging with pack +
 publish dry-runs under the real scope). Bin names `ord-resolve` and
-`ord-proof-sidecar` were KEPT deliberately — they are descriptive commands,
+`ord-proof-sidecar` were KEPT deliberately; they are descriptive commands,
 not project identity. The old placeholder strings in this file are the
 intentional historical record (the post-rename grep's only expected hits).
 
@@ -28,8 +28,8 @@ Touch points by kind:
 - `packages/{core,fetch,gateway,cli,sidecar}/package.json` (`name` + workspace
   `dependencies` on `@ord-resolver/*`)
 - `packages/sidecar/package.json` bin name `ord-proof-sidecar` (decide: keep or
-  rename bins `ord-resolve`/`ord-proof-sidecar` — they are user-facing commands)
-- `package-lock.json` — do NOT hand-edit; run `npm install` after the manifest
+  rename bins `ord-resolve`/`ord-proof-sidecar`; they are user-facing commands)
+- `package-lock.json`: do NOT hand-edit. Run `npm install` after the manifest
   changes and commit the regenerated lock
 
 **Imports (every `from '@ord-resolver/...'`)**
@@ -50,27 +50,27 @@ Touch points by kind:
 - `docs/spec/SPEC-URI.md`, `SPEC-VERIFICATION.md`, `SPEC-GATEWAY.md`
 - `docs/CROSS-CHAIN.md`, `docs/RESEARCH.md`
 - `examples/README.md`, `extension/README.md`
-- `docs/upstream/*.md` drafts (incl. PLACEHOLDER repo links — fill with the
+- `docs/upstream/*.md` drafts (incl. PLACEHOLDER repo links; fill with the
   real URLs in the same commit)
 
 **Extension**
-- `extension/src/manifest.json` (`name`, `description` — currently marked
+- `extension/src/manifest.json` (`name`, `description`, currently marked
   placeholder)
 - rebuild `extension/dist-unpacked/` (`npx tsx scripts/build-extension.ts`)
 
 **Generated artifacts to rebuild in the same commit**
-- `examples/verify-inscription-0.html` (`npx tsx scripts/build-demo.ts` —
-  footer names the repo)
+- `examples/verify-inscription-0.html` (`npx tsx scripts/build-demo.ts`;
+  the footer names the repo)
 - `npm run build` (staging manifests re-derive from package.json)
 
 **Outside this repo**
 - electrs fork: no name references in the patch itself (verify with
   `git -C ../electrs log -p new-index..witness-merkle-proof | grep -i resolver`),
   but the PR text in `docs/upstream/esplora-witness-proof-draft.md` links the
-  repo — fill after rename.
+  repo; fill after rename.
 - npm scope: register `@<newscope>` (or confirm availability) BEFORE the
   rename commit; scope squatting is unfixable after posts go out.
-- GitHub org/user name: same — secure it first.
+- GitHub org/user name: same. Secure it first.
 
 ## Verification after the rename
 

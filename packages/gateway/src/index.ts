@@ -31,8 +31,8 @@ export { TokenBucketLimiter } from './ratelimit.js';
  * Operational features (SPEC-GATEWAY §7): bounded byte-budget LRU on
  * immutable 200s (x-cache header), per-IP token-bucket rate limiting,
  * streaming proxy for oversized bodies, structured JSON request logs,
- * graceful shutdown. Verified responses are buffered BY NECESSITY — you
- * cannot verify a merkle proof over bytes you have not finished reading.
+ * graceful shutdown. Verified responses are buffered, because a merkle proof
+ * cannot be verified over bytes that have not all been read.
  */
 
 export interface GatewayOptions {

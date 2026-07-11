@@ -34,7 +34,7 @@ async function render(result: ResolveResult): Promise<void> {
     // still tag-9-encoded (browser build decodes gzip/deflate only, not br):
     // never render encoded bytes as their content-type
     const note = document.createElement('p');
-    note.textContent = `body is ${result.contentEncoding}-encoded on-chain and this build cannot decode it — verified stored bytes offered as download:`;
+    note.textContent = `body is ${result.contentEncoding}-encoded on-chain and this build cannot decode it; verified stored bytes offered as download:`;
     const a = document.createElement('a');
     a.href = url;
     a.download = `${result.uri.idString}.${result.contentEncoding}`;
@@ -61,7 +61,7 @@ async function render(result: ResolveResult): Promise<void> {
   } else if (type.startsWith('text/html')) {
     // sandboxed, opaque-origin iframe; scripts allowed but no same-origin
     // access. NOTE: recursive /content and /r/* references inside HTML
-    // inscriptions have no origin to resolve against here — standalone HTML
+    // inscriptions have no origin to resolve against here: standalone HTML
     // renders fine, recursive HTML needs a gateway (see README).
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
@@ -83,11 +83,11 @@ async function render(result: ResolveResult): Promise<void> {
 async function main(): Promise<void> {
   const uri = uriFromDnrHash(location.hash) ?? uriFromViewerHash(location.hash);
   if (!uri) {
-    fail('no ord: URI in the fragment — open via an ord: link, gateway redirect, or the "ord" omnibox keyword');
+    fail('no ord: URI in the fragment. Open via an ord: link, gateway redirect, or the "ord" omnibox keyword');
     return;
   }
   $('uri').textContent = uri;
-  document.title = `ord viewer — ${uri.slice(4, 24)}…`;
+  document.title = `ord viewer: ${uri.slice(4, 24)}…`;
 
   // degrade to defaults outside a real extension context (dev smoke tests)
   const hasChrome = typeof chrome !== 'undefined' && !!chrome.storage?.sync;
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     const ms = Math.round(performance.now() - started);
 
     $('status').className = 'status pass';
-    $('status').textContent = `✓ verified at ${result.verification.level} in ${ms} ms — rendered from proven bytes`;
+    $('status').textContent = `✓ verified at ${result.verification.level} in ${ms} ms; rendered from proven bytes`;
 
     fact('inscription', result.uri.idString, true);
     fact('content-type', result.contentType ?? '(none)');

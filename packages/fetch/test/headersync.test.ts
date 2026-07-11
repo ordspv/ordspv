@@ -25,7 +25,7 @@ import type { FetchFn } from '../src/backends.js';
 
 /**
  * Offline headersync tests over a REAL vendored mainnet slice:
- * fixtures/headers/mainnet-766080-2120.bin — 2120 headers from the
+ * fixtures/headers/mainnet-766080-2120.bin: 2120 headers from the
  * retarget-aligned base 766080, crossing the in-repo-verified 767430
  * checkpoint AND the 768096 retarget boundary. The slice self-verifies
  * (every header's PoW + linkage + consensus bits are recomputed here), so a
@@ -314,7 +314,7 @@ describe('headerSyncTrust as the resolver anchor (drop-in)', () => {
       [`${E}/block/${INSC0_CHECKPOINT}/header`]: read('header-767430.hex'),
       [`${E}/block/${INSC0_CHECKPOINT}`]: { id: INSC0_CHECKPOINT, height: 767430, tx_count: 2332 },
       [`${E}/tx/${COMMIT}/hex`]: read('commit.hex'),
-      // NOTE: deliberately NO /block-height or /blocks/tip routes — the sync
+      // NOTE: deliberately NO /block-height or /blocks/tip routes; the sync
       // chain is the only anchor available
     };
     const fetchFn: FetchFn = async (url) => {

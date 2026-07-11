@@ -2,7 +2,7 @@
  * Content script (registered ONLY on per-site-enabled origins): makes
  * ord:/ord:// links clickable by routing them to the extension viewer.
  * Browsers won't navigate unknown schemes, and MV3 extensions cannot register
- * protocol handlers for them — this is the IPFS-Companion-style workaround.
+ * protocol handlers for them. This is the IPFS Companion workaround.
  */
 document.addEventListener(
   'click',

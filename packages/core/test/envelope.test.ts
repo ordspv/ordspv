@@ -243,7 +243,7 @@ describe('ord envelope.rs test corpus (@7effaaaf)', () => {
     else expect(actual === undefined ? undefined : bytesToHex(actual)).toBe(bytesToHex(expected));
   };
 
-  /** assert_eq!(parse(...), vec![...]): all fields checked, not just overrides */
+  /** assert_eq!(parse(...), vec![...]): every field is checked, defaults included */
   function expectParsed(actual: Inscription[], expected: ExpectedInscription[]): void {
     expect(actual.length).toBe(expected.length);
     actual.forEach((insc, i) => {
@@ -529,7 +529,7 @@ describe('ord envelope.rs test corpus (@7effaaaf)', () => {
     expectParsed(parse([[script(0x00, 0x63, 0x00, 0x63, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
       { flags: { stutter: true } },
     ]);
-    // OP_FALSE OP_FALSE OP_AND OP_FALSE OP_IF "ord" OP_ENDIF — the failed
+    // OP_FALSE OP_FALSE OP_AND OP_FALSE OP_IF "ord" OP_ENDIF: the failed
     // attempt at the second OP_FALSE stops at OP_AND (not an empty push),
     // ASSIGNING stuttered=false; the envelope is not marked
     expectParsed(parse([[script(0x00, 0x00, 0x84, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
@@ -541,7 +541,7 @@ describe('ord envelope.rs test corpus (@7effaaaf)', () => {
 /**
  * Consume-semantics parity locks derived from ord's implementation
  * (RawEnvelope::from_tapscript / from_instructions @ 7effaaaf) rather than its
- * test corpus — these are the behaviors the corpus does not pin down, where a
+ * test corpus. These are the behaviors the corpus does not pin down, where a
  * rescanning parser would diverge from ord.
  */
 describe('ord from_tapscript consume semantics (beyond the corpus)', () => {

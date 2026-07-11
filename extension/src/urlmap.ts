@@ -1,6 +1,6 @@
 /**
  * Pure URL mapping between gateway-form URLs, ord: URIs, and the extension's
- * viewer page — kept dependency-free and unit-tested (extension/test).
+ * viewer page. Kept dependency-free and unit-tested (extension/test).
  */
 
 const ID_RE = /^[0-9a-f]{64}i\d+$/i;

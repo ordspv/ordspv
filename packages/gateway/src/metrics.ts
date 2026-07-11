@@ -1,5 +1,5 @@
 /**
- * Hand-rolled Prometheus text-format (0.0.4) registry — counters and
+ * Hand-rolled Prometheus text-format (0.0.4) registry: counters and
  * histograms with a small fixed label space. No dependency, no magic;
  * exactly what /metrics needs and nothing more.
  */

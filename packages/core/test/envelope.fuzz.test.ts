@@ -29,14 +29,14 @@ import {
  *
  * Seeds include mutations of the REAL vendored tapscripts (inscription 0 +
  * every extended fixture) so the fuzz walks realistic envelope structures,
- * not just noise.
+ * instead of pure noise.
  */
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures');
 
 const SEED = 0xd15ea5e;
 
-/** mulberry32 — tiny deterministic PRNG */
+/** mulberry32, a tiny deterministic PRNG */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -195,7 +195,7 @@ describe('envelope parser fuzz (seeded, reproducible)', () => {
       checkScriptProperties(script);
       found += parseEnvelopesFromScript(script).length;
     }
-    // tripwire: the generator must exercise the accepting paths, not just reject
+    // tripwire: the generator must actually hit the accepting paths
     expect(found).toBeGreaterThan(20);
   });
 

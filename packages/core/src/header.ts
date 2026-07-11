@@ -68,7 +68,7 @@ export function checkProofOfWork(header: BlockHeader): boolean {
 }
 
 /**
- * Compress a target into compact "bits" — exact port of arith_uint256::GetCompact
+ * Compress a target into compact "bits": exact port of arith_uint256::GetCompact
  * (round-trips consensus semantics: retarget comparisons happen in compact form,
  * so precision loss here is consensus-correct, not a bug).
  */
@@ -109,10 +109,10 @@ export const MAINNET_CHAIN_PARAMS: ChainParams = {
 };
 
 /**
- * Difficulty retarget — exact port of pow.cpp CalculateNextWorkRequired.
+ * Difficulty retarget: exact port of pow.cpp CalculateNextWorkRequired.
  * `firstTime` is the timestamp of the FIRST block of the closing period
  * (height H-interval for a boundary at H), `lastTime` of its LAST block
- * (height H-1) — Bitcoin's off-by-one 2015-block window, faithfully kept.
+ * (height H-1). Bitcoin's off-by-one 2015-block window, faithfully kept.
  * Multiplication precedes division (consensus truncation order).
  */
 export function calcNextBits(
@@ -135,7 +135,7 @@ export function calcNextBits(
   return targetToBits(target);
 }
 
-/** Expected work encoded by `bits`: floor(2^256 / (target + 1)) — chainwork summand. */
+/** Expected work encoded by `bits`: floor(2^256 / (target + 1)), the chainwork summand. */
 export function workFromBits(bits: number): bigint {
   const target = bitsToTarget(bits);
   return (1n << 256n) / (target + 1n);

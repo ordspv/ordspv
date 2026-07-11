@@ -1,4 +1,4 @@
-# DRAFT — do not post without explicit sign-off
+# DRAFT: do not post without explicit sign-off
 
 Target: PR to `ChainAgnostic/namespaces` adding `bip122/caip19.md` (the bip122
 namespace currently defines only `slip44` for native coins). Authorship:
@@ -25,8 +25,8 @@ requires: ["CAIP-19", "BIP-122"]
 *For context, see the [CAIP-19][] specification.*
 
 This profile defines the `ordinals` asset namespace for addressing **ordinals
-inscriptions** — content inscribed in Bitcoin transaction witnesses per the
-[ordinals protocol][ord-docs] — as assets within [BIP-122][] chains.
+inscriptions** (content inscribed in Bitcoin transaction witnesses per the
+[ordinals protocol][ord-docs]) as assets within [BIP-122][] chains.
 
 ## Syntax
 
@@ -62,7 +62,7 @@ class with instances.
 
 - **Sat (ordinal-number) addressing is explicitly out of scope.** A satpoint
   or sat number designates a *location* tracked by an ord indexer's transfer
-  history — a trusted-index artifact, not a self-certifying reference. This
+  history: a trusted-index artifact, not a self-certifying reference. This
   profile addresses the inscribed ASSET; where an application needs "the
   current location of inscription X", that is an indexer query, not an asset
   id.
@@ -76,8 +76,8 @@ Inscriptions are the largest class of non-native Bitcoin assets; wallets and
 marketplaces exchanging chain-agnostic asset descriptors (CAIP-19 consumers:
 WalletConnect, indexer APIs, token lists) currently have no standard way to
 name one. The `ordinals` namespace reuses the ecosystem's existing canonical
-identifier verbatim — the same id used by `ord:` URIs, ord server endpoints,
-and recursive inscriptions — so no mapping layer is required, and the
+identifier verbatim, the same id used by `ord:` URIs, ord server endpoints,
+and recursive inscriptions, so no mapping layer is required and the
 reference remains verifiable end-to-end.
 
 ## Test Cases
@@ -92,20 +92,20 @@ bip122:000000000019d6689c085ae165831e93/ordinals:11d3f4b39e8ab97995bab1eacf7dcbf
 # signet
 bip122:00000008819873e925422c1ff0f99f7c/ordinals:<txid>i<index>
 
-# INVALID — inscription number, not an id
+# INVALID: inscription number, not an id
 bip122:000000000019d6689c085ae165831e93/ordinals:0
-# INVALID — sat addressing out of scope
+# INVALID: sat addressing out of scope
 bip122:000000000019d6689c085ae165831e93/ordinals:1252201400444387
-# INVALID — uppercase txid (non-canonical)
+# INVALID: uppercase txid (non-canonical)
 bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 ```
 
 ## References
 
-- [CAIP-19][] — Asset Type and Asset ID Specification
-- [BIP-122][] — URI scheme for blockchain references (chain ids)
-- [bip122 CAIP-2 profile][bip122-caip2] — chain id derivation
-- [ordinals protocol docs][ord-docs] — inscription ids, envelopes
+- [CAIP-19][]: Asset Type and Asset ID Specification
+- [BIP-122][]: URI scheme for blockchain references (chain ids)
+- [bip122 CAIP-2 profile][bip122-caip2]: chain id derivation
+- [ordinals protocol docs][ord-docs]: inscription ids, envelopes
 - [`ord:` URI draft][ord-uris] and the companion [verification spec][spec-verification]
 
 [CAIP-19]: https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-19.md
@@ -121,7 +121,7 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 
 - File goes in the namespaces repo as `bip122/caip19.md`; check whether the
   repo wants a companion update to `bip122/README.md` listing the new profile.
-- Links are concrete (github.com/ordspv/ordspv) — repo goes live at
-  GOING-PUBLIC step 2; keep authorship the pseudonymous handle.
+- Links are concrete (github.com/ordspv/ordspv); the repo goes live at
+  GOING-PUBLIC step 2. Keep authorship the pseudonymous handle.
 - The signet chain id above should be re-derived from the current signet
   genesis before posting (signet resets are possible).

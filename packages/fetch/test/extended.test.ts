@@ -17,7 +17,7 @@ import type { FetchFn } from '../src/backends.js';
  * Extended mainnet vectors (fixtures/extended, vendored by
  * scripts/fetch-fixtures.ts and cross-checked against a live ord instance by
  * scripts/parity-sweep.ts). Each fixture is a proof bundle whose reveal tx,
- * header, and merkle branches self-verify cryptographically — corrupted
+ * header, and merkle branches self-verify cryptographically, so corrupted
  * fixtures cannot pass. The .json summaries carry live-recorded expectations.
  */
 

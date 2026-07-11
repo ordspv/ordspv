@@ -185,11 +185,11 @@ describe('L2 proof bundles (tapscript commitment)', () => {
       prevTxidLE: commit.txidLE,
       vout: 0,
     });
-    // block contains revealA — that's what ord indexed
+    // block contains revealA; that's what ord indexed
     const block = buildBlock([revealA]);
 
     // the two reveals differ ONLY in witness bytes, so their txids are
-    // identical — that txid/witness non-commitment is the entire L2 gap:
+    // identical. That txid/witness non-commitment is the entire L2 gap:
     expect(revealB.txid).toBe(revealA.txid);
     expect(revealB.wtxid).not.toBe(revealA.wtxid);
 

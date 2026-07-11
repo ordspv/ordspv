@@ -28,8 +28,8 @@ digest         = 64hexdig / base64-32bytes  ; hex preferred; SRI-style base64(ur
 
 - Matching is **case-insensitive** everywhere (upstream requirement, preserves QR
   alphanumeric mode); producers SHOULD emit lowercase. Resolvers MUST normalize to
-  lowercase before use — inscription IDs survive URI authority case-folding by
-  construction.
+  lowercase before use. (Inscription IDs survive URI authority case-folding by
+  construction.)
 - `ord://` is a **compatibility alias**: resolvers MUST accept it and MUST treat
   `ord://X` identically to `ord:X`. Producers SHOULD emit `ord:`. (Rationale: upstream
   chose no hierarchical part; existing URL-detection heuristics in wallets and
@@ -60,7 +60,7 @@ digest         = 64hexdig / base64-32bytes  ; hex preferred; SRI-style base64(ur
   not-found-equivalent error.
 - Envelope index semantics: `<id>` addresses the Nth envelope of the reveal
   transaction, counting every parsed envelope (cursed and unbound included) flat across
-  inputs in order — matching ord. Unbound/cursed inscriptions are valid referents.
+  inputs in order, matching ord. Unbound/cursed inscriptions are valid referents.
 
 ## 4. The integrity fragment
 
@@ -71,7 +71,7 @@ ord:<id>/content#integrity=sha256-<base64url-of-32-bytes>
 
 - The digest domain is the **stored body bytes** of the effective content source (the
   addressed inscription for the bare form; the delegate for `/content` when
-  delegation applies; the raw CBOR bytes for `/metadata`) — i.e. exactly the
+  delegation applies; the raw CBOR bytes for `/metadata`): exactly the
   concatenated envelope body pushes, BEFORE any content-encoding is decoded and before
   any transport re-encoding. This makes the digest a pure function of on-chain data.
 - Fragments are client-side by design (never sent to gateways). A resolver that is
@@ -82,7 +82,7 @@ ord:<id>/content#integrity=sha256-<base64url-of-32-bytes>
   "indeterminate" from "mismatch" (see `INTEGRITY_INDETERMINATE`) and SHOULD retry via
   a chain-data path (L2+) where stored bytes are available.
 - Rationale: this is what ERC-2477 tried to do in a parallel contract field and never
-  got adopted; inside the URI it travels everywhere the pointer travels — including
+  got adopted. Inside the URI it travels everywhere the pointer travels, including
   inside immutable EVM contract storage, where it upgrades a hosted-gateway consumer to
   L1 verification with zero Bitcoin infrastructure (levels in SPEC-VERIFICATION §2).
 
@@ -91,7 +91,7 @@ ord:<id>/content#integrity=sha256-<base64url-of-32-bytes>
 - Resolvers MUST implement the verification-level contract of SPEC-VERIFICATION and
   SHOULD default to L2 or better.
 - Resolvers MUST apply ord's envelope semantics exactly (tag table, take semantics,
-  duplicate/unbound flags, one-hop delegation) — the normative behavior is ord's
+  duplicate/unbound flags, one-hop delegation). The normative behavior is ord's
   `envelope.rs`/`tag.rs`; a conformant TypeScript mirror with tests ships in
   `@ordspv/core`.
 - Content-encoding: resolvers SHOULD decode a recognized `content_encoding` (`br`,

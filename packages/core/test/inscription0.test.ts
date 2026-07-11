@@ -26,7 +26,7 @@ const expected = JSON.parse(readFileSync(join(FIXTURES, 'expected.json'), 'utf8'
 const merkleProof = JSON.parse(readFileSync(join(FIXTURES, 'merkle-proof.json'), 'utf8'));
 
 /**
- * End-to-end checks against inscription 0 — the genesis inscription — using
+ * End-to-end checks against inscription 0 (the genesis inscription) using
  * real mainnet bytes vendored in fixtures/. Every fixture is verified
  * cryptographically here, so fixture corruption cannot pass silently.
  */

@@ -6,8 +6,8 @@ them from EVM/Solana/etc.*
 ## The pattern
 
 Today a token that "is" an inscription stores `https://ordinals.com/content/<id>` (or a
-marketplace URL) and inherits a single operator's uptime, rate limits, and honesty —
-see the failure catalog in [RESEARCH.md §1](./RESEARCH.md). The fix is the same one
+marketplace URL) and inherits a single operator's uptime, rate limits, and honesty.
+See the failure catalog in [RESEARCH.md §1](./RESEARCH.md). The fix is the same one
 NFTs already use for IPFS/Arweave: store a **scheme URI**, let resolvers/gateways pick
 transport.
 
@@ -27,9 +27,9 @@ Recommendations (rationale in SPEC-URI):
    `/content` is what renders.
 2. **Always pin `#integrity=`** with the sha256 of the stored body bytes (the resolver
    reports it as `verification.bodySha256`; the gateway echoes it as
-   `x-ord-body-sha256`). The pin rides inside immutable contract storage, so *any*
-   consumer — even one that only trusts a random HTTPS gateway — gets cryptographic
-   content integrity (L1) for free, and verified resolvers upgrade it further.
+   `x-ord-body-sha256`). The pin rides inside immutable contract storage, so any
+   consumer, even one that only trusts a random HTTPS gateway, gets cryptographic
+   content integrity (L1) for free. Verified resolvers upgrade it further.
 3. **Tolerate both scheme spellings** when parsing (`ord:` canonical, `ord://` alias).
 4. For fully on-chain metadata patterns (`data:application/json;base64,…` tokenURIs),
    the `ord:` URI + pin embeds cleanly since it is just a string.
@@ -39,7 +39,7 @@ Recommendations (rationale in SPEC-URI):
 | consumer | path | trust achieved |
 |---|---|---|
 | legacy platform, zero changes | rewrite `ord:<id>/content` → `https://<gw>/content/<id>` (regex in SPEC-URI §7) | L0 |
-| platform with one HTTP call spare | fetch from any gateway, hash bytes, compare to the pin | **L1 — no Bitcoin infra at all** |
+| platform with one HTTP call spare | fetch from any gateway, hash bytes, compare to the pin | **L1, no Bitcoin infra at all** |
 | wallet/marketplace with a resolver | `@ordspv/fetch`: `ordFetch(uri)` (defaults: L2, mempool.space + blockstream.info, checkpointed headers) | L2, assurances surfaced |
 | bridges, custody, disputes | `verification: 'L3'` via a proof gateway or raw-block fetch | full witness commitment |
 
@@ -56,7 +56,7 @@ res.headers.get('x-ord-body-sha256');                     // pin material
 - Store the URI string; nothing else changes for ERC-721/1155. The inscription ID is
   already inside the URI, so indexers can extract `<txid>i<n>` without new fields.
 - If the collection wants machine-readable linkage beyond the URI (e.g. for on-chain
-  games), store `bytes32 revealTxid` + `uint32 index` + `bytes32 bodySha256` — the
+  games), store `bytes32 revealTxid` + `uint32 index` + `bytes32 bodySha256`, the
   three values every verification level bottoms out in. (This intentionally does *not*
   revive ERC-2477's parallel-field design; the URI remains the source of truth.)
 - Teleburn-style provenance (ETH token → inscription and back) is orthogonal: this
@@ -65,7 +65,7 @@ res.headers.get('x-ord-body-sha256');                     // pin material
 ## What breaks without this (motivating checklist)
 
 - ordinals.com throttles or blackholes your hotlinking domain (it has) → images die.
-- Any single gateway can serve different bytes per requester — undetectable at L0;
+- Any single gateway can serve different bytes per requester. Undetectable at L0;
   detectable at L1; impossible below the inscriber at L2-singleLeaf; impossible at L3.
 - Marketplace URL rot: `ord:` URIs are transport-independent and survive any provider.
 

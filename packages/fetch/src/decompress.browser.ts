@@ -1,9 +1,9 @@
 /**
- * Browser build of the content-encoding layer — swapped in for decompress.ts
+ * Browser build of the content-encoding layer, swapped in for decompress.ts
  * by the browser bundle (see scripts/build.ts). DecompressionStream covers
  * gzip/deflate; brotli is unavailable without shipping a wasm decoder, so
  * `br` returns undefined and the resolver serves the STORED bytes with
- * `contentEncoding` intact — callers can hand them to the HTTP layer
+ * `contentEncoding` intact. Callers can hand them to the HTTP layer
  * (Content-Encoding response header) or plug a wasm brotli in via
  * ResolverOptions.decompressor.
  *

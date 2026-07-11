@@ -1,4 +1,4 @@
-# DRAFT — do not post without explicit sign-off
+# DRAFT: do not post without explicit sign-off
 
 Target: `Blockstream/electrs` **Pull Request** (code) + `Blockstream/esplora`
 API.md addition (docs commit inside the same PR family).
@@ -36,23 +36,24 @@ is what the coinbase witness commitment (`sha256d(root ‖ reserved)` behind
 ### Why
 
 A txid merkle proof binds a transaction's *stripped* serialization to a header.
-It does **not** bind witness data — two different witnesses for the same inputs
+It does **not** bind witness data: two different witnesses for the same inputs
 produce the same txid. Any protocol whose payload LIVES in the witness
 (ordinals inscription envelopes being the largest today) therefore can't get
 SPV-grade assurance from `/tx/:txid/merkle-proof` alone: a lying server can
 swap the witness and the txid proof still verifies.
 
-The fix has always been available in consensus data — prove the tx against the
+The fix has always been available in consensus data (prove the tx against the
 witness tree, prove the coinbase against the txid tree, check the coinbase's
-witness commitment — but no public API serves witness-tree branches, so light
+witness commitment), but no public API serves witness-tree branches, so light
 clients today must download the entire raw block (~1–2 MB) to verify ~1 KB of
 content. This endpoint replaces that with one ~1 KB response. Esplora already
 serves every other ingredient (`merkle-proof`, `/block/:hash/header`,
 `/tx/:txid/hex`, coinbase txid via `/block/:hash/txid/0`).
 
 Concretely, the consumer flow (implemented in a public verifier library that
-motivated this PR, github.com/ordspv/ordspv — a full L3 verification is: header PoW + txid proof of
-coinbase + witness commitment check + this endpoint's branch):
+motivated this PR, github.com/ordspv/ordspv; a full L3 verification is header PoW,
+a txid proof of the coinbase, the witness commitment check, and this endpoint's
+branch):
 
 1. `GET /tx/:txid/witness-merkle-proof` → branch, pos, witness_root
 2. fold `wtxid(tx)` (or the zero leaf for the coinbase) up the branch → must
@@ -78,8 +79,9 @@ coinbase + witness commitment check + this endpoint's branch):
 - `test_rest_tx_witness_merkle_proof` (regtest, corepc-node): folds the wallet
   tx's wtxid through the returned branch to `witness_root`, folds the ZEROED
   coinbase leaf to the same root, and checks
-  `sha256d(root ‖ reserved) == coinbase 6a24aa21a9ed commitment` — the full
-  BIP-141 loop, not just shape assertions; plus 404 for unknown txids.
+  `sha256d(root ‖ reserved) == coinbase 6a24aa21a9ed commitment`. That is the
+  full BIP-141 loop rather than shape assertions alone; plus 404 for unknown
+  txids.
 - `test_electrum_get_witness_merkle` (raw socket): result fields + invalid
   height → invalid-params error, mirroring `get_merkle` behavior.
 
@@ -115,7 +117,7 @@ with an ordinary txid proof at position 0). Not available on Liquid.
 
 - The fork is github.com/ordspv/electrs, branch `witness-merkle-proof`
   (GOING-PUBLIC step 3); `patches/electrs-witness-merkle-proof/*.patch` is
-  the format-patch backup — arrive with code.
+  the format-patch backup. Arrive with code.
 - Platform caveat to mention if CI asks: the electrumd wallet test-harness
   dev-dependency doesn't build on macos-arm64 (pre-existing, unrelated);
   everything else validated locally on macOS + expected green on Linux CI.

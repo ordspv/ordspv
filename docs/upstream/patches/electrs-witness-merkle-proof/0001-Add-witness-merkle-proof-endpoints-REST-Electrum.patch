@@ -1,39 +1,38 @@
-From 9f379d31f5edeab0eab6913e69990140741ff42c Mon Sep 17 00:00:00 2001
+From 03a4d402cbf8ec830625264dff17cfaef14c3683 Mon Sep 17 00:00:00 2001
 From: ordspv <302645753+ordspv@users.noreply.github.com>
 Date: Sat, 11 Jul 2026 20:16:23 +0000
 Subject: [PATCH] Add witness-merkle-proof endpoints (REST + Electrum)
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
 New: GET /tx/:txid/witness-merkle-proof and
-blockchain.transaction.get_witness_merkle(txid, height) — merkle inclusion
-proofs over the block's BIP-141 witness tree (leaf i = wtxid(tx_i), leaf 0
-zeroed for the coinbase), returning { block_height, merkle[], pos,
-witness_root }.
+blockchain.transaction.get_witness_merkle(txid, height). Both return a
+merkle inclusion proof over the block's BIP-141 witness tree (leaf i =
+wtxid(tx_i), leaf 0 zeroed for the coinbase) as { block_height, merkle[],
+pos, witness_root }.
 
-Why: a txid merkle proof binds only the stripped serialization; witness
+Why: a txid merkle proof binds only the stripped serialization. Witness
 data is unbound, so protocols whose payload lives in the witness (ordinals
 envelopes are the largest) cannot get SPV assurance from the existing
-endpoint — a lying server can swap the witness and the txid proof still
+endpoint: a lying server can swap the witness and the txid proof still
 verifies. The consensus fix (prove against the witness tree, check the
 coinbase witness commitment) needs witness-tree branches, which no public
-API serves today; light clients must download whole raw blocks instead.
-One ~1 KB response replaces a ~1-2 MB block download.
+API serves today, so light clients download whole raw blocks instead. One
+response of about 1 KB replaces a 1-2 MB block download.
 
 Implementation: ChainQuery::get_block_wtxids (block txids -> lookup_txns
 batch -> compute_wtxid, coinbase zeroed; same DB pattern as the raw-block
-reconstruction path), electrum_merkle::get_tx_witness_merkle_proof reusing
-the existing branch fold (now pub for the bench). Handlers mirror their
-txid-proof twins; everything is cfg(not(feature = "liquid")) — witness
-commitments are bitcoin-specific here. No new index rows, no migration.
+reconstruction path) and electrum_merkle::get_tx_witness_merkle_proof,
+reusing the existing branch fold (now pub for the bench). Handlers mirror
+their txid-proof twins. Everything is cfg(not(feature = "liquid")):
+witness commitments are bitcoin-specific here. No new index rows, no
+migration.
 
-Tests: REST integration test folds the wallet tx's wtxid AND the zeroed
-coinbase leaf to witness_root and verifies sha256d(root || reserved)
-against the coinbase 6a24aa21a9ed commitment (full BIP-141 loop); Electrum
-raw-socket test mirrors get_merkle semantics incl. invalid-height error.
-Criterion benches on mainnet block 702861 (~1000 txs): ~5.25 ms wtxid
-computation + ~1.53 ms branch construction per uncached proof.
+Tests: the REST integration test folds the wallet tx's wtxid and the
+zeroed coinbase leaf to witness_root and verifies sha256d(root ||
+reserved) against the coinbase 6a24aa21a9ed commitment, the full BIP-141
+loop. The Electrum raw-socket test mirrors get_merkle semantics including
+the invalid-height error. Criterion benches on mainnet block 702861
+(~1000 txs): ~5.25 ms wtxid computation plus ~1.53 ms branch construction
+per uncached proof.
 ---
  benches/benches.rs          | 50 ++++++++++++++++++++-
  src/electrum/server.rs      | 33 ++++++++++++++
@@ -240,7 +239,7 @@ index 850a3a7..46838b2 100644
              let hash = Txid::from_str(hash)?;
  
 diff --git a/src/util/electrum_merkle.rs b/src/util/electrum_merkle.rs
-index 52e0a82..1fbed88 100644
+index 52e0a82..6600053 100644
 --- a/src/util/electrum_merkle.rs
 +++ b/src/util/electrum_merkle.rs
 @@ -24,6 +24,32 @@ pub fn get_tx_merkle_proof(
@@ -248,7 +247,7 @@ index 52e0a82..1fbed88 100644
  }
  
 +/// Merkle proof of a transaction's inclusion in its block's WITNESS tree
-+/// (wtxids, coinbase leaf zeroed per BIP-141) — the tree committed to by the
++/// (wtxids, coinbase leaf zeroed per BIP-141): the tree committed to by the
 +/// coinbase witness commitment. Together with a txid proof of the coinbase,
 +/// this binds a transaction's full serialization (witness included) to the
 +/// block header, which a txid proof alone cannot do for segwit data.

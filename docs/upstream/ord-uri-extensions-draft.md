@@ -1,4 +1,4 @@
-# DRAFT — do not post without explicit sign-off
+# DRAFT: do not post without explicit sign-off
 
 Target: `ordinals/ord` GitHub **Discussion** (category: ideas), referencing
 discussion #3780 and `docs/src/inscriptions/uris.md`.
@@ -7,13 +7,12 @@ Status: draft v1, 2026-07-11.
 
 ---
 
-## Title: `ord:` URI extensions — compatibility alias, paths, integrity, and IANA registration
+## Title: `ord:` URI extensions: compatibility alias, paths, integrity, IANA registration
 
 The `ord:` scheme drafted in [uris.md](https://docs.ordinals.com/inscriptions/uris.html)
 is the right foundation: id-addressed, no hierarchical part, undelegated referent.
-We've built a verifying resolver ecosystem on top of it — resolver library,
-reference gateway, proof format, and a conformance test corpus — and along the way
-wrote a small extension profile where real-world integrations needed more than the
+We've built a verifying resolver on top of it (library, reference gateway, proof
+format, conformance test corpus), and along the way wrote a small extension profile where real-world integrations needed more than the
 draft specifies. This discussion proposes upstreaming the extension points (or
 hearing why not), and offers legwork on IANA registration.
 
@@ -21,7 +20,7 @@ hearing why not), and offers legwork on IANA registration.
 
 - A resolver that takes `ord:<id>` and returns verified bytes: BIP-341 tapscript
   commitment + txid merkle proof against a PoW-checked header ("L2"), or the full
-  BIP-141 witness-commitment binding ("L3") — no trusted index required for content.
+  BIP-141 witness-commitment binding ("L3"). No trusted index is required for content.
 - A reference gateway mapping the scheme onto the recursive endpoints, exactly as
   suggested in #3780 (`/r/undelegated-content` for the bare referent, `/content`
   for delegation-applied).
@@ -39,22 +38,22 @@ hearing why not), and offers legwork on IANA registration.
 2. **Explicit referent paths.** `ord:<id>` = undelegated content (upstream rule,
    unchanged); `ord:<id>/content` = delegation-applied content;
    `ord:<id>/metadata` = raw CBOR metadata. Collections using delegates need an
-   addressable form for "the content this inscription displays as" — that's
+   addressable form for "the content this inscription displays as". That's
    `/content`, mirroring the recursive endpoints' own split.
 3. **Integrity fragment.** `ord:<id>#integrity=sha256-<hex>` pins the sha256 of
-   the STORED body bytes (the pure on-chain function of the envelope — notably
-   NOT transport bytes; CDNs make `Content-Encoding` ambiguous, so the pin is
+   the STORED body bytes: the pure on-chain function of the envelope, and NOT
+   transport bytes (CDNs make `Content-Encoding` ambiguous, so the pin is
    defined over tag-9-encoded bytes as inscribed). Fragments are client-side, so
    this composes with any gateway. Precedent: SRI, and the reason ERC-2477
    stalled is that integrity lived OUTSIDE the URI.
-4. **ID addressing only.** Inscription numbers and sat addressing stay out —
-   they're trusted-index artifacts; ids are self-certifying.
+4. **ID addressing only.** Inscription numbers and sat addressing stay out.
+   They're trusted-index artifacts; ids are self-certifying.
 
 **IANA.** `ord:` is unregistered. The ar:// playbook (provisional registration +
 one good SDK) is what got that scheme into mainstream acceptance. A provisional
 registration under RFC 7595 is a two-page template referencing the uris.md draft;
 we're happy to draft it for review here, with the ord project as change
-controller — the scheme is yours, we just want the paperwork to exist.
+controller. The scheme is yours, we just want the paperwork to exist.
 
 **Ask:**
 - Would a PR extending `uris.md` with §1–3 above (marked as extensions, canonical
@@ -62,7 +61,7 @@ controller — the scheme is yours, we just want the paperwork to exist.
 - Any objection to a provisional IANA registration naming ordinals.com /
   the ord repo as the authority?
 
-Happy to adjust the profile to whatever upstream decides — the point of building
+Happy to adjust the profile to whatever upstream decides. The point of building
 against the draft was to avoid forking the referent semantics, and the parity
 corpus means we notice immediately if we drift.
 
@@ -74,8 +73,8 @@ corpus means we notice immediately if we drift.
 
 ## Posting notes (not part of the draft)
 
-- Links are concrete (github.com/ordspv/…) — they go live at GOING-PUBLIC
-  steps 2–3; verify no identifying info in repo metadata before posting.
+- Links are concrete (github.com/ordspv/…); they go live at GOING-PUBLIC
+  steps 2–3. Verify no identifying info in repo metadata before posting.
 - Post AFTER the esplora witness-proof PR exists so the "cheap L3" claim has a
   concrete artifact behind it (see esplora-witness-proof-draft.md).
 - Tone calibration: casey historically rejects scope creep in the scheme itself;

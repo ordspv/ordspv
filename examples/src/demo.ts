@@ -1,5 +1,5 @@
 /**
- * Live in-browser L2 verification of inscription 0 — the demo behind
+ * Live in-browser L2 verification of inscription 0, the demo behind
  * "click and watch your browser verify Bitcoin".
  *
  * Everything happens client-side with plain fetch() against public esplora
@@ -45,7 +45,7 @@ async function esplora(path: string): Promise<Response> {
       errors.push(`${base}: ${(e as Error).message}`);
     }
   }
-  throw new Error(`all esplora sources failed for ${path} — ${errors.join('; ')}`);
+  throw new Error(`all esplora sources failed for ${path}: ${errors.join('; ')}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   $('result').innerHTML = '';
 
   try {
-    // 1. reveal tx: the txid is self-certifying — recompute it from raw bytes
+    // 1. reveal tx: the txid is self-certifying, so recompute it from raw bytes
     const reveal = await step('Fetch reveal transaction & recompute its txid', async () => {
       const hex = (await (await esplora(`/tx/${REVEAL_TXID}/hex`)).text()).trim();
       const tx = parseTx(hexToBytes(hex));
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     });
 
     // 3. header: embedded PoW + the one compiled-in trust anchor
-    const header = await step('Fetch block header — check proof-of-work & the pinned checkpoint', async () => {
+    const header = await step('Fetch block header, check proof-of-work and the pinned checkpoint', async () => {
       const headerHex = (await (await esplora(`/block/${CHECKPOINT_HASH}/header`)).text()).trim();
       const parsed = parseHeader(hexToBytes(headerHex));
       if (!checkProofOfWork(parsed)) throw new Error('header fails its own PoW target');
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
     });
 
     // 5. BIP-341: the envelope script is committed by the output the reveal spends
-    const assurances = await step('Fetch commit tx — verify the BIP-341 tapscript commitment', async () => {
+    const assurances = await step('Fetch commit tx and verify the BIP-341 tapscript commitment', async () => {
       const input = reveal.inputs[inscription.input];
       const commitHex = (await (await esplora(`/tx/${input.prevTxid}/hex`)).text()).trim();
       const commit = parseTx(hexToBytes(commitHex));
@@ -180,7 +180,7 @@ async function main(): Promise<void> {
       return {
         value: { singleLeafTree: depth === 0, singleInputReveal: reveal.inputs.length === 1 },
         detail:
-          `taproot output key = internal key tweaked by the envelope script's leaf hash — ` +
+          `taproot output key = internal key tweaked by the envelope script's leaf hash; ` +
           `the txid-committed input binds these exact content bytes (control block depth ${depth}` +
           `${depth === 0 ? ' ⇒ single-leaf tree' : ''})`,
       };
@@ -190,7 +190,7 @@ async function main(): Promise<void> {
   } catch {
     const note = document.createElement('p');
     note.className = 'failnote';
-    note.textContent = 'Verification failed — the page refuses to render unverified bytes.';
+    note.textContent = 'Verification failed. The page refuses to render unverified bytes.';
     $('result').appendChild(note);
   } finally {
     $('run').removeAttribute('disabled');
@@ -218,8 +218,8 @@ function render(
         <dt>block</dt><dd>${CHECKPOINT_HEIGHT} (${reveal.inputs.length}-input reveal)</dd>
       </dl>
     </div>
-    <p class="note">Every byte above was verified against Bitcoin proof-of-work in this browser —
-    the servers involved could not have forged it. This is verification level <b>L2</b>
+    <p class="note">Every byte above was verified against Bitcoin proof-of-work in this
+    browser. The servers involved could not have forged it. This is verification level <b>L2</b>
     (tapscript commitment); L3 additionally pins the witness through the coinbase
     commitment. Copy-pasteable pin for embedding:
     <span class="mono">ord:${INSC0}#integrity=sha256-${digest}</span></p>`;

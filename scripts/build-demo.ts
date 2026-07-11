@@ -2,7 +2,7 @@
 /**
  * Build the self-contained browser demo: bundle examples/src/demo.ts (core
  * primitives only, IIFE, minified) and inline it into the template, producing
- * examples/verify-inscription-0.html — a single committed file that opens from
+ * examples/verify-inscription-0.html: a single committed file that opens from
  * file:// with no server and no build step for the viewer.
  */
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';

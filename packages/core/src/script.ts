@@ -1,5 +1,5 @@
 /**
- * Minimal Bitcoin script instruction iterator — just enough to walk tapscripts
+ * Minimal Bitcoin script instruction iterator, just enough to walk tapscripts
  * and extract data pushes for inscription envelope parsing.
  */
 
@@ -26,8 +26,8 @@ export interface ScriptOp {
  * Iterate script instructions. Returns ops until the end of the script.
  * Mirrors rust-bitcoin's non-minimal `Script::instructions()` (the iterator
  * ord's envelope parser uses): a truncated push is an error (throws here),
- * non-minimal push encodings are accepted, and every non-push byte — valid,
- * reserved, or invalid opcode alike — is yielded as an opcode instruction.
+ * non-minimal push encodings are accepted, and every non-push byte (valid,
+ * reserved, or invalid opcode alike) is yielded as an opcode instruction.
  */
 export function parseScript(script: Uint8Array): ScriptOp[] {
   const ops: ScriptOp[] = [];
@@ -58,7 +58,7 @@ export function parseScript(script: Uint8Array): ScriptOp[] {
       ops.push({ opcode, data: take(script, i, len), offset });
       i += len;
     } else {
-      // non-push opcode (includes OP_1..OP_16, OP_1NEGATE — ord treats these
+      // non-push opcode (includes OP_1..OP_16, OP_1NEGATE; ord treats these
       // as opcodes, not data pushes, inside envelopes)
       ops.push({ opcode, offset });
     }

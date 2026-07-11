@@ -10,7 +10,7 @@ The resolver talks to servers it does not trust: ord gateways may lie about cont
 esplora/electrum instances may lie about transactions, proofs, and headers; any of them
 may be unavailable. The attacker may also be the *inscriber* (relevant to L2). The only
 trust anchors available are: Bitcoin proof-of-work (given a way to recognize the
-canonical chain), and — for L1 — a digest the consumer already holds through some other
+canonical chain), and, for L1, a digest the consumer already holds through some other
 trusted channel (e.g. immutable EVM contract storage).
 
 Central protocol fact: **an inscription ID's txid does not commit to the content.**
@@ -20,18 +20,18 @@ defined by which commitment finally binds the bytes.
 
 ## 2. Levels
 
-### L0 — trusted gateway
+### L0: trusted gateway
 Bytes accepted as served. No integrity property. Availability-only fallback; resolvers
 MUST label results so consumers can't mistake L0 for verified content.
 
-### L1 — integrity pin
+### L1: integrity pin
 The URI carries `#integrity=sha256-…` (SPEC-URI §4) and the resolver checks it against
 the stored body bytes. Content integrity holds even against a malicious gateway,
-**provided the pin itself is trusted** — its natural home is immutable contract storage
+**provided the pin itself is trusted**. Its natural home is immutable contract storage
 on the consuming chain. No chain context (existence, confirmation depth, timestamp) is
 established. Cost: hashing only.
 
-### L2 — tapscript commitment
+### L2: tapscript commitment
 Binds content to the Bitcoin chain using only txid-tree artifacts (available from any
 esplora/electrum/Core node). Verifier obtains: reveal tx (full, with witness), a txid
 merkle proof for it, the block header, the block's `txCount`, and the commit
@@ -44,7 +44,7 @@ transaction for the envelope's input. Checks (all MUST):
 3. Header hashes to the claimed block hash and satisfies its own `nBits` target;
    header anchored per §4.
 4. Parse envelopes from the reveal witness (ord semantics); envelope at `id.index`
-   exists — its input `j` is the relevant input.
+   exists. Its input `j` is the relevant input.
 5. `sha256d(stripped(commit)) = reveal.input[j].prevTxid` (commit tx is
    self-authenticating against txid-committed data).
 6. BIP-341: commit output `vout` is `OP_1 <32-byte Q>`; with the witness's script `s`
@@ -59,7 +59,7 @@ inscriber can pre-commit two envelope leaves and serve either (demonstrated in
 `proofbundle.test.ts`). Verifiers MUST surface the assurances:
 
 - `controlBlockDepth = 0` ⇒ `singleLeafTree`: the tree provably contains only the shown
-  script — closes the substitution gap for standard single-leaf inscriptions;
+  script, which closes the substitution gap for standard single-leaf inscriptions;
 - `singleInputReveal`: input count is txid-committed, pinning envelope indexing given
   the shown script.
 
@@ -67,7 +67,7 @@ Consumers SHOULD treat `L2 ∧ singleLeafTree` as final for third-party-gateway 
 models, and escalate to L3 when the inscriber is in the threat model or the control
 block has depth > 0.
 
-### L3 — witness commitment
+### L3: witness commitment
 Adds the BIP-141 coinbase witness commitment; equivalent to full-node treatment of the
 reveal witness. Additional ingredients: coinbase tx (full, with witness), its txid
 merkle branch at position 0, and a wtxid-tree branch for the reveal. Checks (beyond
@@ -82,8 +82,8 @@ L2's 1–4; the commit-tx/BIP-341 steps become OPTIONAL):
    `sha256d(root ‖ reserved) =` the committed 32 bytes. Reveal position MUST NOT be 0.
 10. Envelope at `id.index` from this now-committed witness is the content.
 
-**What L3 proves:** these exact witness bytes are the ones in the canonical block —
-what ord indexed. The multi-leaf gap is closed; a forged witness with the same txid is
+**What L3 proves:** these exact witness bytes are the ones in the canonical block,
+the ones ord indexed. The multi-leaf gap is closed; a forged witness with the same txid is
 rejected (test: "detects forged witness content").
 
 ## 3. Proof bundle format v1
@@ -118,7 +118,8 @@ display order (reversed) hex, matching every public API; transactions as hex.
 
 Bundles are self-contained and offline-verifiable (`ord-resolve verify bundle.json`);
 they are also immutable and infinitely cacheable. A CBOR twin
-(`application/vnd.ord.proof+cbor`) is reserved for v2 — JSON first for debuggability.
+(`application/vnd.ord.proof+cbor`) is reserved for v2. JSON came first for
+debuggability.
 
 Acquisition without a proof gateway: L2 = 5 small esplora reads; L3 = tx status + one
 raw block (~1.6 MB typical), branches built locally (`buildProofBundle` does both).
@@ -128,7 +129,7 @@ raw block (~1.6 MB typical), branches built locally (`buildProofBundle` does bot
 `verifyProofBundle` establishes internal consistency and embedded PoW; it cannot know
 the header is on the canonical most-work chain. One header's honest work is enormous,
 but an attacker reorging nothing and *fabricating* a low-height header entirely fails
-the embedded `nBits` check only if they can't grind ~2^77+ work — for modern heights
+the embedded `nBits` check only if they can't grind ~2^77+ work. For modern heights
 this is economically absurd, but verifiers MUST still anchor because bundles choose
 their own height. Composable strategies (reference: `makeHeaderTrust`):
 
@@ -138,17 +139,18 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
 - **M-of-N independent sources** (SHOULD, default 2): hash-at-height agreement across
   operator-diverse esplora/electrum endpoints; optional min-confirmations gate.
 - **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):
-  a locally validated header chain — Electrum `blockchain.block.headers` batches,
-  per-header linkage + PoW + exact pow.cpp retarget arithmetic + median-time-past +
-  compiled checkpoint crossings — persisted to disk (fully revalidated on load) and
-  exposed as a drop-in `trustHeader` anchor (`headerSyncTrust`). Chains start from a
+  a locally validated header chain. Electrum `blockchain.block.headers` batches are
+  validated per header (linkage, PoW, exact pow.cpp retarget arithmetic,
+  median-time-past, compiled checkpoint crossings), persisted to disk with a fully
+  revalidating load, and exposed as a drop-in `trustHeader` anchor
+  (`headerSyncTrust`). Chains start from a
   retarget-ALIGNED trusted base; the default base 766080 (period start below
   inscription 0) covers every inscription in ~15 MB, or use genesis for the full
   ~77 MB chain. Optional Electrum `cp_height` root/branch verification is supported
   once roots are pinned (derivable from any fully synced chain via
   `blockHashMerkleRoot`). Browser story: the validation core (`HeaderChain`) is
-  IO-free, but raw TCP/TLS sockets and file persistence do not exist in browsers —
-  either keep checkpoint + M-of-N anchoring there, or supply a WebSocket→Electrum
+  IO-free, but raw TCP/TLS sockets and file persistence do not exist in browsers.
+  Either keep checkpoint + M-of-N anchoring there, or supply a WebSocket→Electrum
   bridge as a custom `ElectrumTransport` with an in-memory chain; the built-in
   transport/persistence stay node-only and the subpath is excluded from the browser
   bundle.
@@ -170,7 +172,7 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   same level (the delegating envelope proves the delegate *pointer*; the delegate's own
   proof binds the *bytes*). One hop only; the delegate's own delegate field is ignored
   (ord parity). Reference: `OrdResolver.resolveVerified`.
-- Metadata (`/metadata`) verifies identically to content — it is envelope data.
+- Metadata (`/metadata`) verifies identically to content. It is envelope data.
 - Recursive HTML content executing against `/r/*` endpoints is beyond byte-level
   verification (rendering depends on runtime context); SPEC-GATEWAY §6 tiers which
   recursion endpoints can themselves be served trustlessly.

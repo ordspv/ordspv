@@ -1,5 +1,5 @@
 # Reference gateway image (reference implementation posture: runs the TS
-# sources via tsx — no compile step to go stale; pin your own build for prod).
+# sources via tsx, so there is no compile step to go stale; pin your own build for prod).
 FROM node:22-slim
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./

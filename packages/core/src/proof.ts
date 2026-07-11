@@ -20,7 +20,7 @@ import {
  *  - L2 "tapscript commitment": header + txid-merkle proof of the reveal tx +
  *    commit tx + BIP-341 control-block check. All ingredients are served by
  *    any esplora/electrum instance. Proves the content was committed by the
- *    taptree of the output the reveal spent — with documented caveats
+ *    taptree of the output the reveal spent, with documented caveats
  *    (multi-leaf trees, executed-leaf ambiguity) surfaced as `assurances`.
  *
  *  - L3 "witness commitment": additionally binds the exact reveal witness via
@@ -28,7 +28,7 @@ import {
  *    wtxid-merkle proof of the reveal). Equivalent to what a full node
  *    enforces; closes the L2 caveats.
  *
- * Header trust is delegated to the caller via `trustHeader` — core stays pure.
+ * Header trust is delegated to the caller via `trustHeader`; core stays pure.
  */
 
 export type VerificationLevel = 'L1' | 'L2' | 'L3';
@@ -91,7 +91,7 @@ export interface VerifyOptions {
    * Anchor the header to a trusted view of the chain (checkpoints, multi-source
    * tip cross-check, header sync...). Throw to reject. When omitted the caller
    * accepts embedded-PoW-only anchoring (NOT recommended for adversarial
-   * settings — a single header's work is cheap relative to valuable content).
+   * settings: a single header's work is cheap relative to valuable content).
    */
   trustHeader?: (header: BlockHeader, height: number) => void;
 }

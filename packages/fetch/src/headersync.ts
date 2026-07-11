@@ -34,11 +34,11 @@ import { MAINNET_CHECKPOINTS, HeaderTrustError, type HeaderTrustReport } from '.
  * covers every inscription ever (period start below inscription 0's block).
  *
  * NODE-ONLY (v1): ElectrumTcpTransport needs raw TCP/TLS sockets and
- * persistence needs a filesystem — neither exists in browsers. This module is
+ * persistence needs a filesystem; neither exists in browsers. This module is
  * therefore a separate subpath export (`@ordspv/fetch/headersync`) kept
  * OUT of the browser bundle. Browser story: keep using checkpoint + M-of-N
  * anchoring (makeHeaderTrust), or run headerSyncTrust behind your own
- * WebSocket→Electrum bridge by implementing ElectrumTransport over it — the
+ * WebSocket→Electrum bridge by implementing ElectrumTransport over it. The
  * validation core (HeaderChain) is IO-free and would run in a browser given
  * headers; only the built-in transport and file persistence are node-bound.
  */
@@ -50,13 +50,13 @@ import { MAINNET_CHECKPOINTS, HeaderTrustError, type HeaderTrustReport } from '.
 export interface HeaderChainBase {
   /** MUST be a retarget boundary (height % interval == 0) */
   height: number;
-  /** 160 hex chars — the raw header at `height` */
+  /** 160 hex chars: the raw header at `height` */
   headerHex: string;
 }
 
 /**
  * Mainnet base: block 766080 (period start immediately below inscription 0 at
- * 767430 — syncing from here covers every inscription). Hash pinned against
+ * 767430; syncing from here covers every inscription). Hash pinned against
  * mempool.space + blockstream.info (byte-identical headers, 2026-07-11) and
  * cryptographically bound in tests: the vendored slice from this base must
  * hash-link to the in-repo-verified 767430 checkpoint.
@@ -318,7 +318,7 @@ export class ElectrumTcpTransport implements ElectrumTransport {
       } catch {
         continue;
       }
-      if (msg.id === undefined) continue; // subscription notification — ignored here
+      if (msg.id === undefined) continue; // subscription notification, ignored here
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
@@ -449,7 +449,7 @@ function verifyCpBranch(
 
 /**
  * Merkle root over block hashes 0..tip (Electrum cp_height convention,
- * bitcoin-style pairing with odd-node self-duplication) — run once over a
+ * bitcoin-style pairing with odd-node self-duplication). Run once over a
  * fully synced chain to derive roots you then pin via SyncOptions.checkpoint.
  */
 export function blockHashMerkleRoot(hashesLE: Uint8Array[]): Uint8Array {

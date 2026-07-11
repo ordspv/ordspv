@@ -6,17 +6,17 @@ import { isInscriptionId, parseInscriptionId, type InscriptionId } from '@ordspv
  * Canonical form (per the upstream draft in the ord handbook,
  * docs.ordinals.com/inscriptions/uris.html):
  *
- *     ord:<txid>i<index>            — case-insensitive, lowercase preferred
+ *     ord:<txid>i<index>            case-insensitive, lowercase preferred
  *
  * The bare form's referent is the inscription's ORIGINAL (undelegated)
  * content, matching `/r/undelegated-content/<id>`.
  *
  * Extensions defined by this project (SPEC-URI.md):
  *
- *     ord://<id>                    — tolerated alias; `//` is stripped
- *     ord:<id>/content              — content with delegation applied (as /content/<id>)
- *     ord:<id>/metadata             — CBOR metadata (tag 5)
- *     ...#integrity=sha256-<hex>    — expected sha256 of the (undelegated,
+ *     ord://<id>                    tolerated alias; `//` is stripped
+ *     ord:<id>/content              content with delegation applied (as /content/<id>)
+ *     ord:<id>/metadata             CBOR metadata (tag 5)
+ *     ...#integrity=sha256-<hex>    expected sha256 of the (undelegated,
  *                                     still content-encoded) body bytes
  */
 

@@ -13,7 +13,7 @@ import type { EsploraBlockInfo, EsploraMerkleProof, EsploraTxStatus } from './ba
 
 /**
  * Anything that can serve the proof ingredients. EsploraBackend satisfies this
- * structurally; so does the proof-sidecar's Bitcoin Core RPC backend — the
+ * structurally; so does the proof-sidecar's Bitcoin Core RPC backend. The
  * bundle builder is data-source agnostic.
  */
 export interface ProofBackend {
@@ -27,7 +27,7 @@ export interface ProofBackend {
 
 /**
  * Assemble a proof bundle for an inscription from any proof backend.
- * Everything fetched here is UNTRUSTED input — the caller verifies the bundle
+ * Everything fetched here is UNTRUSTED input; the caller verifies the bundle
  * with `verifyProofBundle` afterwards; nothing here is trusted for soundness,
  * only availability.
  *

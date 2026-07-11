@@ -10,7 +10,7 @@
  *   2. runs a LIVE L2 resolution of inscription 0 (real mempool.space +
  *      blockstream.info, checkpointed header trust);
  *   3. runs a LIVE L3 resolution (downloads block 767430 raw, ~1.5 MB, builds
- *      the wtxid tree locally) — the one flow the sandbox could not exercise;
+ *      the wtxid tree locally), the one flow the sandbox could not exercise;
  *   4. optionally vendors extended vectors (delegate, brotli, multi-envelope)
  *      given inscription IDs as CLI args, emitting fixture JSON + a verified
  *      proof bundle for each into fixtures/extended/.
@@ -34,7 +34,7 @@ const BLOCK = '000000000000000000029730547464f056f8b6e2e0a02eaf69c24389983a04f5'
 const esplora = new EsploraBackend('https://mempool.space/api');
 
 function check(name: string, ok: boolean, detail = ''): void {
-  console.log(`${ok ? '  ✓' : '  ✗ FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
+  console.log(`${ok ? '  ✓' : '  ✗ FAIL'} ${name}${detail ? `: ${detail}` : ''}`);
   if (!ok) process.exitCode = 1;
 }
 
@@ -49,7 +49,7 @@ async function refreshInsc0(): Promise<void> {
   for (const [file, promise] of pairs) {
     const live = (await promise).trim();
     const vendored = readFileSync(join(dir, file), 'utf8').trim();
-    check(file, live === vendored, live === vendored ? 'byte-identical' : 'DIFFERS — investigate!');
+    check(file, live === vendored, live === vendored ? 'byte-identical' : 'DIFFERS, investigate!');
   }
   const proof = await esplora.getMerkleProof(REVEAL);
   const vendored = JSON.parse(readFileSync(join(dir, 'merkle-proof.json'), 'utf8'));

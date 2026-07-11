@@ -18,10 +18,10 @@ import {
 /**
  * Proof sidecar: SPEC-VERIFICATION proof bundles served straight from a
  * Bitcoin Core node. Node operators get `/ord/v1/proof/<id>?level=l2|l3`
- * (SPEC-GATEWAY §3) without hosting an esplora/electrs stack — Core with
+ * (SPEC-GATEWAY §3) without hosting an esplora/electrs stack; Core with
  * `txindex=1` is the only requirement.
  *
- * Trust model: identical to a gateway's proof endpoint — bundles are
+ * Trust model: identical to a gateway's proof endpoint. Bundles are
  * self-verifying, so the sidecar cannot forge content even if compromised;
  * it verifies every bundle before serving (availability + honesty of your
  * own node are all it adds).
@@ -83,7 +83,7 @@ const RPC_INVALID_ADDRESS_OR_KEY = -5; // Core: tx not found (or txindex off)
  * Satisfies the same surface buildProofBundle consumes from esplora, from
  * four Core RPCs: getrawtransaction (txindex=1 REQUIRED for arbitrary
  * lookups), getblockheader, getblock (verbosity 0 and 1). Merkle branches
- * are computed locally from the block's txid list — no gettxoutproof
+ * are computed locally from the block's txid list: no gettxoutproof
  * parsing, and the output is byte-compatible with esplora's display-order
  * convention.
  */
@@ -109,7 +109,7 @@ export class CoreRpcBackend implements ProofBackend {
     } catch (e) {
       if (e instanceof CoreRpcError && e.code === RPC_INVALID_ADDRESS_OR_KEY) {
         throw new Error(
-          `tx ${txid} not found — is txindex=1 enabled on the node? (${e.message})`,
+          `tx ${txid} not found. Is txindex=1 enabled on the node? (${e.message})`,
         );
       }
       throw e;

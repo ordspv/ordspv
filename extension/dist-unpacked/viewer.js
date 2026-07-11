@@ -3909,7 +3909,7 @@ ${errors.join("\n")}`);
     const url = URL.createObjectURL(blob);
     if (result.contentEncoding) {
       const note = document.createElement("p");
-      note.textContent = `body is ${result.contentEncoding}-encoded on-chain and this build cannot decode it \u2014 verified stored bytes offered as download:`;
+      note.textContent = `body is ${result.contentEncoding}-encoded on-chain and this build cannot decode it; verified stored bytes offered as download:`;
       const a = document.createElement("a");
       a.href = url;
       a.download = `${result.uri.idString}.${result.contentEncoding}`;
@@ -3952,11 +3952,11 @@ ${errors.join("\n")}`);
   async function main() {
     const uri = uriFromDnrHash(location.hash) ?? uriFromViewerHash(location.hash);
     if (!uri) {
-      fail('no ord: URI in the fragment \u2014 open via an ord: link, gateway redirect, or the "ord" omnibox keyword');
+      fail('no ord: URI in the fragment. Open via an ord: link, gateway redirect, or the "ord" omnibox keyword');
       return;
     }
     $("uri").textContent = uri;
-    document.title = `ord viewer \u2014 ${uri.slice(4, 24)}\u2026`;
+    document.title = `ord viewer: ${uri.slice(4, 24)}\u2026`;
     const hasChrome = typeof chrome !== "undefined" && !!chrome.storage?.sync;
     const settings = hasChrome ? await chrome.storage.sync.get({ level: "L2", esploras: null }) : { level: "L2", esploras: null };
     const level = settings.level === "L3" ? "L3" : "L2";
@@ -3970,7 +3970,7 @@ ${errors.join("\n")}`);
       const result = await resolver.resolve(uri);
       const ms = Math.round(performance.now() - started);
       $("status").className = "status pass";
-      $("status").textContent = `\u2713 verified at ${result.verification.level} in ${ms} ms \u2014 rendered from proven bytes`;
+      $("status").textContent = `\u2713 verified at ${result.verification.level} in ${ms} ms; rendered from proven bytes`;
       fact("inscription", result.uri.idString, true);
       fact("content-type", result.contentType ?? "(none)");
       fact("bytes", String(result.body.length) + (result.decoded ? " (decoded)" : ""));

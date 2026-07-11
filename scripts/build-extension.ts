@@ -38,7 +38,7 @@ await build({
   format: ['iife'], // classic scripts: valid for sw ("type": "module" tolerates it), pages, content scripts
   platform: 'browser',
   target: 'es2022',
-  minify: false, // reviewable dist — store submission can minify later
+  minify: false, // reviewable dist; store submission can minify later
   sourcemap: false,
   clean: false,
   silent: true,
@@ -49,4 +49,4 @@ await build({
 for (const file of ['manifest.json', 'viewer.html', 'popup.html']) {
   copyFileSync(join(SRC, file), join(OUT, file));
 }
-console.log(`extension built into ${OUT} — load via chrome://extensions → Load unpacked`);
+console.log(`extension built into ${OUT}. Load via chrome://extensions → Load unpacked`);

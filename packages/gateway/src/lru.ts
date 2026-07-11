@@ -1,6 +1,6 @@
 /**
  * Byte-budgeted LRU for immutable responses. Everything a gateway serves with
- * `immutable` cache semantics is safe to cache forever — the only pressure is
+ * `immutable` cache semantics is safe to cache forever; the only pressure is
  * memory, so the budget is BYTES, not entries. Map iteration order gives us
  * recency for free (delete + re-set on hit).
  */

@@ -12,7 +12,7 @@ import {
 /**
  * Self-verifying consensus sanity checks against universally-known constants.
  * If any byte-order or hashing assumption in the core library is wrong, the
- * genesis block header — whose hash is public knowledge — will not verify.
+ * genesis block header, whose hash is public knowledge, will not verify.
  */
 const GENESIS_HEADER_HEX =
   '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c';

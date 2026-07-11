@@ -51,7 +51,7 @@ export class TokenBucketLimiter {
     this.lastSweep = t;
     const idleCutoff = t - 120_000;
     for (const [key, bucket] of this.buckets) {
-      // effective tokens: what the bucket WOULD hold if refilled right now —
+      // effective tokens: what the bucket WOULD hold if refilled right now;
       // an idle bucket is safe to drop once it is logically full again
       const effective = bucket.tokens + ((t - bucket.lastRefill) / 1000) * this.ratePerSec;
       if (bucket.lastRefill < idleCutoff && effective >= this.burst) {

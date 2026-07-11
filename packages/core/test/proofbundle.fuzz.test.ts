@@ -32,10 +32,10 @@ import {
  *
  * Deliberate exclusions, by design:
  *  - block.height is NOT integrity-bound by the bundle; it is anchored by the
- *    caller's trustHeader (checkpoints / multi-source agreement) — locked by
+ *    caller's trustHeader (checkpoints / multi-source agreement), locked by
  *    its own test below.
  *  - At L2, witness bytes outside the tapscript+control block (e.g. the
- *    signature element) are NOT bound — that is the documented L2 gap that L3
+ *    signature element) are NOT bound. That is the documented L2 gap that L3
  *    closes; the sig-flip pair below pins both sides of it.
  */
 
@@ -201,7 +201,7 @@ const MUTATORS: Mutator[] = [
     return `pos ${original} -> ${candidate}`;
   },
   function idTxidTamper(bundle, rng) {
-    // NOTE: only the txid half — changing the INDEX changes which envelope is
+    // NOTE: only the txid half. Changing the INDEX changes which envelope is
     // being asked about, which is a different (legitimate) question; that
     // re-addressing behavior is pinned by its own test below.
     const id = bundle.inscriptionId;
@@ -311,7 +311,7 @@ describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () =>
     }
   });
 
-  it('height is NOT integrity-bound (trustHeader owns it) — attestation is unchanged', () => {
+  it('height is NOT integrity-bound (trustHeader owns it): attestation is unchanged', () => {
     const bundle = structuredClone(insc0Bundle());
     const expected = attestation(verifyProofBundle(bundle));
     bundle.block.height = 999999;
@@ -321,7 +321,7 @@ describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () =>
   });
 
   it('L2 does not bind the signature witness element; L3 does (the documented gap)', () => {
-    // flip a bit inside input 0's signature (witness[0]) — txid unchanged
+    // flip a bit inside input 0's signature (witness[0]); txid unchanged
     const flipSig = (revealHex: string): string => {
       const tx = parseTx(hexToBytes(revealHex));
       const witness = tx.inputs[0].witness.map((w) => Uint8Array.from(w));
@@ -336,7 +336,7 @@ describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () =>
       );
     };
 
-    // L2: verifies, attestation identical (content untouched — known, documented gap)
+    // L2: verifies, attestation identical (content untouched; known, documented gap)
     const l2 = structuredClone(insc0Bundle());
     const expected = attestation(verifyProofBundle(l2));
     l2.reveal.hex = flipSig(l2.reveal.hex);

@@ -177,7 +177,7 @@ describe('OrdResolver synthetic flows', () => {
     expect(viaContent.contentType).toBe('text/html');
     expect(viaContent.viaDelegate).toBe(idB);
 
-    // the bare URI referent is the ORIGINAL content — absent here
+    // the bare URI referent is the ORIGINAL content, absent here
     await expect(resolver.resolve(`ord:${idA}`)).rejects.toMatchObject({ code: 'NO_CONTENT' });
   });
 
