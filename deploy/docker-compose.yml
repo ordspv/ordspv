@@ -1,0 +1,55 @@
+# Reference deployment: bitcoind + electrs (esplora HTTP API) + verify-gateway.
+# Defaults to SIGNET so a laptop can sync it in minutes-to-hours; switch the
+# three *_NETWORK values to mainnet for real deployments (mainnet electrs
+# needs ~1 TB and days to index — see SPEC-GATEWAY §7).
+# Values marked ADJUST are deployment-specific.
+
+services:
+  bitcoind:
+    image: bitcoin/bitcoin:28
+    command:
+      - -signet                    # ADJUST: network
+      - -server=1
+      - -txindex=1
+      - -rpcuser=gateway
+      - -rpcpassword=gateway-local-only   # ADJUST: never expose this port
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=172.16.0.0/12
+    volumes:
+      - bitcoind-data:/home/bitcoin/.bitcoin
+    restart: unless-stopped
+
+  electrs:
+    image: mempool/electrs:latest
+    command:
+      - --network=signet           # ADJUST: network
+      - --daemon-rpc-addr=bitcoind:38332   # ADJUST: 8332 on mainnet
+      - --cookie=gateway:gateway-local-only
+      - --http-addr=0.0.0.0:3000
+      - --db-dir=/data
+      - --lightmode                # smaller index; drop for full features
+    volumes:
+      - electrs-data:/data
+    depends_on: [bitcoind]
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      GATEWAY_MODE: verify
+      ESPLORA: http://electrs:3000          # self-hosted proof source
+      ORD_UPSTREAM: https://ordinals.com    # recursion passthrough (ADJUST/self-host ord)
+      RATE_LIMIT: "10"
+      RATE_BURST: "40"
+      CACHE_MAX_BYTES: "268435456"
+      TRUST_PROXY: "0"                      # set 1 behind a LB/CDN
+    ports:
+      - "8317:8317"
+    depends_on: [electrs]
+    restart: unless-stopped
+
+volumes:
+  bitcoind-data:
+  electrs-data:

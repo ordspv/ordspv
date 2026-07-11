@@ -139,9 +139,33 @@ the gateway; this boundary is protocol-inherent (research §2), not a gateway de
 
 ## 7. Operational notes (non-normative)
 
-The reference implementation is single-file Node with no rate limiting, caching, or
-TLS; production deployments front it with a CDN (every 200 here is immutable) and add
-per-IP limits — recall that hotlinking pressure is what took ordinals.com down
-(ord#3873). A gateway with `GATEWAY_MODE=verify` plus `ESPLORA=` pointing at two
-operator-diverse instances is the minimum trust-minimized deployment; self-hosted
-`electrs` + `ord --index-transactions` removes third parties entirely.
+The reference implementation ships the production basics; fronting with a CDN
+remains recommended (every 200 here is immutable) — recall that hotlinking pressure
+is what took ordinals.com down (ord#3873).
+
+- **Caching**: in-process byte-budgeted LRU over immutable 200s
+  (`CACHE_MAX_BYTES`, default 256 MiB; per-entry cap `CACHE_MAX_ENTRY_BYTES`,
+  8 MiB). Responses carry `x-cache: HIT|MISS`. Immutability makes eviction the
+  only invalidation concern.
+- **Streaming vs buffering**: proxy passthrough streams bodies above the
+  per-entry cap. VERIFIED responses are buffered by necessity — a merkle proof
+  cannot be checked over bytes not yet read; verify-personality memory scales
+  with the largest inscription served, bounded by the tx-size consensus limit.
+- **Rate limiting**: per-IP token bucket (`RATE_LIMIT` sustained rps, default 10;
+  `RATE_BURST`, default 40) with `429` + `retry-after`; `/healthz` and `/metrics`
+  exempt. `TRUST_PROXY=1` keys on the first `X-Forwarded-For` hop instead of the
+  socket address — only set it behind infrastructure you control.
+- **Observability**: one JSON log line per request (ip, route, status, ms,
+  cache) and Prometheus text at `/metrics` (`gateway_http_requests_total`,
+  latency histogram by route label, cache hit/miss counters, rate-limit
+  counter, cache/limiter gauges). Route labels are collapsed
+  (`/content/:id`, `/r/*`) to keep cardinality flat.
+- **Shutdown**: SIGTERM/SIGINT stops accepting, drains in-flight connections,
+  force-closes after a 10 s grace.
+- **Reference deployment**: `deploy/Dockerfile` + `deploy/docker-compose.yml`
+  wire bitcoind → electrs (esplora HTTP API) → verify-gateway, defaulting to
+  signet for tryability; mainnet electrs needs ~1 TB and days to index. A
+  gateway with `GATEWAY_MODE=verify` plus `ESPLORA=` pointing at two
+  operator-diverse instances is the minimum trust-minimized deployment;
+  self-hosted `electrs` + `ord --index-transactions` removes third parties
+  entirely.
