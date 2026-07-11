@@ -22,7 +22,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyProofBundle } from '@ord-resolver/core';
+import { bytesToHex, sha256, verifyProofBundle } from '@ord-resolver/core';
 import { buildProofBundle, EsploraBackend, OrdResolver, parseOrdUri } from '@ord-resolver/fetch';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,26 +81,41 @@ async function vendorExtended(ids: string[]): Promise<void> {
     console.log(`\nvendoring ${parsed.idString}…`);
     const bundle = await buildProofBundle(esplora, parsed.id, 'L2');
     const verified = verifyProofBundle(bundle);
-    const result = await resolver.resolve(`ord:${parsed.idString}/content`);
+    const insc = verified.inscription;
+    // live /content resolution (follows delegates, decodes tag-9 encodings)
+    // to record served-content expectations alongside the envelope-level facts
+    let served: Record<string, unknown>;
+    try {
+      const result = await resolver.resolve(`ord:${parsed.idString}/content`);
+      served = {
+        sha256Stored: result.verification.bodySha256,
+        length: result.body.length,
+        viaDelegate: result.viaDelegate,
+        decoded: result.decoded,
+      };
+    } catch (e) {
+      served = { error: (e as { code?: string }).code ?? (e as Error).message };
+    }
     const out = {
       inscriptionId: parsed.idString,
-      contentType: verified.inscription.contentType,
-      contentEncoding: verified.inscription.contentEncoding,
-      delegate: verified.inscription.delegate,
-      parents: verified.inscription.parents,
-      bodySha256: result.verification.bodySha256,
       height: verified.height,
+      contentType: insc.contentType,
+      contentEncoding: insc.contentEncoding,
+      delegate: insc.delegate,
+      parents: insc.parents,
+      pointer: insc.pointer?.toString(),
+      metaprotocol: insc.metaprotocol,
+      metadataHex: insc.metadata ? bytesToHex(insc.metadata) : undefined,
+      bodyLength: insc.body?.length,
+      bodySha256: insc.body ? bytesToHex(sha256(insc.body)) : undefined,
+      flags: insc.flags,
+      served,
       l2: verified.l2,
     };
     writeFileSync(join(dir, `${parsed.idString}.json`), JSON.stringify(out, null, 2));
     writeFileSync(join(dir, `${parsed.idString}.bundle.json`), JSON.stringify(bundle));
-    check(`vendored ${parsed.idString}`, true, `${out.contentType} sha256=${out.bodySha256?.slice(0, 16)}…`);
+    check(`vendored ${parsed.idString}`, true, `${out.contentType ?? 'no content-type'}, body ${out.bodyLength ?? 'absent'}B`);
   }
-  console.log('\nSuggested extended-vector shopping list (find via any indexer):');
-  console.log('  - a delegate-using inscription (collection mint)');
-  console.log('  - a brotli content-encoding inscription');
-  console.log('  - an i>0 (multi-envelope reveal) inscription');
-  console.log('  - a chunked-metadata inscription');
 }
 
 const ids = process.argv.slice(2);

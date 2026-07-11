@@ -1,0 +1,26 @@
+{
+  "inscriptionId": "177c1e83ca20790448559382232487c7c97767f69bf46ec62152c3da0e099882i0",
+  "height": 844374,
+  "contentType": "image/svg+xml",
+  "parents": [],
+  "pointer": "0",
+  "bodyLength": 20354,
+  "bodySha256": "4c61be1eff513f7f3005ad8e9f1152beb97650241f7e0c0a37db229a0d874e6b",
+  "flags": {
+    "incompleteField": false,
+    "duplicateField": false,
+    "unrecognizedEvenField": false,
+    "pushnum": false,
+    "stutter": false
+  },
+  "served": {
+    "sha256Stored": "4c61be1eff513f7f3005ad8e9f1152beb97650241f7e0c0a37db229a0d874e6b",
+    "length": 20354,
+    "decoded": false
+  },
+  "l2": {
+    "controlBlockDepth": 0,
+    "singleLeafTree": true,
+    "singleInputReveal": true
+  }
+}

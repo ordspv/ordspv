@@ -6,8 +6,11 @@
 - `npx tsc --noEmit` — typecheck (TypeScript 7: no `baseUrl`, relative `paths` only)
 - `npx tsx packages/cli/src/main.ts …` — CLI (needs live network for resolve/proof)
 - `npx tsx scripts/fetch-fixtures.ts` — refresh/extend fixtures + LIVE end-to-end
-  validation (run this first in any network-enabled session; it was written in a
-  sandbox without direct API egress)
+  validation (run this first in any network-enabled session); pass inscription
+  ids to vendor extended fixtures into `fixtures/extended/`
+- `npx tsx scripts/parity-sweep.ts` — envelope-parser parity vs a live ord
+  instance (`ORD_BASE` to point at your own) over a curated corpus of eras and
+  features; ANY mismatch is a P0 bug per invariant 2
 
 ## Invariants — do not break
 
