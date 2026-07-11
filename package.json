@@ -16,6 +16,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.0",

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ord viewer</title>
+<style>
+  :root { color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #fff; --dim: #666; --line: #e2e2e2;
+    --pass: #0a7d33; --fail: #b3261e; --accent: #f7931a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --bg: #131313; --dim: #9a9a9a; --line: #2c2c2c;
+            --pass: #4cc272; --fail: #ff6b61; } }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 52rem; padding: 1.6rem 1.25rem 3rem;
+         font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  header { display: flex; align-items: baseline; gap: .6rem; border-bottom: 1px solid var(--line); padding-bottom: .7rem; }
+  header b { color: var(--accent); }
+  #uri { font-family: ui-monospace, monospace; font-size: .8rem; color: var(--dim); overflow-wrap: anywhere; }
+  .status { margin: .9rem 0; font-weight: 600; }
+  .status.pass { color: var(--pass); }
+  .status.fail { color: var(--fail); }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: .1rem .8rem; font-size: .84rem;
+       border: 1px solid var(--line); border-radius: .6rem; padding: .8rem; }
+  dt { color: var(--dim); } dd { margin: 0; overflow-wrap: anywhere; }
+  .mono { font-family: ui-monospace, monospace; font-size: .78rem; }
+  #content { margin-top: 1.2rem; }
+  #content img, #content video, #content iframe { max-width: 100%; border-radius: .5rem; }
+  #content img { image-rendering: pixelated; }
+  #content iframe { width: 100%; height: 70vh; border: 1px solid var(--line); background: #fff; }
+  #content pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem;
+                 border: 1px solid var(--line); border-radius: .5rem; padding: .8rem; }
+</style>
+<body>
+  <header><b>ord</b> viewer <span id="uri"></span></header>
+  <div id="status" class="status">loading…</div>
+  <dl id="facts"></dl>
+  <div id="content"></div>
+  <script src="viewer.js"></script>
+</body>
+</html>

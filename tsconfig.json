@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": [
-      "node"
+      "node",
+      "chrome"
     ],
     "noEmit": true,
     "paths": {
@@ -28,6 +29,9 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "examples/src/**/*.ts",
+    "extension/src/**/*.ts",
+    "extension/test/**/*.ts"
   ]
 }

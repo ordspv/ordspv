@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "ord: resolver (dev build — placeholder name)",
+  "version": "0.1.0",
+  "description": "Resolve ord: links and gateway URLs by verifying inscription bytes against Bitcoin proof-of-work in your browser (L2/L3). No trusted servers.",
+  "permissions": ["storage", "declarativeNetRequest", "scripting"],
+  "host_permissions": ["https://ordinals.com/*"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ord: resolver"
+  },
+  "omnibox": { "keyword": "ord" },
+  "web_accessible_resources": [
+    { "resources": ["viewer.html"], "matches": ["<all_urls>"] }
+  ]
+}

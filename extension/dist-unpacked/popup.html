@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<title>ord: resolver</title>
+<style>
+  :root { color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #fff; --dim: #666; --line: #e2e2e2; --accent: #f7931a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --bg: #1c1c1c; --dim: #9a9a9a; --line: #333; } }
+  body { width: 300px; margin: 0; padding: .9rem; font: 13px/1.45 system-ui, sans-serif;
+         color: var(--fg); background: var(--bg); }
+  h1 { font-size: .95rem; margin: 0 0 .7rem; } h1 b { color: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: center;
+         padding: .45rem 0; border-top: 1px solid var(--line); gap: .6rem; }
+  .row label { flex: 1; }
+  .hint { color: var(--dim); font-size: .74rem; margin-top: .15rem; }
+  select, input[type="text"] { font: inherit; }
+  input[type="text"] { width: 100%; margin-top: .5rem; padding: .35rem .5rem;
+    border: 1px solid var(--line); border-radius: .4rem; background: transparent; color: inherit; }
+  button.link { all: unset; color: var(--accent); cursor: pointer; font-weight: 600; }
+</style>
+<body>
+  <h1><b>ord</b>: resolver</h1>
+
+  <div class="row">
+    <label for="intercept">Intercept gateway URLs
+      <div class="hint">ordinals.com /content|/preview → verified viewer</div>
+    </label>
+    <input type="checkbox" id="intercept" />
+  </div>
+
+  <div class="row">
+    <label for="level">Verification level
+      <div class="hint">L3 downloads the raw block (~1–2 MB)</div>
+    </label>
+    <select id="level"><option>L2</option><option>L3</option></select>
+  </div>
+
+  <div class="row">
+    <label>ord: links on <span id="site" class="mono">…</span>
+      <div class="hint">per-site: makes ord: anchors clickable here</div>
+    </label>
+    <input type="checkbox" id="site-toggle" />
+  </div>
+
+  <div class="row" style="border-top:none">
+    <input type="text" id="open" placeholder="paste an inscription id or ord: URI ⏎" />
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
