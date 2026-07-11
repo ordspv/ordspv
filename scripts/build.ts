@@ -136,6 +136,7 @@ function stagedManifest(dir: string, extra: Record<string, unknown>): void {
   const out = join(STAGING, dir);
   mkdirSync(out, { recursive: true });
   cpSync(join(ROOT, 'packages', dir, 'dist'), join(out, 'dist'), { recursive: true });
+  cpSync(join(ROOT, 'LICENSE'), join(out, 'LICENSE')); // npm includes LICENSE implicitly
   writeFileSync(join(out, 'package.json'), JSON.stringify(manifest, null, 2));
 }
 
