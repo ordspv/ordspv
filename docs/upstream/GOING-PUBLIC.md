@@ -51,8 +51,8 @@ keyboard by their nature (account creation, payments, store listings).
       (`npm pack` each staged package and grep the extraction), the demo
       inline bundle, extension dist-unpacked, all `*.js.map` source maps, and
       the vendored `.patch` files. Zero hits expected everywhere; the only
-      permitted exception is the untracked, gitignored `private/` directory
-      (local harness config and the sweep-term list, never pushed).
+      permitted exceptions are untracked local tooling directories
+      (covered by the machine's global git excludes).
       *(First run 2026-07-11: zero hits in all publishable artifacts.)*
 
 ## 1. Accounts 【identity】

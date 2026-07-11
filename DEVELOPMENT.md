@@ -1,4 +1,4 @@
-# DEVELOPMENT.md: operational guide for this repo
+# Development guide
 
 ## Commands
 
