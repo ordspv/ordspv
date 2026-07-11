@@ -63,6 +63,39 @@ export function envelopeScript(spec: EnvelopeSpec, extra: { checksigPrefix?: boo
   return script(...parts);
 }
 
+/**
+ * Mirror of ord's test `parse(&[Witness...])` transaction shape: one input per
+ * raw witness stack, witnesses passed through verbatim (envelope parsing never
+ * looks at outputs).
+ */
+export function txWithWitnesses(witnesses: Uint8Array[][]): ParsedTx {
+  const raw = serializeFull({
+    version: 2,
+    inputs: witnesses.map((witness, i) => {
+      const prev = sha256(new TextEncoder().encode(`wprev${i}`));
+      return {
+        prevTxidLE: prev,
+        prevTxid: internalToDisplay(prev),
+        vout: 0,
+        scriptSig: new Uint8Array(0),
+        sequence: 0xfffffffd,
+        witness,
+      };
+    }),
+    outputs: [{ value: 0n, scriptPubKey: new Uint8Array([0x51]) }],
+    locktime: 0,
+  });
+  return parseTx(raw);
+}
+
+/**
+ * Mirror of ord's test `envelope(&[...])` helper: witness stack
+ * [OP_FALSE OP_IF <payload pushes> OP_ENDIF, <empty control block>].
+ */
+export function ordEnvelope(...payload: (Uint8Array | string)[]): Uint8Array[] {
+  return [script(0x00, 0x63, ...payload, 0x68), new Uint8Array(0)];
+}
+
 let txSeed = 0;
 
 /** a unique dummy segwit tx (not a reveal) */

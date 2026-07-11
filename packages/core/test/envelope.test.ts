@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bytesToHex,
   inscriptionsFromTx,
   parseEnvelopesFromScript,
   parseInscriptionIdValue,
@@ -8,9 +9,17 @@ import {
   concatBytes,
   sha256,
   displayToInternal,
+  type Inscription,
   type RawEnvelope,
 } from '../src/index.js';
-import { DUMMY_CONTROL_BLOCK, envelopeScript, revealTx, script } from './helpers.js';
+import {
+  DUMMY_CONTROL_BLOCK,
+  envelopeScript,
+  ordEnvelope,
+  revealTx,
+  script,
+  txWithWitnesses,
+} from './helpers.js';
 
 const interpret = (payload: Uint8Array[], flags: Partial<RawEnvelope> = {}) =>
   interpretEnvelope({ input: 0, offsetInInput: 0, index: 0, payload, pushnum: false, stutter: false, ...flags });
@@ -189,5 +198,342 @@ describe('envelope grammar (ord envelope.rs semantics)', () => {
     const display = '6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799';
     const id = parseInscriptionIdValue(displayToInternal(display));
     expect(id).toBe(`${display}i0`);
+  });
+});
+
+/**
+ * Byte-level port of ord's envelope test corpus:
+ * ordinals/ord @ 7effaaaf, src/inscriptions/envelope.rs `mod tests`.
+ * One `it` per ord `#[test]`, same names, same script bytes (rust-bitcoin's
+ * script::Builder emits minimal pushes, as our `script()` helper does), and
+ * full-struct equality: every Inscription field is asserted against defaults
+ * plus the listed overrides, mirroring ord's `assert_eq!` on ParsedEnvelope.
+ */
+describe('ord envelope.rs test corpus (@7effaaaf)', () => {
+  const te = new TextEncoder();
+  const EMPTY = new Uint8Array(0);
+  /** single-byte tag push, as ord's Tag::bytes() */
+  const t = (n: number) => Uint8Array.of(n);
+
+  /** mirror of ord's test `parse(&[Witness...])`: one input per witness stack */
+  const parse = (witnesses: Uint8Array[][]): Inscription[] =>
+    inscriptionsFromTx(txWithWitnesses(witnesses));
+
+  interface ExpectedInscription {
+    /** ord's per-input offset; equals our global index in these single-lane cases */
+    index?: number;
+    input?: number;
+    contentType?: string;
+    /** omit = no body separator (ord body: None); '' / bytes = present */
+    body?: Uint8Array | string;
+    contentEncoding?: string;
+    metaprotocol?: string;
+    metadata?: Uint8Array;
+    properties?: Uint8Array;
+    propertyEncoding?: string;
+    pointer?: bigint;
+    parents?: string[];
+    delegate?: string;
+    rune?: Uint8Array;
+    flags?: Partial<Inscription['flags']>;
+  }
+
+  const expectBytes = (actual: Uint8Array | undefined, expected: Uint8Array | undefined) => {
+    if (expected === undefined) expect(actual).toBeUndefined();
+    else expect(actual === undefined ? undefined : bytesToHex(actual)).toBe(bytesToHex(expected));
+  };
+
+  /** assert_eq!(parse(...), vec![...]): all fields checked, not just overrides */
+  function expectParsed(actual: Inscription[], expected: ExpectedInscription[]): void {
+    expect(actual.length).toBe(expected.length);
+    actual.forEach((insc, i) => {
+      const exp = expected[i];
+      expect(insc.index).toBe(exp.index ?? i);
+      expect(insc.input).toBe(exp.input ?? 0);
+      expect(insc.contentType).toBe(exp.contentType);
+      expectBytes(insc.body, typeof exp.body === 'string' ? te.encode(exp.body) : exp.body);
+      expect(insc.contentEncoding).toBe(exp.contentEncoding);
+      expect(insc.metaprotocol).toBe(exp.metaprotocol);
+      expectBytes(insc.metadata, exp.metadata);
+      expectBytes(insc.properties, exp.properties);
+      expect(insc.propertyEncoding).toBe(exp.propertyEncoding);
+      expect(insc.pointer).toBe(exp.pointer);
+      expect(insc.parents).toEqual(exp.parents ?? []);
+      expect(insc.delegate).toBe(exp.delegate);
+      expectBytes(insc.rune, exp.rune);
+      expect(insc.flags).toEqual({
+        incompleteField: false,
+        duplicateField: false,
+        unrecognizedEvenField: false,
+        pushnum: false,
+        stutter: false,
+        ...exp.flags,
+      });
+      expect(insc.unboundByEvenField).toBe(insc.flags.unrecognizedEvenField);
+    });
+  }
+
+  it('empty', () => {
+    expectParsed(parse([[]]), []);
+  });
+
+  it('ignore_key_path_spends', () => {
+    expectParsed(parse([[script(0x00, 0x63, 'ord', 0x68)]]), []);
+  });
+
+  it('ignore_key_path_spends_with_annex', () => {
+    expectParsed(parse([[script(0x00, 0x63, 'ord', 0x68), Uint8Array.of(0x50)]]), []);
+  });
+
+  it('parse_from_tapscript', () => {
+    expectParsed(parse([[script(0x00, 0x63, 'ord', 0x68), EMPTY]]), [{}]);
+  });
+
+  it('ignore_unparsable_scripts', () => {
+    // a trailing truncated push poisons the WHOLE tapscript, valid envelope included
+    const s = concatBytes(script(0x00, 0x63, 'ord', 0x68), Uint8Array.of(0x01));
+    expectParsed(parse([[s, EMPTY]]), []);
+  });
+
+  it('no_inscription', () => {
+    expectParsed(parse([[EMPTY /* empty script */, EMPTY]]), []);
+  });
+
+  it('duplicate_field', () => {
+    expectParsed(parse([ordEnvelope('ord', t(255), EMPTY, t(255), EMPTY)]), [
+      { flags: { duplicateField: true } },
+    ]);
+  });
+
+  it('with_content_type', () => {
+    expectParsed(parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'ord')]), [
+      { contentType: 'text/plain;charset=utf-8', body: 'ord' },
+    ]);
+  });
+
+  it('with_content_encoding', () => {
+    expectParsed(
+      parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', t(9), 'br', EMPTY, 'ord')]),
+      [{ contentType: 'text/plain;charset=utf-8', contentEncoding: 'br', body: 'ord' }],
+    );
+  });
+
+  it('with_unknown_tag', () => {
+    expectParsed(
+      parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', t(255), 'bar', EMPTY, 'ord')]),
+      [{ contentType: 'text/plain;charset=utf-8', body: 'ord' }],
+    );
+  });
+
+  it('no_body', () => {
+    expectParsed(parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8')]), [
+      { contentType: 'text/plain;charset=utf-8' },
+    ]);
+  });
+
+  it('no_content_type', () => {
+    expectParsed(parse([ordEnvelope('ord', EMPTY, 'foo')]), [{ body: 'foo' }]);
+  });
+
+  it('valid_body_in_multiple_pushes', () => {
+    expectParsed(
+      parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'foo', 'bar')]),
+      [{ contentType: 'text/plain;charset=utf-8', body: 'foobar' }],
+    );
+  });
+
+  it('valid_body_in_zero_pushes', () => {
+    // separator with zero chunks: body is PRESENT and empty, not absent
+    expectParsed(parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY)]), [
+      { contentType: 'text/plain;charset=utf-8', body: '' },
+    ]);
+  });
+
+  it('valid_body_in_multiple_empty_pushes', () => {
+    expectParsed(
+      parse([
+        ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY),
+      ]),
+      [{ contentType: 'text/plain;charset=utf-8', body: '' }],
+    );
+  });
+
+  it('valid_ignore_trailing', () => {
+    expectParsed(
+      parse([
+        [script(0x00, 0x63, 'ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'ord', 0x68, 0xac), EMPTY],
+      ]),
+      [{ contentType: 'text/plain;charset=utf-8', body: 'ord' }],
+    );
+  });
+
+  it('valid_ignore_preceding', () => {
+    expectParsed(
+      parse([
+        [script(0xac, 0x00, 0x63, 'ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'ord', 0x68), EMPTY],
+      ]),
+      [{ contentType: 'text/plain;charset=utf-8', body: 'ord' }],
+    );
+  });
+
+  it('multiple_inscriptions_in_a_single_witness', () => {
+    const s = concatBytes(
+      script(0x00, 0x63, 'ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'foo', 0x68),
+      script(0x00, 0x63, 'ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'bar', 0x68),
+    );
+    expectParsed(parse([[s, EMPTY]]), [
+      { contentType: 'text/plain;charset=utf-8', body: 'foo' },
+      { index: 1, contentType: 'text/plain;charset=utf-8', body: 'bar' },
+    ]);
+  });
+
+  it('invalid_utf8_does_not_render_inscription_invalid', () => {
+    expectParsed(
+      parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY, Uint8Array.of(0b10000000))]),
+      [{ contentType: 'text/plain;charset=utf-8', body: Uint8Array.of(0b10000000) }],
+    );
+  });
+
+  it('no_endif', () => {
+    expectParsed(parse([[script(0x00, 0x63, 'ord'), EMPTY]]), []);
+  });
+
+  it('no_op_false', () => {
+    expectParsed(parse([[script(0x63, 'ord', 0x68), EMPTY]]), []);
+  });
+
+  it('empty_envelope', () => {
+    expectParsed(parse([ordEnvelope()]), []);
+  });
+
+  it('wrong_protocol_identifier', () => {
+    expectParsed(parse([ordEnvelope('foo')]), []);
+  });
+
+  it('extract_from_transaction', () => {
+    expectParsed(parse([ordEnvelope('ord', t(1), 'text/plain;charset=utf-8', EMPTY, 'ord')]), [
+      { contentType: 'text/plain;charset=utf-8', body: 'ord' },
+    ]);
+  });
+
+  it('extract_from_second_input', () => {
+    const body = new Uint8Array(1040).fill(1);
+    // Inscription::to_witness chunks bodies at MAX_SCRIPT_ELEMENT_SIZE (520)
+    const w = ordEnvelope('ord', t(1), 'foo', EMPTY, body.slice(0, 520), body.slice(520));
+    expectParsed(parse([[], w]), [{ input: 1, contentType: 'foo', body }]);
+  });
+
+  it('extract_from_second_envelope', () => {
+    const body = new Uint8Array(100).fill(1);
+    const s = concatBytes(
+      script(0x00, 0x63, 'ord', t(1), 'foo', EMPTY, body, 0x68),
+      script(0x00, 0x63, 'ord', t(1), 'bar', EMPTY, body, 0x68),
+    );
+    expectParsed(parse([[s, EMPTY]]), [
+      { contentType: 'foo', body },
+      { index: 1, contentType: 'bar', body },
+    ]);
+  });
+
+  it('inscribe_png', () => {
+    const body = new Uint8Array(100).fill(1);
+    expectParsed(parse([ordEnvelope('ord', t(1), 'image/png', EMPTY, body)]), [
+      { contentType: 'image/png', body },
+    ]);
+  });
+
+  it('chunked_data_is_parsable', () => {
+    const body = new Uint8Array(1040).fill(1);
+    const w = ordEnvelope('ord', t(1), 'foo', EMPTY, body.slice(0, 520), body.slice(520));
+    expectParsed(parse([w]), [{ contentType: 'foo', body }]);
+  });
+
+  it('round_trip_with_no_fields', () => {
+    expectParsed(parse([ordEnvelope('ord')]), [{}]);
+  });
+
+  it('unknown_odd_fields_are_ignored', () => {
+    expectParsed(parse([ordEnvelope('ord', t(255), Uint8Array.of(0))]), [{}]);
+  });
+
+  it('unknown_even_fields', () => {
+    expectParsed(parse([ordEnvelope('ord', t(22), Uint8Array.of(0))]), [
+      { flags: { unrecognizedEvenField: true } },
+    ]);
+  });
+
+  it('pointer_field_is_recognized', () => {
+    expectParsed(parse([ordEnvelope('ord', t(2), Uint8Array.of(1))]), [{ pointer: 1n }]);
+  });
+
+  it('duplicate_pointer_field_makes_inscription_unbound', () => {
+    expectParsed(parse([ordEnvelope('ord', t(2), Uint8Array.of(1), t(2), Uint8Array.of(0))]), [
+      { pointer: 1n, flags: { duplicateField: true, unrecognizedEvenField: true } },
+    ]);
+  });
+
+  it('tag_66_makes_inscriptions_unbound', () => {
+    expectParsed(parse([ordEnvelope('ord', t(66), Uint8Array.of(1))]), [
+      { flags: { unrecognizedEvenField: true } },
+    ]);
+  });
+
+  it('incomplete_field', () => {
+    expectParsed(parse([ordEnvelope('ord', t(99))]), [{ flags: { incompleteField: true } }]);
+  });
+
+  it('metadata_is_parsed_correctly', () => {
+    expectParsed(parse([ordEnvelope('ord', t(5), EMPTY)]), [{ metadata: EMPTY }]);
+  });
+
+  it('metadata_is_parsed_correctly_from_chunks', () => {
+    expectParsed(parse([ordEnvelope('ord', t(5), Uint8Array.of(0), t(5), Uint8Array.of(1))]), [
+      { metadata: Uint8Array.of(0, 1), flags: { duplicateField: true } },
+    ]);
+  });
+
+  it('properties_are_parsed_correctly', () => {
+    expectParsed(parse([ordEnvelope('ord', t(17), Uint8Array.of(1, 2, 3))]), [
+      { properties: Uint8Array.of(1, 2, 3) },
+    ]);
+  });
+
+  it('properties_are_parsed_correctly_from_chunks', () => {
+    expectParsed(parse([ordEnvelope('ord', t(17), Uint8Array.of(0), t(17), Uint8Array.of(1))]), [
+      { properties: Uint8Array.of(0, 1), flags: { duplicateField: true } },
+    ]);
+  });
+
+  it('pushnum_opcodes_are_parsed_correctly', () => {
+    const PUSHNUMS: [number, number][] = [
+      [0x4f, 0x81], // OP_PUSHNUM_NEG1
+      ...Array.from({ length: 16 }, (_, k) => [0x51 + k, k + 1] as [number, number]),
+    ];
+    for (const [opcode, value] of PUSHNUMS) {
+      expectParsed(parse([[script(0x00, 0x63, 'ord', 0x00, opcode, 0x68), EMPTY]]), [
+        { body: Uint8Array.of(value), flags: { pushnum: true } },
+      ]);
+    }
+  });
+
+  it('stuttering', () => {
+    // OP_FALSE OP_FALSE OP_IF "ord" OP_ENDIF
+    expectParsed(parse([[script(0x00, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
+      { flags: { stutter: true } },
+    ]);
+    // OP_FALSE OP_IF OP_FALSE OP_IF "ord" OP_ENDIF
+    expectParsed(parse([[script(0x00, 0x63, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
+      { flags: { stutter: true } },
+    ]);
+    // OP_FALSE OP_IF OP_FALSE OP_IF OP_FALSE OP_IF "ord" OP_ENDIF
+    expectParsed(parse([[script(0x00, 0x63, 0x00, 0x63, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
+      { flags: { stutter: true } },
+    ]);
+    // OP_FALSE OP_FALSE OP_AND OP_FALSE OP_IF "ord" OP_ENDIF — the failed
+    // attempt at the second OP_FALSE stops at OP_AND (not an empty push),
+    // ASSIGNING stuttered=false; the envelope is not marked
+    expectParsed(parse([[script(0x00, 0x00, 0x84, 0x00, 0x63, 'ord', 0x68), EMPTY]]), [
+      { flags: { stutter: false } },
+    ]);
   });
 });
