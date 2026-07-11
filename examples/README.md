@@ -3,7 +3,7 @@
 ## verify-inscription-0.html
 
 Open the file — that's it. A single self-contained page (inline bundle of
-`@ord-resolver/core`, ~55 KB) that fetches inscription 0 from public esplora
+`@ordspv/core`, ~55 KB) that fetches inscription 0 from public esplora
 instances (mempool.space, blockstream.info failover; both serve
 `Access-Control-Allow-Origin: *`) and verifies it client-side at L2:
 

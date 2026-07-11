@@ -93,7 +93,7 @@ ord:<id>/content#integrity=sha256-<base64url-of-32-bytes>
 - Resolvers MUST apply ord's envelope semantics exactly (tag table, take semantics,
   duplicate/unbound flags, one-hop delegation) — the normative behavior is ord's
   `envelope.rs`/`tag.rs`; a conformant TypeScript mirror with tests ships in
-  `@ord-resolver/core`.
+  `@ordspv/core`.
 - Content-encoding: resolvers SHOULD decode a recognized `content_encoding` (`br`,
   `gzip`, `deflate`) for callers, and MUST otherwise deliver the stored bytes together
   with the encoding label. Resolvers MUST NOT fail solely because an encoding is

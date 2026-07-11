@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { readFileSync, writeFileSync } from 'node:fs';
-import { verifyProofBundle, type ProofBundleJson } from '@ord-resolver/core';
+import { verifyProofBundle, type ProofBundleJson } from '@ordspv/core';
 import {
   buildProofBundle,
   EsploraBackend,
@@ -8,7 +8,7 @@ import {
   parseOrdUri,
   DEFAULT_ESPLORA,
   type VerificationMode,
-} from '@ord-resolver/fetch';
+} from '@ordspv/fetch';
 
 /**
  * ord-resolve — resolve and verify ord: URIs from the command line.

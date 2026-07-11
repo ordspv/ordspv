@@ -13,7 +13,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bytesToHex, hexToBytes, sha256 } from '@ord-resolver/core';
+import { bytesToHex, hexToBytes, sha256 } from '@ordspv/core';
 import {
   ElectrumTcpTransport,
   HeaderChain,
@@ -29,7 +29,7 @@ const [host, portStr] = arg.split(':');
 const transport = new ElectrumTcpTransport({ host, port: Number(portStr ?? 50002), tls: true });
 
 console.log(`fetching ${COUNT} headers from ${host} starting at ${MAINNET_BASE_766080.height}…`);
-await transport.request('server.version', ['ord-resolver fixture fetch', '1.4']);
+await transport.request('server.version', ['ordspv fixture fetch', '1.4']);
 const chunks: Uint8Array[] = [];
 let fetched = 0;
 while (fetched < COUNT) {

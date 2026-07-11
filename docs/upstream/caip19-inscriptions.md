@@ -12,7 +12,7 @@ Status: draft v1, 2026-07-11.
 ---
 namespace-identifier: bip122-caip19
 title: BIP122 Namespace - Assets (Ordinals Inscriptions)
-author: (pseudonymous — ord-resolver project)
+author: ordspv (https://github.com/ordspv)
 status: Draft
 type: Standard
 created: 2026-07-11
@@ -113,7 +113,7 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 [bip122-caip2]: https://namespaces.chainagnostic.org/bip122/caip2
 [ord-docs]: https://docs.ordinals.com/inscriptions.html
 [ord-uris]: https://docs.ordinals.com/inscriptions/uris.html
-[spec-verification]: PLACEHOLDER-repo-link/docs/spec/SPEC-VERIFICATION.md
+[spec-verification]: https://github.com/ordspv/ordspv/blob/master/docs/spec/SPEC-VERIFICATION.md
 
 ---
 
@@ -121,7 +121,7 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 
 - File goes in the namespaces repo as `bip122/caip19.md`; check whether the
   repo wants a companion update to `bip122/README.md` listing the new profile.
-- Fill PLACEHOLDER link after the repo is public; keep authorship the
-  pseudonymous project handle.
+- Links are concrete (github.com/ordspv/ordspv) — repo goes live at
+  GOING-PUBLIC step 2; keep authorship the pseudonymous handle.
 - The signet chain id above should be re-derived from the current signet
   genesis before posting (signet resets are possible).

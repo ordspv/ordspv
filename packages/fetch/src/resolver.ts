@@ -8,7 +8,7 @@ import {
   type Inscription,
   type L2Assurances,
   type VerifiedInscription,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import { EsploraBackend, OrdBackend, type FetchFn } from './backends.js';
 import { defaultDecompressor, type Decompressor } from './decompress.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
@@ -49,7 +49,7 @@ export interface ResolverOptions {
   /**
    * Replace checkpoint/M-of-N anchoring entirely with a custom header anchor
    * (e.g. headerSyncTrust over a locally synced chain — see
-   * `@ord-resolver/fetch/headersync`). Throw to reject the header.
+   * `@ordspv/fetch/headersync`). Throw to reject the header.
    */
   trustHeader?: (header: BlockHeader, height: number) => Promise<HeaderTrustReport>;
   fetchFn?: FetchFn;

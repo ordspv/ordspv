@@ -22,8 +22,8 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bytesToHex, sha256, verifyProofBundle } from '@ord-resolver/core';
-import { buildProofBundle, EsploraBackend, OrdResolver, parseOrdUri } from '@ord-resolver/fetch';
+import { bytesToHex, sha256, verifyProofBundle } from '@ordspv/core';
+import { buildProofBundle, EsploraBackend, OrdResolver, parseOrdUri } from '@ordspv/fetch';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const INSC0 = '6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0';

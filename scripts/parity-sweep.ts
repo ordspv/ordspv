@@ -29,8 +29,8 @@ import {
   parseTx,
   sha256,
   type Inscription,
-} from '@ord-resolver/core';
-import { EsploraBackend, OrdBackend, nodeDecompressor } from '@ord-resolver/fetch';
+} from '@ordspv/core';
+import { EsploraBackend, OrdBackend, nodeDecompressor } from '@ordspv/fetch';
 
 const JUBILEE_HEIGHT = 824544;
 

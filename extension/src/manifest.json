@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ord: resolver (dev build — placeholder name)",
+  "name": "ordspv — ord: resolver (dev build)",
   "version": "0.1.0",
   "description": "Resolve ord: links and gateway URLs by verifying inscription bytes against Bitcoin proof-of-work in your browser (L2/L3). No trusted servers.",
   "permissions": ["storage", "declarativeNetRequest", "scripting"],

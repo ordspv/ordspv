@@ -30,7 +30,7 @@ address-bar keyword is the always-available path.
 ## Trust model
 
 - esplora responses are UNTRUSTED inputs — everything is re-verified
-  client-side (`@ord-resolver/fetch` browser bundle; header anchoring via
+  client-side (`@ordspv/fetch` browser bundle; header anchoring via
   compiled checkpoints + M-of-N hash-at-height).
 - The viewer renders from verified bytes only; verification failure shows the
   error and renders nothing.
@@ -48,4 +48,4 @@ address-bar keyword is the always-available path.
   `extension/test/urlmap.test.ts`, run by the repo's vitest)
 - `npx tsx scripts/build-extension.ts` rebuilds `dist-unpacked/` (unminified,
   reviewable)
-- placeholder naming applies here too (`manifest.json` name/description)
+- canonical repo: github.com/ordspv/ordspv

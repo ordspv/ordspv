@@ -4,7 +4,7 @@ import {
   bytesToHex,
   verifyProofBundle,
   type ProofBundleJson,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import {
   buildBlock,
   commitTx,
@@ -13,7 +13,7 @@ import {
   taprootCommit,
   type TestBlock,
 } from '../../core/test/helpers.js';
-import { serializeBlock } from '@ord-resolver/core';
+import { serializeBlock } from '@ordspv/core';
 import { CoreRpcBackend, CoreRpcError, coreRpc, createSidecar, type RpcCall } from '../src/index.js';
 
 /**

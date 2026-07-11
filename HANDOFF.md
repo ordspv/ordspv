@@ -10,12 +10,12 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), cross-chain
   embedding guide (docs/CROSS-CHAIN.md), all grounded in the cited research synthesis
   (docs/RESEARCH.md).
-- **Working code, 185 tests, all offline-runnable**: `@ord-resolver/core`
+- **Working code, 185 tests, all offline-runnable**: `@ordspv/core`
   (consensus primitives, ord-exact envelope parser, L2/L3 proof verification),
-  `@ord-resolver/fetch` (verified resolver: failover backends, checkpoint + M-of-N
+  `@ordspv/fetch` (verified resolver: failover backends, checkpoint + M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling),
-  `@ord-resolver/gateway` (proxy/verify personalities, proof endpoint),
-  `@ord-resolver/cli`.
+  `@ordspv/gateway` (proxy/verify personalities, proof endpoint),
+  `@ordspv/cli`.
 - **Live-validated**: inscription 0 verifies at L2 end-to-end from real mainnet bytes
   (vendored, self-verifying fixtures). The BIP-341 check passes against the real
   commit output; the esplora merkle proof folds to the real header.
@@ -85,8 +85,8 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
 4. ~~Build pipeline~~ **DONE 2026-07-11** — CI (GitHub Actions: test + tsc + build)
    plus scripts/build.ts: tsup ESM + TS7-tsc declarations, fetch browser bundle
    (decompress swapped), publish staging + pack/publish dry-runs under the
-   PLACEHOLDER @ord-resolver scope; consumer-shaped smoke test of staged dists.
-5. ~~Header sync module~~ **DONE 2026-07-11** — `@ord-resolver/fetch/headersync`
+   PLACEHOLDER @ordspv scope; consumer-shaped smoke test of staged dists.
+5. ~~Header sync module~~ **DONE 2026-07-11** — `@ordspv/fetch/headersync`
    (node-only subpath): Electrum-synced, locally validated chain (linkage/PoW/exact
    retarget/MTP/checkpoints), disk persistence w/ revalidating load, cp_height
    root/branch verification, drop-in `trustHeader` (resolver option). Real 2120-header
@@ -113,7 +113,7 @@ operational invariants; docs/RESEARCH.md for the full technical rationale.*
      block). Patch vendored at docs/upstream/patches/. NOTE: the electrumd wallet
      test-harness dev-dep doesn't build on macos-arm64 (pre-existing) — the electrum
      protocol test compiles/runs on Linux CI only.
-   - `@ord-resolver/proof-sidecar`: proof bundles over Bitcoin Core RPC (txindex) so
+   - `@ordspv/proof-sidecar`: proof bundles over Bitcoin Core RPC (txindex) so
      node operators serve L2/L3 without esplora.
    - Drafts in docs/upstream/ (DRAFT-ONLY, do not post without sign-off): ord
      URI-extensions discussion (#3780 + uris.md + IANA offer), esplora witness-proof

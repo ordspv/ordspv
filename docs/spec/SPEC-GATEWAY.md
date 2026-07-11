@@ -2,7 +2,7 @@
 
 Status: draft v0.1 · 2026-07-11
 Companion: [SPEC-URI.md](./SPEC-URI.md), [SPEC-VERIFICATION.md](./SPEC-VERIFICATION.md)
-Reference implementation: `@ord-resolver/gateway`
+Reference implementation: `@ordspv/gateway`
 
 A gateway is an HTTP server that makes `ord:` URIs consumable by software that only
 speaks HTTPS (browsers, marketplaces, `tokenURI` pipelines). The design premise —

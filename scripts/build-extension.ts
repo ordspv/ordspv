@@ -2,7 +2,7 @@
 /**
  * Build the MV3 extension into extension/dist-unpacked/ (committed, loadable
  * via chrome://extensions → "Load unpacked" straight from a clone).
- * viewer.js bundles @ord-resolver/fetch with the BROWSER decompress path
+ * viewer.js bundles @ordspv/fetch with the BROWSER decompress path
  * (same swap as the fetch browser bundle); background/content/popup are
  * dependency-light. headersync is node-only and never referenced here.
  */

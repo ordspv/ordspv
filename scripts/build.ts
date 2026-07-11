@@ -9,8 +9,8 @@
  *   npx tsx scripts/build.ts                    # build + stage + npm pack --dry-run
  *   npx tsx scripts/build.ts --publish-dry-run  # additionally npm publish --dry-run
  *
- * Package naming note: @ord-resolver/* is a PLACEHOLDER scope — final naming
- * TBD before any real publish. Nothing here posts anywhere.
+ * Scope: @ordspv/* — canonical repo github.com/ordspv/ordspv. Nothing here
+ * posts anywhere; publish is a manual GOING-PUBLIC.md step.
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import { build, type Options } from 'tsup';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const STAGING = join(ROOT, 'build/staging');
 
-const EXTERNAL = [/^@noble\//, /^@ord-resolver\//, /^node:/];
+const EXTERNAL = [/^@noble\//, /^@ordspv\//, /^node:/];
 
 // dts note: tsup's bundled-dts path (rollup-plugin-dts) is incompatible with
 // TypeScript 7's native compiler, so declarations come from `tsc -p

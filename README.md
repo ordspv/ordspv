@@ -1,4 +1,4 @@
-# ord-resolver
+# ordspv
 
 **Trustless resolution of Bitcoin ordinals inscription content — `ord:` URIs with
 IPFS-grade (and better) verification, no ord server trust required.**
@@ -14,7 +14,7 @@ work the way `ipfs://<cid>` works, except the "CID check" is an SPV proof.
 tokenURI: ord:6fb976…2799i0/content#integrity=sha256-…
                      │
    ┌─────────────────┴────────────────────┐
-   │            @ord-resolver/fetch        │  ordFetch("ord:…") → Response
+   │            @ordspv/fetch        │  ordFetch("ord:…") → Response
    │  parse → proof-build → verify → serve │
    └──────┬──────────────────┬─────────────┘
           │ untrusted        │ untrusted
@@ -43,11 +43,11 @@ inscriber-level caveat precisely characterized, tested, and surfaced as assuranc
 
 | package | what |
 |---|---|
-| `@ord-resolver/core` | zero-IO primitives: tx/header/block parsing, merkle + witness-commitment proofs, BIP-341 checks, ord-exact envelope parser, proof-bundle verifier, CBOR |
-| `@ord-resolver/fetch` | `ordFetch()` / `OrdResolver`: URI parsing, esplora/ord backends with failover, proof building, header trust (checkpoints + M-of-N), delegation, integrity pins |
-| `@ord-resolver/gateway` | reference HTTP gateway: ord-parity `/content` + `/r/*`, `/ord/v1/proof` bundles, verify-before-serve mode |
-| `@ord-resolver/cli` | `ord-resolve <uri>`, `proof`, `verify`, `parse` |
-| `@ord-resolver/proof-sidecar` | proof bundles straight from a Bitcoin Core node (txindex) — L2/L3 without hosting esplora |
+| `@ordspv/core` | zero-IO primitives: tx/header/block parsing, merkle + witness-commitment proofs, BIP-341 checks, ord-exact envelope parser, proof-bundle verifier, CBOR |
+| `@ordspv/fetch` | `ordFetch()` / `OrdResolver`: URI parsing, esplora/ord backends with failover, proof building, header trust (checkpoints + M-of-N), delegation, integrity pins |
+| `@ordspv/gateway` | reference HTTP gateway: ord-parity `/content` + `/r/*`, `/ord/v1/proof` bundles, verify-before-serve mode |
+| `@ordspv/cli` | `ord-resolve <uri>`, `proof`, `verify`, `parse` |
+| `@ordspv/proof-sidecar` | proof bundles straight from a Bitcoin Core node (txindex) — L2/L3 without hosting esplora |
 
 ## Quick start
 
@@ -67,7 +67,7 @@ GATEWAY_MODE=verify npx tsx packages/gateway/src/index.ts
 ```
 
 ```ts
-import { ordFetch } from '@ord-resolver/fetch';
+import { ordFetch } from '@ordspv/fetch';
 const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 ```
 

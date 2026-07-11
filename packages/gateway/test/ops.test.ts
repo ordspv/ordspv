@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FetchFn } from '@ord-resolver/fetch';
+import type { FetchFn } from '@ordspv/fetch';
 import { ByteLru, Registry, TokenBucketLimiter, createGateway, routeLabel } from '../src/index.js';
 
 describe('ByteLru', () => {

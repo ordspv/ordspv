@@ -1,4 +1,4 @@
-import type { BlockHeader } from '@ord-resolver/core';
+import type { BlockHeader } from '@ordspv/core';
 import type { EsploraBackend } from './backends.js';
 
 /**

@@ -16,7 +16,7 @@
 - `npm run build` — tsup ESM + tsc declarations + browser bundle (fetch), then
   publish staging + pack dry-run into `build/staging/` (repo package.json keeps
   exporting src/*.ts — dev always runs live sources; staging is the publish shape;
-  `@ord-resolver/*` scope is a PLACEHOLDER, final naming TBD)
+  scope `@ordspv/*`, canonical repo github.com/ordspv/ordspv)
 
 ## Invariants — do not break
 

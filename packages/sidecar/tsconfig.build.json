@@ -7,8 +7,8 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "paths": {
-      "@ord-resolver/core": ["../core/dist/index.d.ts"],
-      "@ord-resolver/fetch": ["../fetch/dist/index.d.ts"]
+      "@ordspv/core": ["../core/dist/index.d.ts"],
+      "@ordspv/fetch": ["../fetch/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"]

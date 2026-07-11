@@ -6,14 +6,14 @@ import {
   parseInscriptionId,
   hexToBytes,
   verifyProofBundle,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import {
   buildProofBundle,
   type EsploraBlockInfo,
   type EsploraMerkleProof,
   type EsploraTxStatus,
   type ProofBackend,
-} from '@ord-resolver/fetch';
+} from '@ordspv/fetch';
 
 /**
  * Proof sidecar: SPEC-VERIFICATION proof bundles served straight from a

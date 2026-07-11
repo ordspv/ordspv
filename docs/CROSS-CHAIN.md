@@ -40,11 +40,11 @@ Recommendations (rationale in SPEC-URI):
 |---|---|---|
 | legacy platform, zero changes | rewrite `ord:<id>/content` → `https://<gw>/content/<id>` (regex in SPEC-URI §7) | L0 |
 | platform with one HTTP call spare | fetch from any gateway, hash bytes, compare to the pin | **L1 — no Bitcoin infra at all** |
-| wallet/marketplace with a resolver | `@ord-resolver/fetch`: `ordFetch(uri)` (defaults: L2, mempool.space + blockstream.info, checkpointed headers) | L2, assurances surfaced |
+| wallet/marketplace with a resolver | `@ordspv/fetch`: `ordFetch(uri)` (defaults: L2, mempool.space + blockstream.info, checkpointed headers) | L2, assurances surfaced |
 | bridges, custody, disputes | `verification: 'L3'` via a proof gateway or raw-block fetch | full witness commitment |
 
 ```ts
-import { ordFetch } from '@ord-resolver/fetch';
+import { ordFetch } from '@ordspv/fetch';
 
 const res = await ordFetch(tokenMetadata.image);          // Response
 res.headers.get('x-ord-verification');                    // "L2"
@@ -72,7 +72,7 @@ res.headers.get('x-ord-body-sha256');                     // pin material
 ## Adoption sequencing (the ar:// lesson)
 
 Platform acceptance followed a working resolver SDK + wallet integration + provisional
-IANA registration. The equivalents here: `@ord-resolver/fetch` (exists), a wallet/
+IANA registration. The equivalents here: `@ordspv/fetch` (exists), a wallet/
 extension integration (roadmap in HANDOFF.md), and an `ord:` registration coordinated
 with upstream (SPEC-URI §7). A CAIP-19 profile for inscriptions is the parallel lane
 for chain-agnostic wallet stacks.

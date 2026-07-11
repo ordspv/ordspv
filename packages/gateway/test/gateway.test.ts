@@ -3,8 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { hexToBytes, parseTx, verifyProofBundle, type ProofBundleJson } from '@ord-resolver/core';
-import type { FetchFn } from '@ord-resolver/fetch';
+import { hexToBytes, parseTx, verifyProofBundle, type ProofBundleJson } from '@ordspv/core';
+import type { FetchFn } from '@ordspv/fetch';
 import { createGateway } from '../src/index.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');

@@ -1,9 +1,18 @@
 # NAMING.md — every touch point a scope/name change hits
 
-`@ord-resolver/*` and the repo name `ord-resolver` are PLACEHOLDERS. Once the
-final name is decided, the rename is ONE mechanical commit over the inventory
-below, plus the electrs-fork and account-level items at the bottom. Nothing
-should be published or posted before this commit lands.
+**EXECUTED 2026-07-11:** the rename landed as one commit — placeholder
+`@ord-resolver/*` → `@ordspv/*`, repo name `ord-resolver` → `ordspv`
+(canonical URL github.com/ordspv/ordspv). Every touch point below was applied:
+manifests + regenerated lockfile, imports, build configs, docs/specs/drafts
+(with concrete URLs filled), extension manifest, LICENSE holder, `repository`
+fields added to all five manifests, and all derived artifacts regenerated
+(demo inline bundle, extension dist-unpacked, publish staging with pack +
+publish dry-runs under the real scope). Bin names `ord-resolve` and
+`ord-proof-sidecar` were KEPT deliberately — they are descriptive commands,
+not project identity. The old placeholder strings in this file are the
+intentional historical record (the post-rename grep's only expected hits).
+
+The inventory is retained below for any FUTURE rename.
 
 ## Mechanical rename (single commit, mostly find/replace)
 

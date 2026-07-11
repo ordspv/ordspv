@@ -2,7 +2,7 @@
 
 Status: draft v0.1 · 2026-07-11
 Companion: [SPEC-URI.md](./SPEC-URI.md), [SPEC-GATEWAY.md](./SPEC-GATEWAY.md)
-Reference implementation: `@ord-resolver/core` (`proof.ts`, tested against mainnet data)
+Reference implementation: `@ordspv/core` (`proof.ts`, tested against mainnet data)
 
 ## 1. Threat model
 
@@ -137,7 +137,7 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   (verified cryptographically in-repo), 824544 (Jubilee).
 - **M-of-N independent sources** (SHOULD, default 2): hash-at-height agreement across
   operator-diverse esplora/electrum endpoints; optional min-confirmations gate.
-- **Header sync** (implemented: `@ord-resolver/fetch/headersync`, node-only subpath):
+- **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):
   a locally validated header chain — Electrum `blockchain.block.headers` batches,
   per-header linkage + PoW + exact pow.cpp retarget arithmetic + median-time-past +
   compiled checkpoint crossings — persisted to disk (fully revalidated on load) and

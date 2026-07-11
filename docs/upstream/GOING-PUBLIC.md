@@ -20,11 +20,15 @@ keyboard by their nature (account creation, payments, store listings).
       stay +0000, and after the GitHub account exists, swap the email to the
       id-prefixed noreply form (`<id>+ordspv@users.noreply.github.com`) in
       both repos' local config — the plain form is a placeholder until then.
-- [ ] Final name decided; `@<scope>` npm availability + GitHub org availability
-      confirmed; then land the NAMING.md rename commit (one commit, includes
-      rebuilt demo/extension artifacts and draft-link fills).
+- [x] **Name decided + rename executed (2026-07-11):** `ordspv` — scope
+      `@ordspv/*`, canonical repo `github.com/ordspv/ordspv`, electrs fork
+      `github.com/ordspv/electrs`. NAMING.md inventory applied in one commit
+      (manifests+lock, imports, configs, docs, drafts, extension manifest,
+      regenerated demo/extension/staging artifacts, repository fields).
+      REMAINING in step 1: confirm `@ordspv` npm scope + `ordspv` GitHub
+      name availability AT account creation, before anything is pushed.
 - [ ] LICENSE present and identity-neutral (repo root; ISC, holder
-      "the <name> contributors"). Verify staged package.json manifests carry
+      "the ordspv contributors"). Verify staged package.json manifests carry
       `license` and NO `author` field: `npm run build` then
       `grep -L '"author"' build/staging/*/package.json` (expect all five).
 - [ ] Full green: `npm test`, `npx tsc --noEmit`, `npm run build`,
@@ -73,8 +77,8 @@ core → fetch → gateway, cli, sidecar
 - [ ] `npm run build` (staging refreshed), then from `build/staging/<pkg>`:
       `npm publish --access public` in the order above.
 - [ ] Post-publish smoke: in a scratch dir,
-      `npm i @<scope>/fetch` and run the resolver against inscription 0;
-      `npx @<scope>/cli ord:<insc0-id> --json`.
+      `npm i @ordspv/fetch` and run the resolver against inscription 0;
+      `npx @ordspv/cli ord:<insc0-id> --json`.
 - [ ] Tag the repo (`v0.1.0`) at the published commit.
 
 ## 5. Posts (each is a draft in this directory — final read before sending)
@@ -84,8 +88,8 @@ Order: code-bearing first, then the discussion that links to it.
 - [ ] Blockstream/electrs PR: `esplora-witness-proof-draft.md`
       (branch from step 3; bench numbers already in the draft). Include the
       API.md addition for Blockstream/esplora as noted in the draft.
-- [ ] ordinals/ord Discussion: `ord-uri-extensions-draft.md` — fill the repo
-      and fork links (now real), post referencing #3780.
+- [ ] ordinals/ord Discussion: `ord-uri-extensions-draft.md` — links are
+      concrete (github.com/ordspv/…); post referencing #3780.
 - [ ] ChainAgnostic/namespaces PR: `caip19-inscriptions.md` (re-derive the
       signet chain id first, per its posting notes).
 - [ ] Only AFTER the ord discussion has any traction: IANA provisional

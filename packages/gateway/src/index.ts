@@ -1,13 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
-import { isInscriptionId, parseInscriptionId } from '@ord-resolver/core';
+import { isInscriptionId, parseInscriptionId } from '@ordspv/core';
 import {
   buildProofBundle,
   EsploraBackend,
   OrdResolver,
   toResponse,
   type FetchFn,
-} from '@ord-resolver/fetch';
+} from '@ordspv/fetch';
 import { ByteLru } from './lru.js';
 import { Registry } from './metrics.js';
 import { TokenBucketLimiter } from './ratelimit.js';

@@ -1,9 +1,21 @@
 {
-  "name": "@ord-resolver/cli",
+  "name": "@ordspv/cli",
   "version": "0.1.0",
   "type": "module",
   "description": "CLI for resolving and verifying ord:// URIs.",
-  "bin": { "ord-resolve": "./src/main.ts" },
-  "exports": { ".": "./src/main.ts" },
-  "dependencies": { "@ord-resolver/core": "0.1.0", "@ord-resolver/fetch": "0.1.0" }
+  "bin": {
+    "ord-resolve": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "dependencies": {
+    "@ordspv/core": "0.1.0",
+    "@ordspv/fetch": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ordspv/ordspv.git",
+    "directory": "packages/cli"
+  }
 }

@@ -51,7 +51,7 @@ serves every other ingredient (`merkle-proof`, `/block/:hash/header`,
 `/tx/:txid/hex`, coinbase txid via `/block/:hash/txid/0`).
 
 Concretely, the consumer flow (implemented in a public verifier library that
-motivated this PR — a full L3 verification is: header PoW + txid proof of
+motivated this PR, github.com/ordspv/ordspv — a full L3 verification is: header PoW + txid proof of
 coinbase + witness commitment check + this endpoint's branch):
 
 1. `GET /tx/:txid/witness-merkle-proof` → branch, pos, witness_root
@@ -113,8 +113,9 @@ with an ordinary txid proof at position 0). Not available on Liquid.
 
 ## Posting notes (not part of the draft)
 
-- Attach `patches/electrs-witness-merkle-proof/*.patch` (git format-patch of
-  the branch) or push the fork and open the PR directly — arrive with code.
+- The fork is github.com/ordspv/electrs, branch `witness-merkle-proof`
+  (GOING-PUBLIC step 3); `patches/electrs-witness-merkle-proof/*.patch` is
+  the format-patch backup — arrive with code.
 - Platform caveat to mention if CI asks: the electrumd wallet test-harness
   dev-dependency doesn't build on macos-arm64 (pre-existing, unrelated);
   everything else validated locally on macOS + expected green on Linux CI.

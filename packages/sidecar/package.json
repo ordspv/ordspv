@@ -1,12 +1,21 @@
 {
-  "name": "@ord-resolver/proof-sidecar",
+  "name": "@ordspv/proof-sidecar",
   "version": "0.1.0",
   "type": "module",
-  "description": "Serve SPEC-VERIFICATION proof bundles straight from a Bitcoin Core node (txindex) — L2/L3 for ord: resolvers without hosting esplora.",
-  "exports": { ".": "./src/index.ts" },
-  "bin": { "ord-proof-sidecar": "./src/index.ts" },
+  "description": "Serve SPEC-VERIFICATION proof bundles straight from a Bitcoin Core node (txindex) \u2014 L2/L3 for ord: resolvers without hosting esplora.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ord-proof-sidecar": "./src/index.ts"
+  },
   "dependencies": {
-    "@ord-resolver/core": "0.1.0",
-    "@ord-resolver/fetch": "0.1.0"
+    "@ordspv/core": "0.1.0",
+    "@ordspv/fetch": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ordspv/ordspv.git",
+    "directory": "packages/sidecar"
   }
 }

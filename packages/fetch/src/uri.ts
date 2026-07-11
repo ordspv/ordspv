@@ -1,4 +1,4 @@
-import { isInscriptionId, parseInscriptionId, type InscriptionId } from '@ord-resolver/core';
+import { isInscriptionId, parseInscriptionId, type InscriptionId } from '@ordspv/core';
 
 /**
  * ord URI parsing.

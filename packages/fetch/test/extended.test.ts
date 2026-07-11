@@ -9,7 +9,7 @@ import {
   parseTx,
   verifyProofBundle,
   type ProofBundleJson,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import { OrdResolver, nodeDecompressor, toResponse } from '../src/index.js';
 import type { FetchFn } from '../src/backends.js';
 

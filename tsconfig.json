@@ -18,10 +18,10 @@
     ],
     "noEmit": true,
     "paths": {
-      "@ord-resolver/core": [
+      "@ordspv/core": [
         "./packages/core/src/index.ts"
       ],
-      "@ord-resolver/fetch": [
+      "@ordspv/fetch": [
         "./packages/fetch/src/index.ts"
       ]
     }

@@ -1,10 +1,10 @@
 /**
- * Viewer page: the actual resolver. Runs @ord-resolver/fetch (browser bundle:
+ * Viewer page: the actual resolver. Runs @ordspv/fetch (browser bundle:
  * DecompressionStream gzip/deflate; brotli bodies are served encoded) against
  * public esplora instances, verifies at the configured level, shows the
  * verification facts, and renders the content from verified bytes only.
  */
-import { OrdResolver, type ResolveResult } from '@ord-resolver/fetch';
+import { OrdResolver, type ResolveResult } from '@ordspv/fetch';
 import { uriFromDnrHash, uriFromViewerHash } from './urlmap.js';
 
 const $ = (id: string) => document.getElementById(id)!;

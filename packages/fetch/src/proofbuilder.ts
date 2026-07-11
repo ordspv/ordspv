@@ -8,7 +8,7 @@ import {
   ZERO32,
   type InscriptionId,
   type ProofBundleJson,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import type { EsploraBlockInfo, EsploraMerkleProof, EsploraTxStatus } from './backends.js';
 
 /**

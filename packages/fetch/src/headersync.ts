@@ -12,7 +12,7 @@ import {
   MAINNET_CHAIN_PARAMS,
   type BlockHeader,
   type ChainParams,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import { MAINNET_CHECKPOINTS, HeaderTrustError, type HeaderTrustReport } from './headertrust.js';
 
 /**
@@ -35,7 +35,7 @@ import { MAINNET_CHECKPOINTS, HeaderTrustError, type HeaderTrustReport } from '.
  *
  * NODE-ONLY (v1): ElectrumTcpTransport needs raw TCP/TLS sockets and
  * persistence needs a filesystem — neither exists in browsers. This module is
- * therefore a separate subpath export (`@ord-resolver/fetch/headersync`) kept
+ * therefore a separate subpath export (`@ordspv/fetch/headersync`) kept
  * OUT of the browser bundle. Browser story: keep using checkpoint + M-of-N
  * anchoring (makeHeaderTrust), or run headerSyncTrust behind your own
  * WebSocket→Electrum bridge by implementing ElectrumTransport over it — the
@@ -390,7 +390,7 @@ export async function syncHeaders(
 ): Promise<SyncResult> {
   const batchSize = options.batchSize ?? 2016;
   const maxReorg = options.maxReorgDepth ?? 100;
-  await transport.request('server.version', ['ord-resolver headersync', '1.4']);
+  await transport.request('server.version', ['ordspv headersync', '1.4']);
   const sub = (await transport.request('blockchain.headers.subscribe', [])) as { height: number };
   const serverTip = sub.height;
 

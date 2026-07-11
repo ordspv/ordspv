@@ -11,7 +11,7 @@ import {
   parseHeader,
   sha256,
   type ChainParams,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 import {
   blockHashMerkleRoot,
   headerSyncTrust,

@@ -24,7 +24,7 @@ import {
   displayToInternal,
   type Inscription,
   type ParsedTx,
-} from '@ord-resolver/core';
+} from '@ordspv/core';
 
 const INSC0 = '6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0';
 const REVEAL_TXID = INSC0.slice(0, 64);

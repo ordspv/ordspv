@@ -66,16 +66,16 @@ Happy to adjust the profile to whatever upstream decides — the point of buildi
 against the draft was to avoid forking the referent semantics, and the parity
 corpus means we notice immediately if we drift.
 
-*Links: [resolver + specs + corpus](https://github.com/PLACEHOLDER-ord-resolver),
-[witness-proof electrs branch](https://github.com/PLACEHOLDER-electrs/tree/witness-merkle-proof)
+*Links: [resolver + specs + corpus](https://github.com/ordspv/ordspv),
+[witness-proof electrs branch](https://github.com/ordspv/electrs/tree/witness-merkle-proof)
 (companion infrastructure so L3 verification is cheap everywhere).*
 
 ---
 
 ## Posting notes (not part of the draft)
 
-- Fill PLACEHOLDER repo links after the repos are public under the pseudonymous
-  account; verify no identifying info in repo metadata before linking.
+- Links are concrete (github.com/ordspv/…) — they go live at GOING-PUBLIC
+  steps 2–3; verify no identifying info in repo metadata before posting.
 - Post AFTER the esplora witness-proof PR exists so the "cheap L3" claim has a
   concrete artifact behind it (see esplora-witness-proof-draft.md).
 - Tone calibration: casey historically rejects scope creep in the scheme itself;
