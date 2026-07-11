@@ -1,0 +1,440 @@
+From 09ce4fd65c217c2e07a22d51fa795cf4248eddcf Mon Sep 17 00:00:00 2001
+From: ordspv <302645753+ordspv@users.noreply.github.com>
+Date: Sat, 11 Jul 2026 20:16:23 +0000
+Subject: [PATCH] Add witness-merkle-proof endpoints (REST + Electrum)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+New: GET /tx/:txid/witness-merkle-proof and
+blockchain.transaction.get_witness_merkle(txid, height) — merkle inclusion
+proofs over the block's BIP-141 witness tree (leaf i = wtxid(tx_i), leaf 0
+zeroed for the coinbase), returning { block_height, merkle[], pos,
+witness_root }.
+
+Why: a txid merkle proof binds only the stripped serialization; witness
+data is unbound, so protocols whose payload lives in the witness (ordinals
+envelopes are the largest) cannot get SPV assurance from the existing
+endpoint — a lying server can swap the witness and the txid proof still
+verifies. The consensus fix (prove against the witness tree, check the
+coinbase witness commitment) needs witness-tree branches, which no public
+API serves today; light clients must download whole raw blocks instead.
+One ~1 KB response replaces a ~1-2 MB block download.
+
+Implementation: ChainQuery::get_block_wtxids (block txids -> lookup_txns
+batch -> compute_wtxid, coinbase zeroed; same DB pattern as the raw-block
+reconstruction path), electrum_merkle::get_tx_witness_merkle_proof reusing
+the existing branch fold (now pub for the bench). Handlers mirror their
+txid-proof twins; everything is cfg(not(feature = "liquid")) — witness
+commitments are bitcoin-specific here. No new index rows, no migration.
+
+Tests: REST integration test folds the wallet tx's wtxid AND the zeroed
+coinbase leaf to witness_root and verifies sha256d(root || reserved)
+against the coinbase 6a24aa21a9ed commitment (full BIP-141 loop); Electrum
+raw-socket test mirrors get_merkle semantics incl. invalid-height error.
+Criterion benches on mainnet block 702861 (~1000 txs): ~5.25 ms wtxid
+computation + ~1.53 ms branch construction per uncached proof.
+---
+ benches/benches.rs          | 50 ++++++++++++++++++++-
+ src/electrum/server.rs      | 33 ++++++++++++++
+ src/new_index/schema.rs     | 26 +++++++++++
+ src/rest.rs                 | 23 ++++++++++
+ src/util/electrum_merkle.rs | 28 +++++++++++-
+ tests/electrum.rs           | 40 +++++++++++++++++
+ tests/rest.rs               | 88 +++++++++++++++++++++++++++++++++++++
+ 7 files changed, 286 insertions(+), 2 deletions(-)
+
+diff --git a/benches/benches.rs b/benches/benches.rs
+index 7c7798f..3f8538e 100644
+--- a/benches/benches.rs
++++ b/benches/benches.rs
+@@ -3,6 +3,54 @@ use criterion::{criterion_group, criterion_main, Criterion};
+ use electrs::new_index::schema::bench::*;
+ use std::hint::black_box;
+ 
++fn witness_proof_benchmark(c: &mut Criterion) {
++    use bitcoin::hashes::{sha256d, Hash};
++    use electrs::util::electrum_merkle::create_merkle_branch_and_root;
++
++    // CPU cost of a witness-merkle proof over a real mainnet block
++    // (block 702861: ~1000 txs): wtxid computation for every tx (the coinbase
++    // leaf is zeroed per BIP-141) plus branch construction. The DB-lookup cost
++    // of fetching the block's transactions is deployment-dependent and equals
++    // the existing GET /block/:hash/raw path (same lookup_txns batch).
++    let block_bytes = bitcoin_test_data::blocks::mainnet_702861();
++    let block = Block::consensus_decode(&mut &block_bytes[..]).unwrap();
++
++    c.bench_function("witness_proof_wtxids_block_702861", |b| {
++        b.iter(|| {
++            let wtxids: Vec<sha256d::Hash> = block
++                .txdata
++                .iter()
++                .enumerate()
++                .map(|(i, tx)| {
++                    if i == 0 {
++                        sha256d::Hash::all_zeros()
++                    } else {
++                        tx.compute_wtxid().to_raw_hash()
++                    }
++                })
++                .collect();
++            black_box(wtxids)
++        })
++    });
++
++    c.bench_function("witness_proof_branch_block_702861", |b| {
++        let wtxids: Vec<sha256d::Hash> = block
++            .txdata
++            .iter()
++            .enumerate()
++            .map(|(i, tx)| {
++                if i == 0 {
++                    sha256d::Hash::all_zeros()
++                } else {
++                    tx.compute_wtxid().to_raw_hash()
++                }
++            })
++            .collect();
++        let mid = wtxids.len() / 2;
++        b.iter(|| black_box(create_merkle_branch_and_root(wtxids.clone(), mid)))
++    });
++}
++
+ fn criterion_benchmark(c: &mut Criterion) {
+     c.bench_function("add_blocks", |b| {
+         let block_bytes = bitcoin_test_data::blocks::mainnet_702861();
+@@ -14,5 +62,5 @@ fn criterion_benchmark(c: &mut Criterion) {
+     });
+ }
+ 
+-criterion_group!(benches, criterion_benchmark);
++criterion_group!(benches, criterion_benchmark, witness_proof_benchmark);
+ criterion_main!(benches);
+diff --git a/src/electrum/server.rs b/src/electrum/server.rs
+index 045ccf1..4bb816a 100644
+--- a/src/electrum/server.rs
++++ b/src/electrum/server.rs
+@@ -23,6 +23,8 @@ use crate::electrum::{get_electrum_height, ProtocolVersion};
+ use crate::errors::*;
+ use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
+ use crate::new_index::{Query, Utxo};
++#[cfg(not(feature = "liquid"))]
++use crate::util::electrum_merkle::get_tx_witness_merkle_proof;
+ use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
+ use crate::util::{create_socket, spawn_thread, BlockId, BoolThen, Channel, FullHash, HeaderEntry};
+ 
+@@ -525,6 +527,33 @@ impl Connection {
+         }))
+     }
+ 
++    /// Witness-tree twin of get_merkle: proves the tx against the block's
++    /// BIP-141 witness merkle tree (wtxids, zeroed coinbase leaf), binding the
++    /// full serialization including witness data.
++    #[cfg(not(feature = "liquid"))]
++    #[trace]
++    fn blockchain_transaction_get_witness_merkle(&self, params: &[Value]) -> Result<Value> {
++        let txid = Txid::from(hash_from_value(params.get(0))?);
++        let height = usize_from_value(params.get(1), "height")?;
++        let blockid = self
++            .query
++            .chain()
++            .tx_confirming_block(&txid)
++            .ok_or_else(|| "tx not found or is unconfirmed")?;
++        if blockid.height != height {
++            return Err(invalid_params("invalid confirmation height provided"));
++        }
++        let (merkle, pos, witness_root) =
++            get_tx_witness_merkle_proof(self.query.chain(), &txid, &blockid.hash)
++                .chain_err(|| "cannot create witness merkle proof")?;
++        Ok(json!({
++            "block_height": blockid.height,
++            "merkle": merkle,
++            "pos": pos,
++            "witness_root": witness_root,
++        }))
++    }
++
+     fn blockchain_transaction_id_from_pos(&self, params: &[Value]) -> Result<Value> {
+         let height = usize_from_value(params.get(0), "height")?;
+         let tx_pos = usize_from_value(params.get(1), "tx_pos")?;
+@@ -569,6 +598,10 @@ impl Connection {
+             }
+             "blockchain.transaction.get" => self.blockchain_transaction_get(&params),
+             "blockchain.transaction.get_merkle" => self.blockchain_transaction_get_merkle(&params),
++            #[cfg(not(feature = "liquid"))]
++            "blockchain.transaction.get_witness_merkle" => {
++                self.blockchain_transaction_get_witness_merkle(&params)
++            }
+             "blockchain.transaction.id_from_pos" => {
+                 self.blockchain_transaction_id_from_pos(&params)
+             }
+diff --git a/src/new_index/schema.rs b/src/new_index/schema.rs
+index 23193ba..e6b6491 100644
+--- a/src/new_index/schema.rs
++++ b/src/new_index/schema.rs
+@@ -579,6 +579,32 @@ impl ChainQuery {
+         }
+     }
+ 
++    /// Leaves of the block's BIP-141 witness tree: the coinbase leaf is the
++    /// zero hash (its wtxid is defined as 0x00…00 for commitment purposes),
++    /// every other leaf is the transaction's wtxid.
++    #[cfg(not(feature = "liquid"))]
++    pub fn get_block_wtxids(
++        &self,
++        hash: &BlockHash,
++    ) -> Result<Vec<bitcoin::hashes::sha256d::Hash>> {
++        use bitcoin::hashes::Hash;
++        let _timer = self.start_timer("get_block_wtxids");
++        let txids = self.get_block_txids(hash).chain_err(|| "block not found")?;
++        let txids_with_blockhash: Vec<_> = txids.into_iter().map(|txid| (txid, *hash)).collect();
++        let txs = self.lookup_txns(&txids_with_blockhash)?;
++        Ok(txs
++            .iter()
++            .enumerate()
++            .map(|(i, tx)| {
++                if i == 0 {
++                    bitcoin::hashes::sha256d::Hash::all_zeros()
++                } else {
++                    tx.compute_wtxid().to_raw_hash()
++                }
++            })
++            .collect())
++    }
++
+     pub fn get_block_txs(
+         &self,
+         hash: &BlockHash,
+diff --git a/src/rest.rs b/src/rest.rs
+index 850a3a7..46838b2 100644
+--- a/src/rest.rs
++++ b/src/rest.rs
+@@ -1013,6 +1013,29 @@ fn handle_request(
+             )
+         }
+         #[cfg(not(feature = "liquid"))]
++        (&Method::GET, Some(&"tx"), Some(hash), Some(&"witness-merkle-proof"), None, None) => {
++            let hash = Txid::from_str(hash)?;
++            let blockid = query.chain().tx_confirming_block(&hash).ok_or_else(|| {
++                HttpError::not_found("Transaction not found or is unconfirmed".to_string())
++            })?;
++            let (merkle, pos, witness_root) = electrum_merkle::get_tx_witness_merkle_proof(
++                query.chain(),
++                &hash,
++                &blockid.hash,
++            )?;
++            let merkle: Vec<String> = merkle.into_iter().map(|hash| hash.to_string()).collect();
++            let ttl = ttl_by_depth(Some(blockid.height), query);
++            json_response(
++                json!({
++                    "block_height": blockid.height,
++                    "merkle": merkle,
++                    "pos": pos,
++                    "witness_root": witness_root.to_string(),
++                }),
++                ttl,
++            )
++        }
++        #[cfg(not(feature = "liquid"))]
+         (&Method::GET, Some(&"tx"), Some(hash), Some(&"merkleblock-proof"), None, None) => {
+             let hash = Txid::from_str(hash)?;
+ 
+diff --git a/src/util/electrum_merkle.rs b/src/util/electrum_merkle.rs
+index 52e0a82..1fbed88 100644
+--- a/src/util/electrum_merkle.rs
++++ b/src/util/electrum_merkle.rs
+@@ -24,6 +24,32 @@ pub fn get_tx_merkle_proof(
+     Ok((branch, pos))
+ }
+ 
++/// Merkle proof of a transaction's inclusion in its block's WITNESS tree
++/// (wtxids, coinbase leaf zeroed per BIP-141) — the tree committed to by the
++/// coinbase witness commitment. Together with a txid proof of the coinbase,
++/// this binds a transaction's full serialization (witness included) to the
++/// block header, which a txid proof alone cannot do for segwit data.
++/// Returns (branch, position, witness_merkle_root).
++#[cfg(not(feature = "liquid"))]
++#[trace]
++pub fn get_tx_witness_merkle_proof(
++    chain: &ChainQuery,
++    tx_hash: &Txid,
++    block_hash: &BlockHash,
++) -> Result<(Vec<Sha256dHash>, usize, Sha256dHash)> {
++    let txids = chain
++        .get_block_txids(block_hash)
++        .chain_err(|| format!("missing block txids for #{}", block_hash))?;
++    let pos = txids
++        .iter()
++        .position(|txid| txid == tx_hash)
++        .chain_err(|| format!("missing txid {}", tx_hash))?;
++
++    let wtxids = chain.get_block_wtxids(block_hash)?;
++    let (branch, root) = create_merkle_branch_and_root(wtxids, pos);
++    Ok((branch, pos, root))
++}
++
+ #[trace]
+ pub fn get_header_merkle_proof(
+     chain: &ChainQuery,
+@@ -87,7 +113,7 @@ fn merklize(left: Sha256dHash, right: Sha256dHash) -> Sha256dHash {
+     Sha256dHash::hash(&data)
+ }
+ 
+-fn create_merkle_branch_and_root(
++pub fn create_merkle_branch_and_root(
+     mut hashes: Vec<Sha256dHash>,
+     mut index: usize,
+ ) -> (Vec<Sha256dHash>, Sha256dHash) {
+diff --git a/tests/electrum.rs b/tests/electrum.rs
+index 3f064f5..4fa08bc 100644
+--- a/tests/electrum.rs
++++ b/tests/electrum.rs
+@@ -211,6 +211,46 @@ fn test_electrum_raw() {
+     assert_eq!(s, expected);
+ }
+ 
++#[cfg_attr(not(feature = "liquid"), test)]
++#[cfg_attr(feature = "liquid", allow(dead_code))]
++fn test_electrum_get_witness_merkle() {
++    let (_electrum_server, electrum_addr, mut tester) = common::init_electrum_tester().unwrap();
++
++    let addr = tester.newaddress().unwrap();
++    let txid = tester.send(&addr, "0.31 BTC".parse().unwrap()).unwrap();
++    tester.mine().unwrap();
++    let height = tester.get_block_count().unwrap();
++
++    let mut stream = TcpStream::connect(electrum_addr).unwrap();
++    let req = format!(
++        "{{\"jsonrpc\": \"2.0\", \"method\": \"blockchain.transaction.get_witness_merkle\", \"params\": [\"{}\", {}], \"id\": 1}}",
++        txid, height
++    );
++    let s = write_and_read(&mut stream, &req);
++    let v: ::serde_json::Value = ::serde_json::from_str(&s).unwrap();
++    assert!(v["error"].is_null(), "unexpected error: {}", s);
++    let result = &v["result"];
++    assert_eq!(result["block_height"].as_u64(), Some(height));
++    assert!(result["pos"].as_u64().unwrap() > 0);
++    let root = result["witness_root"].as_str().expect("witness_root");
++    assert_eq!(root.len(), 64);
++    assert!(root.chars().all(|c| c.is_ascii_hexdigit()));
++    for entry in result["merkle"].as_array().expect("merkle array") {
++        let hex = entry.as_str().expect("merkle entry");
++        assert_eq!(hex.len(), 64);
++    }
++
++    // wrong height => invalid params error, mirroring get_merkle behavior
++    let req = format!(
++        "{{\"jsonrpc\": \"2.0\", \"method\": \"blockchain.transaction.get_witness_merkle\", \"params\": [\"{}\", {}], \"id\": 2}}",
++        txid,
++        height + 5
++    );
++    let s = write_and_read(&mut stream, &req);
++    let v: ::serde_json::Value = ::serde_json::from_str(&s).unwrap();
++    assert!(!v["error"].is_null(), "expected invalid-height error, got: {}", s);
++}
++
+ #[cfg_attr(not(feature = "liquid"), test)]
+ #[cfg_attr(feature = "liquid", allow(dead_code))]
+ fn test_electrum_jsonrpc_errors() {
+diff --git a/tests/rest.rs b/tests/rest.rs
+index 6d325f2..b56160c 100644
+--- a/tests/rest.rs
++++ b/tests/rest.rs
+@@ -801,6 +801,94 @@ fn test_rest_tx_outspends() -> Result<()> {
+     Ok(())
+ }
+ 
++#[cfg(not(feature = "liquid"))]
++#[test]
++fn test_rest_tx_witness_merkle_proof() -> Result<()> {
++    use bitcoin::consensus::deserialize;
++    use bitcoin::hashes::sha256d;
++    use bitcoin::Transaction;
++
++    // fold a merkle branch bottom-up, mirroring create_merkle_branch_and_root
++    fn fold_branch(mut hash: sha256d::Hash, branch: &[sha256d::Hash], mut pos: usize) -> sha256d::Hash {
++        for sibling in branch {
++            let concat = if pos % 2 == 0 {
++                [&hash[..], &sibling[..]].concat()
++            } else {
++                [&sibling[..], &hash[..]].concat()
++            };
++            hash = sha256d::Hash::hash(&concat);
++            pos /= 2;
++        }
++        hash
++    }
++    fn parse_branch(res: &Value) -> Vec<sha256d::Hash> {
++        res["merkle"]
++            .as_array()
++            .expect("merkle array")
++            .iter()
++            .map(|v| v.as_str().unwrap().parse::<sha256d::Hash>().unwrap())
++            .collect()
++    }
++
++    let (rest_handle, rest_addr, mut tester) = common::init_rest_tester().unwrap();
++
++    let addr1 = tester.newaddress()?;
++    let txid = tester.send(&addr1, "0.5 BTC".parse().unwrap())?;
++    tester.mine()?;
++    let mine_height = tester.get_block_count()?;
++
++    let res = get_json(rest_addr, &format!("/tx/{}/witness-merkle-proof", txid))?;
++    assert_eq!(res["block_height"].as_u64(), Some(mine_height));
++    let pos = res["pos"].as_u64().expect("pos") as usize;
++    assert!(pos > 0, "wallet tx cannot be the coinbase");
++    let witness_root: sha256d::Hash = res["witness_root"]
++        .as_str()
++        .expect("witness_root string")
++        .parse()
++        .expect("valid hash");
++
++    // the tx's own wtxid must fold through the branch to the witness root
++    let tx_hex = get_plain(rest_addr, &format!("/tx/{}/hex", txid))?;
++    let tx: Transaction =
++        deserialize(&Vec::from_hex(&tx_hex).expect("hex")).expect("tx deserialize");
++    assert!(tx.input.iter().any(|i| !i.witness.is_empty()), "test tx should be segwit");
++    let folded = fold_branch(tx.compute_wtxid().to_raw_hash(), &parse_branch(&res), pos);
++    assert_eq!(folded, witness_root, "branch must fold to the witness root");
++
++    // the coinbase's proof uses the ZEROED leaf (BIP-141) and folds to the same root
++    let block_hash = get_plain(rest_addr, &format!("/block-height/{}", mine_height))?;
++    let txids = get_json(rest_addr, &format!("/block/{}/txids", block_hash))?;
++    let coinbase_txid = txids.as_array().expect("txids")[0].as_str().unwrap().to_string();
++    let cb_res = get_json(rest_addr, &format!("/tx/{}/witness-merkle-proof", coinbase_txid))?;
++    assert_eq!(cb_res["pos"].as_u64(), Some(0));
++    assert_eq!(cb_res["witness_root"].as_str().unwrap(), witness_root.to_string());
++    let cb_folded = fold_branch(sha256d::Hash::all_zeros(), &parse_branch(&cb_res), 0);
++    assert_eq!(cb_folded, witness_root, "zeroed coinbase leaf must fold to the witness root");
++
++    // and the root must be the one committed in the coinbase (BIP-141):
++    // commitment output pushes sha256d(witness_root || witness_reserved_value)
++    let cb_hex = get_plain(rest_addr, &format!("/tx/{}/hex", coinbase_txid))?;
++    let coinbase: Transaction =
++        deserialize(&Vec::from_hex(&cb_hex).expect("hex")).expect("coinbase deserialize");
++    let commitment_script = coinbase
++        .output
++        .iter()
++        .map(|o| o.script_pubkey.as_bytes())
++        .find(|s| s.len() >= 38 && s[0..6] == [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed])
++        .expect("coinbase must carry a BIP-141 witness commitment");
++    let reserved = &coinbase.input[0].witness[0];
++    let expected = sha256d::Hash::hash(&[&witness_root[..], &reserved[..]].concat());
++    assert_eq!(&commitment_script[6..38], &expected[..], "witness root must match the coinbase commitment");
++
++    // unconfirmed/unknown tx: 404
++    let bogus = "0000000000000000000000000000000000000000000000000000000000000001";
++    let err = get(rest_addr, &format!("/tx/{}/witness-merkle-proof", bogus));
++    assert!(err.is_err(), "unknown txid should 404");
++
++    rest_handle.stop();
++    Ok(())
++}
++
+ #[test]
+ fn test_rest_tx_merkle_proof() -> Result<()> {
+     let (rest_handle, rest_addr, mut tester) = common::init_rest_tester().unwrap();
+-- 
+2.48.1
+
