@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 import { readFileSync, writeFileSync } from 'node:fs';
 import { verifyProofBundle, type ProofBundleJson } from '@ordspv/core';
 import {
