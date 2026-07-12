@@ -123,5 +123,7 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
   repo wants a companion update to `bip122/README.md` listing the new profile.
 - Links are concrete (github.com/ordspv/ordspv); the repo goes live at
   GOING-PUBLIC step 2. Keep authorship the pseudonymous handle.
-- The signet chain id above should be re-derived from the current signet
-  genesis before posting (signet resets are possible).
+- Signet chain id re-derived 2026-07-12 from the current signet genesis
+  (first 32 hex chars; two independent esplora sources agree) and it matches
+  the test case above. Re-check only if posting is long delayed (signet
+  resets are possible).
