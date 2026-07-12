@@ -103,12 +103,16 @@ keyboard by their nature (account creation, payments, store listings).
 core → fetch → gateway, cli, sidecar
 ```
 
-- [ ] `npm run build` (staging refreshed), then from `build/staging/<pkg>`:
-      `npm publish --access public` in the order above.
+- [x] `npm run build` (staging refreshed), then from `build/staging/<pkg>`:
+      `npm publish --access public` in the order above. *(2026-07-12: all
+      five packages live on the registry at 0.1.0.)*
 - [ ] Post-publish smoke: in a scratch dir,
       `npm i @ordspv/fetch` and run the resolver against inscription 0;
-      `npx @ordspv/cli ord:<insc0-id> --json`.
-- [ ] Tag the repo (`v0.1.0`) at the published commit.
+      `npx @ordspv/cli ord:<insc0-id> --json`. *(2026-07-12: fetch-resolver
+      half green — L2 verified, body sha256 matches. The 0.1.0 cli bin
+      shipped a dev-runner shebang and fails under npx; fixed in-repo and
+      staged as 0.1.1 — publish it, then re-run the cli half.)*
+- [x] Tag the repo (`v0.1.0`) at the published commit. *(Pushed 2026-07-12.)*
 
 ## 5. Posts (each is a draft in this directory; final read before sending)
 
