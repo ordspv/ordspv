@@ -28,22 +28,25 @@ keyboard by their nature (account creation, payments, store listings).
       regenerated demo/extension/staging artifacts, repository fields).
       REMAINING in step 1: confirm `@ordspv` npm scope + `ordspv` GitHub
       name availability AT account creation, before anything is pushed.
-- [ ] LICENSE present and identity-neutral (repo root; ISC, holder
+- [x] LICENSE present and identity-neutral (repo root; ISC, holder
       "the ordspv contributors"). Verify staged package.json manifests carry
       `license` and NO `author` field: `npm run build` then
       `grep -L '"author"' build/staging/*/package.json` (expect all five).
+      *(Verified 2026-07-12: all five staged manifests ISC, none carry author.)*
 - [ ] Full green: `npm test`, `npx tsc --noEmit`, `npm run build`,
       `npx tsx scripts/parity-sweep.ts`, `npx tsx scripts/fetch-fixtures.ts`.
-- [ ] Sweep for identifying info (expect zero hits outside intentional
+- [x] Sweep for identifying info (expect zero hits outside intentional
       pseudonym mentions). The term list lives ONLY in the untracked,
       gitignored `private/sweep-terms.txt` (one pattern per line) and is
       read at run time; the terms themselves are never written into
       anything committed:
       `grep -rniE -f private/sweep-terms.txt --exclude-dir=node_modules --exclude-dir=private .`
-- [ ] Git history authorship check: `git log --format='%an %ae %cn %ce' | sort -u`
+      *(Run 2026-07-12: zero identifying hits; only incidental English
+      substrings of a pattern, reviewed.)*
+- [x] Git history authorship check: `git log --format='%an %ae %cn %ce' | sort -u`
       → exactly one line, the pseudonymous identity
       `ordspv <302645753+ordspv@users.noreply.github.com>` as both author
-      and committer; nothing else.
+      and committer; nothing else. *(Verified 2026-07-12, both repos.)*
 - [ ] **Local-path / machine sweep (STANDING; run with every sweep):**
       grep for the literal `$HOME` path and the machine hostname (`hostname`),
       derived locally and never written down, across BOTH worktrees, packed
@@ -53,7 +56,8 @@ keyboard by their nature (account creation, payments, store listings).
       the vendored `.patch` files. Zero hits expected everywhere; the only
       permitted exceptions are untracked local tooling directories
       (covered by the machine's global git excludes).
-      *(First run 2026-07-11: zero hits in all publishable artifacts.)*
+      *(First run 2026-07-11; latest 2026-07-12 incl. fresh staging: zero
+      hits in all publishable artifacts.)*
 
 ## 1. Accounts 【identity】
 
@@ -68,27 +72,30 @@ keyboard by their nature (account creation, payments, store listings).
 
 - [x] Remote configured (2026-07-11): `origin = git@github-ordspv:ordspv/ordspv.git`
       (SSH alias `github-ordspv` present in ~/.ssh/config). NOTHING pushed yet.
-- [ ] Create the GitHub repo (public), push `master`.
-- [ ] Confirm Actions run green on push (the workflow already runs
-      test + tsc + build; it is fully offline).
+- [x] Create the GitHub repo (public), push `master`. *(Pushed 2026-07-12.)*
+- [x] Confirm Actions run green on push (the workflow already runs
+      test + tsc + build; it is fully offline). *(2026-07-12: run concluded
+      success on the pushed head.)*
 - [ ] Enable branch protection on the default branch (CI required).
 - [ ] Spot-check the rendered README and that `examples/verify-inscription-0.html`
       raw link works (this is the "click and watch" artifact; consider GitHub
-      Pages for a clean URL).
+      Pages for a clean URL). *(Raw link returns 200 as of 2026-07-12;
+      rendered-README and Pages check still pending.)*
 
 ## 3. electrs fork push
 
-- [ ] Fork Blockstream/electrs under the pseudonym on GitHub (fork repo does
-      NOT exist yet).
+- [x] Fork Blockstream/electrs under the pseudonym on GitHub. *(Exists;
+      received the branch push 2026-07-12.)*
 - [x] Fork remote configured (2026-07-11):
       `fork = git@github-ordspv:ordspv/electrs.git` (Blockstream stays
-      `origin`). NOTHING pushed yet.
-- [ ] Push the `witness-merkle-proof` branch to `fork` (1 commit on top of
-      `new-index`).
-- [ ] Verify the fork's CI (if any) or at minimum that the branch shows the
+      `origin`).
+- [x] Push the `witness-merkle-proof` branch to `fork` (1 commit on top of
+      `new-index`). *(Pushed 2026-07-12.)*
+- [x] Verify the fork's CI (if any) or at minimum that the branch shows the
       commit cleanly. The format-patch series in
       `docs/upstream/patches/electrs-witness-merkle-proof/` is the backup if
-      the PR must be re-rolled.
+      the PR must be re-rolled. *(2026-07-12: public API shows the branch
+      commit with the pseudonymous identity, +0000 dates, clean message.)*
 
 ## 4. npm publish (dependents after dependencies)
 
