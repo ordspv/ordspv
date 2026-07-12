@@ -2,15 +2,15 @@
 /**
  * Live-network fixture refresh + end-to-end validation.
  *
- * The initial repo was built in a sandbox without direct API egress; small
- * fixtures were pulled through a constrained channel and are cryptographically
- * self-verified in tests. This script, run with real network access:
+ * Vendored fixtures are small and cryptographically self-verified in tests
+ * (txids and header hashes are recomputed). This script, run with real
+ * network access:
  *
  *   1. re-fetches every insc0 fixture from esplora and byte-compares;
  *   2. runs a LIVE L2 resolution of inscription 0 (real mempool.space +
  *      blockstream.info, checkpointed header trust);
  *   3. runs a LIVE L3 resolution (downloads block 767430 raw, ~1.5 MB, builds
- *      the wtxid tree locally), the one flow the sandbox could not exercise;
+ *      the wtxid tree locally), the one flow the offline suite cannot exercise;
  *   4. optionally vendors extended vectors (delegate, brotli, multi-envelope)
  *      given inscription IDs as CLI args, emitting fixture JSON + a verified
  *      proof bundle for each into fixtures/extended/.

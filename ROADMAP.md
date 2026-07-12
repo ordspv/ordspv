@@ -1,7 +1,7 @@
-# HANDOFF: state of the work and what to build next
+# Roadmap: state of the work and what to build next
 
-*Written 2026-07-11 by the research/spec/initial-implementation pass. Audience: anyone continuing this project. Read DEVELOPMENT.md first for operational
-invariants, and docs/RESEARCH.md for the full technical rationale.*
+*Status as of 2026-07-12. Read DEVELOPMENT.md for operational invariants, and
+docs/RESEARCH.md for the full technical rationale.*
 
 ## What exists and what it proves
 
@@ -23,7 +23,7 @@ invariants, and docs/RESEARCH.md for the full technical rationale.*
   is rejected by L3. txCount inflation, tampered tapscript, tampered content,
   checkpoint contradiction, and integrity mismatch all fail with the right errors.
 
-## Validation checklist (needs live network; the build sandbox had none)
+## Validation checklist (needs live network)
 
 1. `npm install && npm test && npx tsc --noEmit`: expect 185 green.
 2. `npx tsx scripts/fetch-fixtures.ts`: byte-compares vendored fixtures against live
@@ -119,8 +119,7 @@ invariants, and docs/RESEARCH.md for the full technical rationale.*
    - Drafts in docs/upstream/ (DRAFT-ONLY, do not post without sign-off): the ord
      URI-extensions discussion (#3780, uris.md, IANA offer), the esplora
      witness-proof PR text with the patch attached, and the CAIP-19 `ordinals`
-     namespace profile. All pseudonymous. Going-public sequencing lives in
-     docs/upstream/GOING-PUBLIC.md; the rename inventory in docs/upstream/NAMING.md.
+     namespace profile. All pseudonymous.
 9. CAIP-19 namespace profile for inscriptions (none exists; open lane).
 10. Rust port of core verification (share test vectors) for wallet embedding.
 11. zk wrapper exploration: proof bundles are already the right witness format for a
@@ -141,6 +140,7 @@ invariants, and docs/RESEARCH.md for the full technical rationale.*
 ## Repo state
 
 TypeScript 7 / Node 22 / vitest 4 / noble 2.x, npm workspaces, git history at
-"core → fetch/gateway/cli → docs" milestones. Nothing published to npm yet. All
+"core → fetch/gateway/cli → docs" milestones. Published to npm as `@ordspv/*`
+(0.1.x, 2026-07-12). All
 external claims in docs carry source URLs; uncertainties are listed at the bottom
 of RESEARCH.md rather than smoothed over.

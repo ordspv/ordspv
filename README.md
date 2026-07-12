@@ -93,11 +93,11 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 - [docs/spec/SPEC-GATEWAY.md](docs/spec/SPEC-GATEWAY.md): HTTP surface, personalities,
   attestation, recursion tiers
 - [docs/CROSS-CHAIN.md](docs/CROSS-CHAIN.md): how EVM tokens should embed `ord:` URIs
-- [HANDOFF.md](HANDOFF.md): state of the work and the prioritized roadmap
+- [ROADMAP.md](ROADMAP.md): state of the work and the prioritized roadmap
 
 ## Status
 
 Working initial implementation. The cryptographic core is complete and tested against
 real mainnet data: inscription 0 verifies at L2 end-to-end offline from vendored
 fixtures, and L3 is verified on consensus-shaped synthetic blocks, including forgery
-rejection. Specs are v0.1 drafts. Not production software yet; see HANDOFF.md.
+rejection. Specs are v0.1 drafts. Not production software yet; see ROADMAP.md.

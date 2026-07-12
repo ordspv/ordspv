@@ -73,6 +73,6 @@ res.headers.get('x-ord-body-sha256');                     // pin material
 
 Platform acceptance followed a working resolver SDK + wallet integration + provisional
 IANA registration. The equivalents here: `@ordspv/fetch` (exists), a wallet/
-extension integration (roadmap in HANDOFF.md), and an `ord:` registration coordinated
+extension integration (roadmap in ROADMAP.md), and an `ord:` registration coordinated
 with upstream (SPEC-URI §7). A CAIP-19 profile for inscriptions is the parallel lane
 for chain-agnostic wallet stacks.

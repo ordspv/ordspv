@@ -6,7 +6,7 @@
 - `npx tsc --noEmit`: typecheck (TypeScript 7: no `baseUrl`, relative `paths` only)
 - `npx tsx packages/cli/src/main.ts …`: the CLI (needs live network for resolve/proof)
 - `npx tsx scripts/fetch-fixtures.ts`: refresh/extend fixtures and run LIVE
-  end-to-end validation. Run this first in any network-enabled session. Pass
+  end-to-end validation. Run this first when network access is available. Pass
   inscription ids to vendor extended fixtures into `fixtures/extended/`.
 - `npx tsx scripts/parity-sweep.ts`: envelope-parser parity against a live ord
   instance (`ORD_BASE` to point at your own) over a curated corpus of eras and
@@ -43,7 +43,7 @@
 core (primitives+proof) → fetch (resolver/backends/trust incl. `/headersync`
 node-only subpath) → gateway, cli, sidecar (proof bundles over Core RPC).
 Specs are in docs/spec/, the research synthesis in docs/RESEARCH.md, the roadmap
-in HANDOFF.md, and upstream drafts (DRAFT-ONLY, pseudonymous) in docs/upstream/.
+in ROADMAP.md, and upstream drafts (DRAFT-ONLY, pseudonymous) in docs/upstream/.
 The electrs fork lives at `../electrs`, branch `witness-merkle-proof`. Building
 it on this machine needs
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and

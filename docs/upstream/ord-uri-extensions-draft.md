@@ -76,9 +76,9 @@ once GitHub Pages is enabled),
 
 ## Posting notes (not part of the draft)
 
-- Links are concrete (github.com/ordspv/…); they go live at GOING-PUBLIC
-  steps 2–3. Verify no identifying info in repo metadata before posting.
-- Enable GitHub Pages (deploy from `master`, root) at step 2 so the demo
+- Links are concrete (github.com/ordspv/…) and live. Verify no identifying
+  info in repo metadata before posting.
+- GitHub Pages (deploy from `master`, root) must be enabled so the demo
   link resolves; verify it renders before posting.
 - Post AFTER the esplora witness-proof PR exists so the "cheap L3" claim has a
   concrete artifact behind it (see esplora-witness-proof-draft.md).

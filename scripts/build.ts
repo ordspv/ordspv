@@ -10,7 +10,7 @@
  *   npx tsx scripts/build.ts --publish-dry-run  # additionally npm publish --dry-run
  *
  * Scope: @ordspv/*, canonical repo github.com/ordspv/ordspv. Nothing here
- * posts anywhere; publish is a manual GOING-PUBLIC.md step.
+ * posts anywhere; publish is a manual, human-run step.
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

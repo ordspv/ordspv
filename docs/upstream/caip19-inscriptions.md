@@ -121,8 +121,8 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 
 - File goes in the namespaces repo as `bip122/caip19.md`; check whether the
   repo wants a companion update to `bip122/README.md` listing the new profile.
-- Links are concrete (github.com/ordspv/ordspv); the repo goes live at
-  GOING-PUBLIC step 2. Keep authorship the pseudonymous handle.
+- Links are concrete (github.com/ordspv/ordspv) and the repo is live. Keep
+  authorship the pseudonymous handle.
 - Signet chain id re-derived 2026-07-12 from the current signet genesis
   (first 32 hex chars; two independent esplora sources agree) and it matches
   the test case above. Re-check only if posting is long delayed (signet
