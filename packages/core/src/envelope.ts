@@ -264,12 +264,15 @@ export function splitPayload(payload: Uint8Array[]): EnvelopeFields {
 
 /**
  * Decode an inscription-ID field value: 32-byte txid (internal order) plus up
- * to 4 little-endian index bytes with trailing zeros stripped (canonical form
- * required; ord rejects values with trailing zero index bytes).
+ * to 4 little-endian index bytes. Mirrors ord's InscriptionId::from_value
+ * (inscription.rs @ 7effaaaf): a trailing zero index byte is rejected ONLY for
+ * variable-width encodings (1-3 index bytes); the fixed-width 4-byte form is
+ * accepted with trailing zeros (so 32+4 bytes with a 0x00 high byte is valid).
  */
 export function parseInscriptionIdValue(value: Uint8Array): string | undefined {
   if (value.length < 32 || value.length > 36) return undefined;
-  if (value.length > 32 && value[value.length - 1] === 0) return undefined;
+  const indexLen = value.length - 32;
+  if (indexLen !== 0 && indexLen !== 4 && value[value.length - 1] === 0) return undefined;
   const txidLE = value.slice(0, 32);
   let index = 0;
   for (let i = value.length - 1; i >= 32; i--) {

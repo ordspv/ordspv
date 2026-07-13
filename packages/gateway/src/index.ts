@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import { isInscriptionId, parseInscriptionId } from '@ordspv/core';
 import {
   buildProofBundle,
   EsploraBackend,
   OrdResolver,
+  readBodyCapped,
   toResponse,
   type FetchFn,
 } from '@ordspv/fetch';
@@ -50,8 +52,14 @@ export interface GatewayOptions {
   rateLimitPerSec?: number;
   /** burst size per IP (default 40) */
   rateBurst?: number;
-  /** trust the first X-Forwarded-For hop for the client IP (behind a LB/CDN) */
-  trustProxy?: boolean;
+  /**
+   * Behind a load balancer / CDN: number of TRUSTED proxy hops in front of
+   * this gateway (true = 1). The client IP is taken from the right of
+   * X-Forwarded-For — the entries appended by your own proxies — never from
+   * the client-controlled left end, and must parse as an IP address
+   * (otherwise the socket address is used).
+   */
+  trustProxy?: boolean | number;
   /** structured log sink; false silences (default). CLI wires console.log. */
   log?: ((line: Record<string, unknown>) => void) | false;
 }
@@ -75,6 +83,16 @@ function send(
 
 function sendJson(res: ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}): void {
   send(res, status, JSON.stringify(value, null, 2), { 'content-type': 'application/json', ...headers });
+}
+
+/** drop a :port suffix from an X-Forwarded-For entry (IPv4:port / [IPv6]:port) */
+function stripPort(entry: string): string {
+  if (entry.startsWith('[')) {
+    const end = entry.indexOf(']');
+    return end === -1 ? entry : entry.slice(1, end);
+  }
+  const parts = entry.split(':');
+  return parts.length === 2 ? parts[0] : entry;
 }
 
 /** low-cardinality route label for metrics/logs */
@@ -123,11 +141,25 @@ export function createGateway(options: GatewayOptions = {}): Server {
   registry.gauge('gateway_cache_entries', 'entries in the LRU', () => cache.size);
   registry.gauge('gateway_ratelimit_tracked_ips', 'token buckets currently tracked', () => limiter.trackedKeys);
 
+  const trustedHops =
+    options.trustProxy === true ? 1 : typeof options.trustProxy === 'number' ? options.trustProxy : 0;
+
   function clientIp(req: IncomingMessage): string {
-    if (options.trustProxy) {
+    if (trustedHops > 0) {
       const xff = req.headers['x-forwarded-for'];
-      const first = (Array.isArray(xff) ? xff[0] : xff)?.split(',')[0]?.trim();
-      if (first) return first;
+      const joined = Array.isArray(xff) ? xff.join(',') : xff;
+      const entries = (joined ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      // the rightmost `trustedHops` entries were appended by our own proxies;
+      // the client is the entry those hops vouch for. Leftmost entries are
+      // attacker-controlled and never used.
+      const candidate = entries[Math.max(0, entries.length - trustedHops)];
+      if (candidate !== undefined) {
+        const ip = stripPort(candidate);
+        if (isIP(ip) !== 0) return ip;
+      }
     }
     return req.socket.remoteAddress ?? 'unknown';
   }
@@ -163,7 +195,8 @@ export function createGateway(options: GatewayOptions = {}): Server {
     const length = Number(upstreamRes.headers.get('content-length') ?? NaN);
     const cacheable = upstreamRes.status === 200 && !Number.isNaN(length) && length <= cacheMaxEntry;
     if (cacheable || !upstreamRes.body) {
-      const body = new Uint8Array(await upstreamRes.arrayBuffer());
+      // Content-Length may lie: the buffered read is capped regardless
+      const body = await readBodyCapped(upstreamRes, cacheMaxEntry, url);
       if (upstreamRes.status === 200) {
         if (cacheMaxBytes > 0) cache.set(cacheKey, { status: 200, headers: { ...headers, ...flat(extra) }, body });
         return send(res, 200, body, { ...headers, ...extra, 'x-cache': 'MISS' });
@@ -180,6 +213,19 @@ export function createGateway(options: GatewayOptions = {}): Server {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(h)) out[k] = Array.isArray(v) ? v.join(', ') : v;
     return out;
+  }
+
+  /**
+   * Cache keys are derived from canonicalized route inputs, never from the
+   * raw query string: unknown parameters would otherwise mint unlimited
+   * distinct entries for the same immutable response (cache-busting).
+   */
+  function cacheKeyFor(path: string, url: URL): string {
+    if (/^\/ord\/v1\/proof\//.test(path)) {
+      const level = (url.searchParams.get('level') ?? 'l2').toUpperCase() === 'L3' ? 'l3' : 'l2';
+      return `${path}?level=${level}`;
+    }
+    return path;
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -206,8 +252,8 @@ export function createGateway(options: GatewayOptions = {}): Server {
       }
     }
 
-    // immutable-response cache
-    const cacheKey = path + url.search;
+    // immutable-response cache (canonicalized key; see cacheKeyFor)
+    const cacheKey = cacheKeyFor(path, url);
     if (cacheMaxBytes > 0) {
       const hit = cache.get(cacheKey);
       if (hit) {
@@ -264,7 +310,10 @@ export function createGateway(options: GatewayOptions = {}): Server {
       path.startsWith('/blockhash')
     ) {
       try {
-        return await proxy(req, res, path + url.search, cacheKey);
+        // the ord passthrough surface takes no query parameters: forward the
+        // pathname only, so the cached body always matches the canonical
+        // upstream response for that path
+        return await proxy(req, res, path, cacheKey);
       } catch (e) {
         mUpstreamErrors.inc();
         return sendJson(res, 502, { error: (e as Error).message });
@@ -351,7 +400,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     cacheMaxEntryBytes: process.env.CACHE_MAX_ENTRY_BYTES ? Number(process.env.CACHE_MAX_ENTRY_BYTES) : undefined,
     rateLimitPerSec: process.env.RATE_LIMIT ? Number(process.env.RATE_LIMIT) : undefined,
     rateBurst: process.env.RATE_BURST ? Number(process.env.RATE_BURST) : undefined,
-    trustProxy: process.env.TRUST_PROXY === '1',
+    // TRUST_PROXY = number of trusted proxy hops (1 for a single LB/CDN)
+    trustProxy: process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || 0 : undefined,
     log,
   });
   installShutdown(gateway, undefined, log);

@@ -1,13 +1,16 @@
 /**
  * Per-key token bucket: `ratePerSec` sustained, `burst` peak. Injectable
- * clock for tests. Idle buckets are swept so hostile IP churn cannot grow the
- * map without bound.
+ * clock for tests. Idle buckets are swept, and the tracked-key count is
+ * hard-capped (oldest evicted first), so hostile key churn cannot grow the
+ * map without bound between sweeps.
  */
 
 interface Bucket {
   tokens: number;
   lastRefill: number;
 }
+
+export const DEFAULT_MAX_TRACKED_KEYS = 50_000;
 
 export class TokenBucketLimiter {
   private readonly buckets = new Map<string, Bucket>();
@@ -17,6 +20,7 @@ export class TokenBucketLimiter {
     private readonly ratePerSec: number,
     private readonly burst: number,
     private readonly now: () => number = () => Date.now(),
+    private readonly maxTrackedKeys: number = DEFAULT_MAX_TRACKED_KEYS,
   ) {
     this.lastSweep = this.now();
   }
@@ -27,6 +31,11 @@ export class TokenBucketLimiter {
     this.maybeSweep(t);
     let bucket = this.buckets.get(key);
     if (!bucket) {
+      // hard cap: evict the oldest-tracked bucket rather than grow unbounded
+      if (this.buckets.size >= this.maxTrackedKeys) {
+        const oldest = this.buckets.keys().next().value;
+        if (oldest !== undefined) this.buckets.delete(oldest);
+      }
       bucket = { tokens: this.burst, lastRefill: t };
       this.buckets.set(key, bucket);
     } else {

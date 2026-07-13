@@ -8,7 +8,8 @@
     "outDir": "./dist",
     "paths": {
       "@ordspv/core": ["../core/dist/index.d.ts"],
-      "@ordspv/fetch": ["../fetch/dist/index.d.ts"]
+      "@ordspv/fetch": ["../fetch/dist/index.d.ts"],
+      "@ordspv/gateway": ["../gateway/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"]

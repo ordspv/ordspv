@@ -1,6 +1,6 @@
 {
   "name": "@ordspv/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Zero-IO primitives for trustless Bitcoin ordinals inscription resolution: tx/header parsing, merkle + witness-commitment proofs, BIP-341 tapscript commitment checks, envelope parsing.",
   "exports": {

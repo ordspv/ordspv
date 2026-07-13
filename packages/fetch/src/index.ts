@@ -1,4 +1,5 @@
 export * from './uri.js';
+export * from './http.js';
 export * from './backends.js';
 export * from './proofbuilder.js';
 export * from './headertrust.js';

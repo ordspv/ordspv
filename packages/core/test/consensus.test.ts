@@ -4,10 +4,15 @@ import {
   bytesToHex,
   checkProofOfWork,
   hexToBytes,
+  parseBlock,
   parseHeader,
+  serializeBlock,
   sha256d,
   internalToDisplay,
+  ByteWriter,
+  MAX_BLOCK_BYTES,
 } from '../src/index.js';
+import { dummyTx } from './helpers.js';
 
 /**
  * Self-verifying consensus sanity checks against universally-known constants.
@@ -60,5 +65,48 @@ describe('block header consensus rules', () => {
   it('display/internal round trip', () => {
     const le = hexToBytes('6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
     expect(internalToDisplay(le)).toBe('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f');
+  });
+});
+
+describe('parseBlock bounds and linearity', () => {
+  const HEADER = hexToBytes(GENESIS_HEADER_HEX);
+
+  it('parses a many-tx block in linear time (single advancing offset)', () => {
+    // enough small txs that the old per-tx tail copy would be visibly quadratic
+    const txs = Array.from({ length: 4000 }, () => dummyTx());
+    const raw = serializeBlock(HEADER, txs);
+    const started = performance.now();
+    const block = parseBlock(raw);
+    const elapsed = performance.now() - started;
+    expect(block.txs.length).toBe(4000);
+    expect(block.txs[0].txid).toBe(txs[0].txid);
+    expect(block.txs[3999].txid).toBe(txs[3999].txid);
+    // O(n^2) tail-slicing over ~380KB x 4000 txs takes multiple seconds;
+    // the linear parse finishes comfortably inside this generous bound.
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('rejects a block larger than the consensus maximum before parsing', () => {
+    const oversized = new Uint8Array(MAX_BLOCK_BYTES + 1);
+    oversized.set(HEADER, 0);
+    expect(() => parseBlock(oversized)).toThrow(/exceeds consensus maximum/);
+  });
+
+  it('rejects a claimed tx count that cannot fit in the remaining bytes', () => {
+    const w = new ByteWriter();
+    w.writeBytes(HEADER);
+    w.writeVarInt(0xffffff); // ~16.7M claimed txs in an almost-empty block
+    const raw = w.toBytes();
+    expect(() => parseBlock(raw)).toThrow(/claims 16777215 txs/);
+  });
+
+  it('still rejects trailing bytes and truncated blocks', () => {
+    const txs = [dummyTx()];
+    const good = serializeBlock(HEADER, txs);
+    const trailing = new Uint8Array(good.length + 3);
+    trailing.set(good, 0);
+    expect(() => parseBlock(trailing)).toThrow(/trailing/);
+    expect(() => parseBlock(good.slice(0, good.length - 2))).toThrow();
+    expect(parseBlock(good).txs.length).toBe(1);
   });
 });

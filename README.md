@@ -55,7 +55,7 @@ inscriber-level caveat is characterized precisely, tested, and surfaced as assur
 
 ```bash
 npm install
-npm test                                  # 185 tests, incl. real mainnet vectors, offline
+npm test                                  # 237 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json

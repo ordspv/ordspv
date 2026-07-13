@@ -23,6 +23,9 @@
       ],
       "@ordspv/fetch": [
         "./packages/fetch/src/index.ts"
+      ],
+      "@ordspv/gateway": [
+        "./packages/gateway/src/index.ts"
       ]
     }
   },

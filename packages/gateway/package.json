@@ -1,14 +1,14 @@
 {
   "name": "@ordspv/gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "HTTP gateway serving ord:// content and SPV proof bundles.",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ordspv/core": "0.1.0",
-    "@ordspv/fetch": "0.1.0"
+    "@ordspv/core": "0.2.0",
+    "@ordspv/fetch": "0.2.0"
   },
   "repository": {
     "type": "git",

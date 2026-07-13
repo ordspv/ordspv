@@ -10,9 +10,40 @@
  * - OrdBackend: any ord server (ordinals.com, self-hosted). Serves content,
  *   recursion endpoints, and raw txs (/r/tx). Treated as UNTRUSTED: anything
  *   consumed from it is either re-verified or explicitly marked unverified.
+ *
+ * All requests carry a deadline and a per-endpoint response-size cap
+ * (see http.ts): a hung or oversized backend rejects, which is what lets the
+ * resolver fail over to the next one.
  */
 
+import { DEFAULT_HTTP_TIMEOUT_MS, fetchCapped, type CappedResponse } from './http.js';
+
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** Per-request deadline and per-endpoint response-size caps. */
+export interface BackendLimits {
+  /** whole-request deadline (connect + body), ms */
+  timeoutMs: number;
+  /** small JSON/text endpoints: status, block info, merkle proofs, heights */
+  smallMaxBytes: number;
+  /** block header hex */
+  headerMaxBytes: number;
+  /** raw transaction hex (a consensus-maximal tx is ~4MB, i.e. ~8MB hex) */
+  txMaxBytes: number;
+  /** raw block bytes (consensus maximum 4,000,000) */
+  blockMaxBytes: number;
+  /** inscription content / metadata bodies */
+  contentMaxBytes: number;
+}
+
+export const DEFAULT_BACKEND_LIMITS: BackendLimits = {
+  timeoutMs: DEFAULT_HTTP_TIMEOUT_MS,
+  smallMaxBytes: 64 * 1024,
+  headerMaxBytes: 16 * 1024,
+  txMaxBytes: 9 * 1024 * 1024,
+  blockMaxBytes: 4_100_000,
+  contentMaxBytes: 9 * 1024 * 1024,
+};
 
 export interface EsploraMerkleProof {
   block_height: number;
@@ -35,66 +66,78 @@ export interface EsploraBlockInfo {
   merkle_root: string;
 }
 
-async function ok(res: Response, url: string): Promise<Response> {
+function okCapped(res: CappedResponse, url: string): CappedResponse {
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res;
 }
 
+const utf8 = new TextDecoder();
+
 export class EsploraBackend {
+  private readonly limits: BackendLimits;
+
   constructor(
     public readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (u, i) => fetch(u, i),
+    limits: Partial<BackendLimits> = {},
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.limits = { ...DEFAULT_BACKEND_LIMITS, ...limits };
   }
 
-  private async text(path: string): Promise<string> {
+  private async get(path: string, maxBytes: number): Promise<CappedResponse> {
     const url = `${this.baseUrl}${path}`;
-    return (await ok(await this.fetchFn(url), url)).text();
+    const res = await fetchCapped(url, {
+      fetchFn: this.fetchFn,
+      timeoutMs: this.limits.timeoutMs,
+      maxBytes,
+    });
+    return okCapped(res, url);
   }
 
-  private async json<T>(path: string): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-    return (await ok(await this.fetchFn(url), url)).json() as Promise<T>;
+  private async text(path: string, maxBytes: number): Promise<string> {
+    return utf8.decode((await this.get(path, maxBytes)).bytes);
+  }
+
+  private async json<T>(path: string, maxBytes: number): Promise<T> {
+    return JSON.parse(await this.text(path, maxBytes)) as T;
   }
 
   getTxHex(txid: string): Promise<string> {
-    return this.text(`/tx/${txid}/hex`);
+    return this.text(`/tx/${txid}/hex`, this.limits.txMaxBytes);
   }
 
   getTxStatus(txid: string): Promise<EsploraTxStatus> {
-    return this.json(`/tx/${txid}/status`);
+    return this.json(`/tx/${txid}/status`, this.limits.smallMaxBytes);
   }
 
   getMerkleProof(txid: string): Promise<EsploraMerkleProof> {
-    return this.json(`/tx/${txid}/merkle-proof`);
+    return this.json(`/tx/${txid}/merkle-proof`, this.limits.smallMaxBytes);
   }
 
   getHeaderHex(blockHash: string): Promise<string> {
-    return this.text(`/block/${blockHash}/header`);
+    return this.text(`/block/${blockHash}/header`, this.limits.headerMaxBytes);
   }
 
   getBlockInfo(blockHash: string): Promise<EsploraBlockInfo> {
-    return this.json(`/block/${blockHash}`);
+    return this.json(`/block/${blockHash}`, this.limits.smallMaxBytes);
   }
 
   getBlockHashAtHeight(height: number): Promise<string> {
-    return this.text(`/block-height/${height}`);
+    return this.text(`/block-height/${height}`, this.limits.smallMaxBytes);
   }
 
   getTipHeight(): Promise<string> {
-    return this.text('/blocks/tip/height');
+    return this.text('/blocks/tip/height', this.limits.smallMaxBytes);
   }
 
   async getBlockRaw(blockHash: string): Promise<Uint8Array> {
-    const url = `${this.baseUrl}/block/${blockHash}/raw`;
-    const res = await ok(await this.fetchFn(url), url);
-    return new Uint8Array(await res.arrayBuffer());
+    return (await this.get(`/block/${blockHash}/raw`, this.limits.blockMaxBytes)).bytes;
   }
 
   /** txid of the transaction at index `pos` in the block (esplora /txid endpoint) */
   getTxidAtBlockIndex(blockHash: string, pos: number): Promise<string> {
-    return this.text(`/block/${blockHash}/txid/${pos}`);
+    return this.text(`/block/${blockHash}/txid/${pos}`, this.limits.smallMaxBytes);
   }
 }
 
@@ -116,43 +159,67 @@ export interface OrdInscriptionInfo {
 }
 
 export class OrdBackend {
+  private readonly limits: BackendLimits;
+
   constructor(
     public readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (u, i) => fetch(u, i),
+    limits: Partial<BackendLimits> = {},
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.limits = { ...DEFAULT_BACKEND_LIMITS, ...limits };
   }
 
-  private url(path: string): string {
-    return `${this.baseUrl}${path}`;
+  private async get(
+    path: string,
+    maxBytes: number,
+    headers?: Record<string, string>,
+  ): Promise<CappedResponse> {
+    const url = `${this.baseUrl}${path}`;
+    const res = await fetchCapped(url, {
+      fetchFn: this.fetchFn,
+      timeoutMs: this.limits.timeoutMs,
+      maxBytes,
+      headers,
+    });
+    return okCapped(res, url);
+  }
+
+  /** buffered, bounded Response (headers preserved for content-type/encoding) */
+  private toResponse(res: CappedResponse): Response {
+    return new Response(res.bytes.slice(), { status: res.status, headers: res.headers });
   }
 
   /** raw content response (delegation applied by the server) */
   async content(id: string, acceptEncoding = 'br, gzip, identity'): Promise<Response> {
-    const url = this.url(`/content/${id}`);
-    return ok(await this.fetchFn(url, { headers: { 'accept-encoding': acceptEncoding } }), url);
+    const res = await this.get(`/content/${id}`, this.limits.contentMaxBytes, {
+      'accept-encoding': acceptEncoding,
+    });
+    return this.toResponse(res);
   }
 
   /** original content, no delegate substitution */
   async undelegatedContent(id: string, acceptEncoding = 'br, gzip, identity'): Promise<Response> {
-    const url = this.url(`/r/undelegated-content/${id}`);
-    return ok(await this.fetchFn(url, { headers: { 'accept-encoding': acceptEncoding } }), url);
+    const res = await this.get(`/r/undelegated-content/${id}`, this.limits.contentMaxBytes, {
+      'accept-encoding': acceptEncoding,
+    });
+    return this.toResponse(res);
   }
 
   async inscriptionInfo(id: string): Promise<OrdInscriptionInfo> {
-    const url = this.url(`/r/inscription/${id}`);
-    return (await ok(await this.fetchFn(url), url)).json() as Promise<OrdInscriptionInfo>;
+    const res = await this.get(`/r/inscription/${id}`, this.limits.smallMaxBytes);
+    return JSON.parse(utf8.decode(res.bytes)) as OrdInscriptionInfo;
   }
 
   /** hex-encoded CBOR metadata (ord serves it as a JSON string) */
   async metadataHex(id: string): Promise<string> {
-    const url = this.url(`/r/metadata/${id}`);
-    return (await ok(await this.fetchFn(url), url)).json() as Promise<string>;
+    const res = await this.get(`/r/metadata/${id}`, this.limits.contentMaxBytes);
+    return JSON.parse(utf8.decode(res.bytes)) as string;
   }
 
   /** hex-encoded raw transaction (ord serves it as a JSON string) */
   async txHex(txid: string): Promise<string> {
-    const url = this.url(`/r/tx/${txid}`);
-    return (await ok(await this.fetchFn(url), url)).json() as Promise<string>;
+    const res = await this.get(`/r/tx/${txid}`, this.limits.txMaxBytes);
+    return JSON.parse(utf8.decode(res.bytes)) as string;
   }
 }

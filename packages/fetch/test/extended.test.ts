@@ -144,6 +144,9 @@ function stubFetch(routes: Record<string, Route>): FetchFn {
 }
 
 const E = 'https://esplora.test';
+// second, independent header source: anchoring is fail-closed, so non-checkpoint
+// heights need the proof builder PLUS one independent attester agreeing
+const E2 = 'https://esplora2.test';
 
 /** esplora stub routes serving exactly what a vendored L2 bundle contains */
 function routesFromBundle(bundle: ProofBundleJson): Record<string, Route> {
@@ -166,9 +169,12 @@ function routesFromBundle(bundle: ProofBundleJson): Record<string, Route> {
       height: bundle.block.height,
       tx_count: bundle.block.txCount,
     },
-    // header trust (heights here are not compiled-in checkpoints)
+    // header trust (heights here are not compiled-in checkpoints): the
+    // builder (E) is excluded from attesting, E2 supplies the second vote
     [`${E}/block-height/${bundle.block.height}`]: bundle.block.hash,
     [`${E}/blocks/tip/height`]: String(bundle.block.height + 100),
+    [`${E2}/block-height/${bundle.block.height}`]: bundle.block.hash,
+    [`${E2}/blocks/tip/height`]: String(bundle.block.height + 100),
   };
   if (bundle.commit) {
     const commit = parseTx(hexToBytes(bundle.commit.hex));
@@ -181,7 +187,7 @@ describe('OrdResolver offline against extended bundles', () => {
   it('decodes the brotli inscription and reports the stored-bytes hash', async () => {
     const summary = loadSummary(IDS.brotli);
     const resolver = new OrdResolver({
-      esplora: [E],
+      esplora: [E, E2],
       fetchFn: stubFetch(routesFromBundle(loadBundle(IDS.brotli))),
       verification: 'L2',
     });
@@ -205,7 +211,7 @@ describe('OrdResolver offline against extended bundles', () => {
       ...routesFromBundle(loadBundle(IDS.delegator)),
       ...routesFromBundle(loadBundle(IDS.delegateTarget)),
     };
-    const resolver = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes), verification: 'L2' });
+    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), verification: 'L2' });
 
     const viaContent = await resolver.resolve(`ord:${IDS.delegator}/content`);
     expect(viaContent.viaDelegate).toBe(IDS.delegateTarget);
@@ -222,7 +228,7 @@ describe('OrdResolver offline against extended bundles', () => {
   it('serves chunked metadata via /metadata with CBOR decode', async () => {
     const summary = loadSummary(IDS.chunkedMeta);
     const resolver = new OrdResolver({
-      esplora: [E],
+      esplora: [E, E2],
       fetchFn: stubFetch(routesFromBundle(loadBundle(IDS.chunkedMeta))),
       verification: 'L2',
     });
@@ -234,7 +240,7 @@ describe('OrdResolver offline against extended bundles', () => {
 
   it('addresses envelope i1 through the resolver at L2', async () => {
     const resolver = new OrdResolver({
-      esplora: [E],
+      esplora: [E, E2],
       fetchFn: stubFetch(routesFromBundle(loadBundle(IDS.batchI1))),
       verification: 'L2',
     });

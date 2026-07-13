@@ -105,6 +105,13 @@ describe('OrdResolver L2 against real inscription 0 (stubbed transport)', () => 
 });
 
 describe('OrdResolver synthetic flows', () => {
+  // synthetic blocks are mined at regtest difficulty and non-checkpoint
+  // heights, so these resolvers disable the mainnet powLimit and use a second
+  // stub esplora (E2) as the independent attester the fail-closed anchoring
+  // requires
+  const E2 = 'https://esplora2.test';
+  const SYNTHETIC = { powLimitBits: null } as const;
+
   function esploraRoutesForBlock(block: TestBlock, height: number): Record<string, Route> {
     const routes: Record<string, Route> = {
       [`${E}/block/${block.blockHash}/header`]: block.headerHex.trim(),
@@ -115,6 +122,8 @@ describe('OrdResolver synthetic flows', () => {
       },
       [`${E}/block-height/${height}`]: block.blockHash,
       [`${E}/blocks/tip/height`]: String(height + 10),
+      [`${E2}/block-height/${height}`]: block.blockHash,
+      [`${E2}/blocks/tip/height`]: String(height + 10),
       [`${E}/block/${block.blockHash}/raw`]: serializeBlock(
         hexToBytes(block.headerHex),
         block.txs,
@@ -169,7 +178,7 @@ describe('OrdResolver synthetic flows', () => {
     routes[`${E}/tx/${commitA.txid}/hex`] = bytesToHex(commitA.raw);
     routes[`${E}/tx/${commitB.txid}/hex`] = bytesToHex(commitB.raw);
 
-    const resolver = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes) });
+    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), ...SYNTHETIC });
 
     // /content follows the delegate
     const viaContent = await resolver.resolve(`ord:${idA}/content`);
@@ -179,6 +188,58 @@ describe('OrdResolver synthetic flows', () => {
 
     // the bare URI referent is the ORIGINAL content, absent here
     await expect(resolver.resolve(`ord:${idA}`)).rejects.toMatchObject({ code: 'NO_CONTENT' });
+  });
+
+  it('reports the DELEGATE block headerTrust when content is served via delegate', async () => {
+    // delegate target lives in a different block at a NON-checkpoint height;
+    // the addressed inscription's height IS checkpointed. The verification
+    // report must describe the block of the bytes actually served.
+    const scriptB = envelopeScript(
+      { fields: [[1, 'text/plain']], body: ['delegate body'] },
+      { checksigPrefix: true },
+    );
+    const tapB = taprootCommit(scriptB);
+    const commitB = commitTx(tapB.scriptPubKey);
+    const revealB = revealTx([{ script: scriptB, controlBlock: tapB.controlBlock }], {
+      prevTxidLE: commitB.txidLE,
+      vout: 0,
+    });
+    const idB = `${revealB.txid}i0`;
+
+    const idValue = hexToBytes(idB.slice(0, 64)).reverse();
+    const scriptA = envelopeScript({ fields: [[11, idValue]] }, { checksigPrefix: true });
+    const tapA = taprootCommit(scriptA);
+    const commitA = commitTx(tapA.scriptPubKey);
+    const revealA = revealTx([{ script: scriptA, controlBlock: tapA.controlBlock }], {
+      prevTxidLE: commitA.txidLE,
+      vout: 0,
+    });
+    const idA = `${revealA.txid}i0`;
+
+    const blockA = buildBlock([revealA]);
+    const blockB = buildBlock([revealB]);
+    const routes = {
+      ...esploraRoutesForBlock(blockA, 90),
+      ...esploraRoutesForBlock(blockB, 100),
+    };
+    routes[`${E}/tx/${commitA.txid}/hex`] = bytesToHex(commitA.raw);
+    routes[`${E}/tx/${commitB.txid}/hex`] = bytesToHex(commitB.raw);
+
+    const resolver = new OrdResolver({
+      esplora: [E, E2],
+      fetchFn: stubFetch(routes),
+      checkpoints: new Map([[90, blockA.blockHash]]),
+      ...SYNTHETIC,
+    });
+    const result = await resolver.resolve(`ord:${idA}/content`);
+    expect(result.viaDelegate).toBe(idB);
+    expect(result.verification.blockHash).toBe(blockB.blockHash);
+    expect(result.verification.height).toBe(100);
+    // the delegate's height is NOT checkpointed: the report must be the
+    // delegate's M-of-N anchoring, not the addressed inscription's checkpoint
+    expect(result.verification.headerTrust?.checkpointHit).toBe(false);
+    expect(result.verification.headerTrust?.independentSources).toBe(2);
+    expect(result.verification.headerTrust?.anchored).toBe(true);
   });
 
   it('verifies at L3 from a raw block fetch', async () => {
@@ -196,7 +257,7 @@ describe('OrdResolver synthetic flows', () => {
     const routes = esploraRoutesForBlock(block, 100);
     routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
 
-    const resolver = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes) });
+    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), ...SYNTHETIC });
     const result = await resolver.resolve(`ord:${reveal.txid}i0`, { verification: 'L3' });
     expect(result.verification.level).toBe('L3');
     expect(new TextDecoder().decode(result.body)).toBe('strongest level');

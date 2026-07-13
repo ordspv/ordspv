@@ -10,7 +10,7 @@ docs/RESEARCH.md for the full technical rationale.*
   (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), and a cross-chain
   embedding guide (docs/CROSS-CHAIN.md). All of it is grounded in the cited research
   synthesis (docs/RESEARCH.md).
-- Working code, 185 tests, all offline-runnable. `@ordspv/core` has the consensus
+- Working code, 237 tests, all offline-runnable. `@ordspv/core` has the consensus
   primitives, the ord-exact envelope parser, and L2/L3 proof verification.
   `@ordspv/fetch` is the verified resolver: failover backends, checkpoint and M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling.
@@ -25,7 +25,7 @@ docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network)
 
-1. `npm install && npm test && npx tsc --noEmit`: expect 185 green.
+1. `npm install && npm test && npx tsc --noEmit`: expect 237 green.
 2. `npx tsx scripts/fetch-fixtures.ts`: byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
    green 2026-07-11, before and after the envelope-parser rewrite.)*
@@ -141,6 +141,6 @@ docs/RESEARCH.md for the full technical rationale.*
 
 TypeScript 7 / Node 22 / vitest 4 / noble 2.x, npm workspaces, git history at
 "core → fetch/gateway/cli → docs" milestones. Published to npm as `@ordspv/*`
-(0.1.x, 2026-07-12). All
+(0.2.0 security-hardening release; 0.1.x deprecated). All
 external claims in docs carry source URLs; uncertainties are listed at the bottom
 of RESEARCH.md rather than smoothed over.

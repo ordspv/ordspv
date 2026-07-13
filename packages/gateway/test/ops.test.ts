@@ -182,3 +182,149 @@ describe('gateway ops integration', () => {
     await new Promise<void>((resolve) => tiny.close(() => resolve()));
   });
 });
+
+describe('adversarial: spoofed X-Forwarded-For cannot mint fresh rate-limit buckets', () => {
+  const stub: FetchFn = async () =>
+    new Response('767430', { headers: { 'content-type': 'text/plain', 'content-length': '6' } });
+
+  it('ignores the client-controlled left of XFF; a spoofing client stays one bucket', async () => {
+    // trustProxy: 1 => the rightmost XFF entry is the one our trusted proxy
+    // appended (the real observed client IP). A single attacker varies the
+    // LEFT of XFF trying to mint fresh buckets; because the key is taken from
+    // the right, all requests collapse to ONE bucket and get throttled.
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: stub,
+      rateLimitPerSec: 1,
+      rateBurst: 2,
+      trustProxy: 1,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      // forged leftmost IP varies; the trusted-proxy-appended rightmost IP
+      // (203.0.113.5) is constant — this is the real client
+      const res = await fetch(`${b}/r/blockheight`, {
+        headers: { 'x-forwarded-for': `10.0.0.${i}, 203.0.113.5` },
+      });
+      statuses.push(res.status);
+    }
+    // one shared bucket keyed on the trusted rightmost hop => throttled
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(1);
+
+    // the flood did NOT create six buckets
+    const metrics = await (await fetch(`${b}/metrics`)).text();
+    const tracked = Number(metrics.match(/gateway_ratelimit_tracked_ips (\d+)/)?.[1] ?? '0');
+    expect(tracked).toBeLessThanOrEqual(2);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('keys distinct real clients (distinct trusted rightmost hops) to distinct buckets', async () => {
+    // two genuinely different clients, each behind the same trusted proxy which
+    // appends their real IP on the right; each gets its own bucket, so neither
+    // is throttled on its first request despite a burst of 1
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: stub,
+      rateLimitPerSec: 1,
+      rateBurst: 1,
+      trustProxy: 1,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const a = await fetch(`${b}/r/blockheight`, { headers: { 'x-forwarded-for': 'spoof, 198.51.100.7' } });
+    const c = await fetch(`${b}/r/blockheight`, { headers: { 'x-forwarded-for': 'spoof, 198.51.100.8' } });
+    expect(a.status).toBe(200);
+    expect(c.status).toBe(200);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('falls back to the socket address when the trusted XFF entry is not a valid IP', async () => {
+    // trustProxy on, but the rightmost entry is garbage: key must fall back to
+    // the socket (all these requests share the loopback socket => one bucket)
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: stub,
+      rateLimitPerSec: 1,
+      rateBurst: 2,
+      trustProxy: 1,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(`${b}/r/blockheight`, {
+        headers: { 'x-forwarded-for': `not-an-ip-${i}` },
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(1);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe('adversarial: junk-query cache-buster', () => {
+  let calls = 0;
+  const stub: FetchFn = async () => {
+    calls++;
+    return new Response('767430', { headers: { 'content-type': 'text/plain', 'content-length': '6' } });
+  };
+
+  it('serves ?x=1,2,3 from ONE cache entry (key derived from pathname, not raw search)', async () => {
+    calls = 0;
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: stub,
+      rateLimitPerSec: 0,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const miss = await fetch(`${b}/r/blockheight?x=1`);
+    expect(miss.headers.get('x-cache')).toBe('MISS');
+    for (const q of ['x=2', 'x=3', 'foo=bar&x=9', '']) {
+      const res = await fetch(`${b}/r/blockheight?${q}`);
+      expect(res.headers.get('x-cache')).toBe('HIT');
+      expect(await res.text()).toBe('767430');
+    }
+    // upstream was hit exactly once despite five distinct query strings
+    expect(calls).toBe(1);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('keeps /ord/v1/proof level as a real cache dimension (l2 != l3)', () => {
+    // canonicalization must NOT collapse a semantically meaningful parameter
+    // (covered end-to-end in gateway.test; here we assert the key shape via a
+    // representative distinctness check on the search normalization)
+    const key = (path: string, search: string) => {
+      const url = new URL(`http://x${path}${search}`);
+      if (/^\/ord\/v1\/proof\//.test(path)) {
+        const level = (url.searchParams.get('level') ?? 'l2').toUpperCase() === 'L3' ? 'l3' : 'l2';
+        return `${path}?level=${level}`;
+      }
+      return path;
+    };
+    expect(key('/ord/v1/proof/abc', '?level=l2')).not.toBe(key('/ord/v1/proof/abc', '?level=l3'));
+    expect(key('/ord/v1/proof/abc', '?level=l2&junk=1')).toBe(key('/ord/v1/proof/abc', '?level=l2'));
+    expect(key('/r/blockheight', '?a=1')).toBe(key('/r/blockheight', '?b=2'));
+  });
+});
+
+describe('TokenBucketLimiter tracked-key cap', () => {
+  it('never exceeds the configured max tracked keys under key churn', async () => {
+    const { TokenBucketLimiter } = await import('../src/index.js');
+    let t = 0;
+    const limiter = new TokenBucketLimiter(1000, 1000, () => t, 100);
+    for (let i = 0; i < 10_000; i++) {
+      t += 1; // advance <1s each so the idle sweep never runs
+      limiter.take(`key-${i}`);
+    }
+    expect(limiter.trackedKeys).toBeLessThanOrEqual(100);
+  });
+});

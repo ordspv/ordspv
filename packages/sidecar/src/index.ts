@@ -9,11 +9,14 @@ import {
 } from '@ordspv/core';
 import {
   buildProofBundle,
+  readBodyCapped,
+  DEFAULT_HTTP_TIMEOUT_MS,
   type EsploraBlockInfo,
   type EsploraMerkleProof,
   type EsploraTxStatus,
   type ProofBackend,
 } from '@ordspv/fetch';
+import { ByteLru, TokenBucketLimiter } from '@ordspv/gateway';
 
 /**
  * Proof sidecar: SPEC-VERIFICATION proof bundles served straight from a
@@ -45,14 +48,25 @@ export class CoreRpcError extends Error {
   }
 }
 
-/** JSON-RPC over HTTP with basic auth from the URL (http://user:pass@host:port) */
-export function coreRpc(url: string, fetchFn: typeof fetch = fetch): RpcCall {
+/**
+ * JSON-RPC over HTTP with basic auth from the URL (http://user:pass@host:port).
+ * Requests carry a deadline and the response read is size-capped (a raw
+ * 4MB block arrives as ~8MB of hex inside the JSON envelope, hence the
+ * generous default).
+ */
+export function coreRpc(
+  url: string,
+  fetchFn: typeof fetch = fetch,
+  opts: { timeoutMs?: number; maxResponseBytes?: number } = {},
+): RpcCall {
   const parsed = new URL(url);
   const auth =
     parsed.username || parsed.password
       ? `Basic ${Buffer.from(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`).toString('base64')}`
       : undefined;
   const endpoint = `${parsed.protocol}//${parsed.host}${parsed.pathname === '/' ? '/' : parsed.pathname}`;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+  const maxResponseBytes = opts.maxResponseBytes ?? 20 * 1024 * 1024;
   let nextId = 1;
   return async (method, params) => {
     const res = await fetchFn(endpoint, {
@@ -62,8 +76,10 @@ export function coreRpc(url: string, fetchFn: typeof fetch = fetch): RpcCall {
         ...(auth ? { authorization: auth } : {}),
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    const body = (await res.json()) as {
+    const raw = await readBodyCapped(res, maxResponseBytes, `${endpoint} ${method}`);
+    const body = JSON.parse(new TextDecoder().decode(raw)) as {
       result?: unknown;
       error?: { code: number; message: string } | null;
     };
@@ -169,6 +185,14 @@ export class CoreRpcBackend implements ProofBackend {
 
 export interface SidecarOptions {
   rpc: RpcCall;
+  /** sustained requests/second per client IP (default 10; 0 disables) */
+  rateLimitPerSec?: number;
+  /** burst size per client IP (default 40) */
+  rateBurst?: number;
+  /** LRU byte budget across cached proof bundles (default 32 MiB; 0 disables) */
+  cacheMaxBytes?: number;
+  /** largest single cacheable bundle (default 4 MiB) */
+  cacheMaxEntryBytes?: number;
 }
 
 const IMMUTABLE = 'public, max-age=1209600, immutable';
@@ -189,12 +213,31 @@ function sendJson(
 
 export function createSidecar(options: SidecarOptions): Server {
   const backend = new CoreRpcBackend(options.rpc);
+  const ratePerSec = options.rateLimitPerSec ?? 10;
+  const limiter = new TokenBucketLimiter(ratePerSec, options.rateBurst ?? 40);
+  const cacheMaxBytes = options.cacheMaxBytes ?? 32 * 1024 * 1024;
+  const cache = new ByteLru(cacheMaxBytes, options.cacheMaxEntryBytes ?? 4 * 1024 * 1024);
+
   return createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://sidecar.local');
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         return sendJson(res, 405, { error: 'method not allowed' });
       }
+
+      // every route is rate limited, /healthz included (it costs an RPC)
+      if (ratePerSec > 0) {
+        const ip = req.socket.remoteAddress ?? 'unknown';
+        if (!limiter.take(ip)) {
+          return sendJson(
+            res,
+            429,
+            { error: 'rate limited' },
+            { 'retry-after': String(limiter.retryAfterSeconds(ip)) },
+          );
+        }
+      }
+
       if (url.pathname === '/healthz') {
         try {
           const info = (await options.rpc('getblockchaininfo', [])) as {
@@ -221,13 +264,28 @@ export function createSidecar(options: SidecarOptions): Server {
         return sendJson(res, 400, { error: `invalid inscription id: ${id}` });
       }
       const level = (url.searchParams.get('level') ?? 'l2').toUpperCase() === 'L3' ? 'L3' : 'L2';
+
+      // canonicalized cache key: pathname + normalized level, never raw search
+      const cacheKey = `${url.pathname}?level=${level.toLowerCase()}`;
+      if (cacheMaxBytes > 0) {
+        const hit = cache.get(cacheKey);
+        if (hit) {
+          res.writeHead(hit.status, { ...hit.headers, 'x-cache': 'HIT' });
+          return res.end(Buffer.from(hit.body));
+        }
+      }
       try {
         const bundle = await buildProofBundle(backend, parseInscriptionId(id), level);
         verifyProofBundle(bundle); // never relay a bundle we cannot verify
-        return sendJson(res, 200, bundle, {
+        const body = new TextEncoder().encode(JSON.stringify(bundle));
+        const headers = {
+          'access-control-allow-origin': '*',
           'content-type': 'application/vnd.ord.proof+json; version=1',
           'cache-control': IMMUTABLE,
-        });
+        };
+        if (cacheMaxBytes > 0) cache.set(cacheKey, { status: 200, headers, body });
+        res.writeHead(200, { ...headers, 'x-cache': 'MISS' });
+        return res.end(Buffer.from(body));
       } catch (e) {
         const message = (e as Error).message;
         const status = /not found|not confirmed|no envelope/i.test(message) ? 404 : 502;
@@ -245,7 +303,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
   const port = Number(process.env.PORT ?? 8318);
-  createSidecar({ rpc: coreRpc(rpcUrl) }).listen(port, () => {
-    console.log(`ord proof sidecar listening on :${port}`);
+  // loopback by default: proof bundles are public data, but an RPC-backed
+  // service should only face a wider network when explicitly told to
+  const host = process.env.BIND ?? '127.0.0.1';
+  createSidecar({ rpc: coreRpc(rpcUrl) }).listen(port, host, () => {
+    console.log(`ord proof sidecar listening on ${host}:${port}`);
   });
 }

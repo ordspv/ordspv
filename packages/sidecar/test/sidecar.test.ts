@@ -140,6 +140,37 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
     expect((await fetch(`${base}/ord/v1/proof/${unknown}`)).status).toBe(404);
   });
 
+  it('caches immutable bundles: MISS then HIT (canonical key ignores junk params)', async () => {
+    const cached = createSidecar({ rpc, rateLimitPerSec: 0 });
+    await new Promise<void>((resolve) => cached.listen(0, () => resolve()));
+    const cbase = `http://127.0.0.1:${(cached.address() as AddressInfo).port}`;
+    const miss = await fetch(`${cbase}/ord/v1/proof/${inscriptionId}?level=l2`);
+    expect(miss.headers.get('x-cache')).toBe('MISS');
+    // same route, extra junk query param + redundant level => same cache entry
+    const hit = await fetch(`${cbase}/ord/v1/proof/${inscriptionId}?level=l2&bust=1`);
+    expect(hit.headers.get('x-cache')).toBe('HIT');
+    const a = await miss.json();
+    const b = await hit.json();
+    expect(b).toEqual(a);
+    // l3 is a distinct cache dimension
+    const l3 = await fetch(`${cbase}/ord/v1/proof/${inscriptionId}?level=l3`);
+    expect(l3.headers.get('x-cache')).toBe('MISS');
+    await new Promise<void>((resolve) => cached.close(() => resolve()));
+  });
+
+  it('rate limits per client with 429 + retry-after (healthz included)', async () => {
+    const limited = createSidecar({ rpc, rateLimitPerSec: 1, rateBurst: 2, cacheMaxBytes: 0 });
+    await new Promise<void>((resolve) => limited.listen(0, () => resolve()));
+    const lbase = `http://127.0.0.1:${(limited.address() as AddressInfo).port}`;
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) statuses.push((await fetch(`${lbase}/healthz`)).status);
+    const limited429 = statuses.filter((s) => s === 429);
+    expect(limited429.length).toBeGreaterThanOrEqual(1);
+    const last = await fetch(`${lbase}/healthz`);
+    if (last.status === 429) expect(Number(last.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    await new Promise<void>((resolve) => limited.close(() => resolve()));
+  });
+
   it('never relays a bundle it cannot verify (lying node)', async () => {
     // same chain, but the node serves a TAMPERED header: the sidecar's own
     // verifyProofBundle must reject before anything is relayed
@@ -184,6 +215,19 @@ describe('coreRpc client', () => {
     expect(await rpc('ok', [1, 'a'])).toBe(42);
     expect(seen[0].auth).toBe(`Basic ${Buffer.from('user:hunter2').toString('base64')}`);
     await expect(rpc('missing', [])).rejects.toMatchObject({ code: -5 });
+  });
+
+  it('passes an abort signal (deadline) and caps the response body', async () => {
+    let sawSignal = false;
+    const fetchFn = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      sawSignal = init?.signal instanceof AbortSignal;
+      const req = JSON.parse(init?.body as string);
+      // a response body far larger than the tiny cap below
+      return new Response(JSON.stringify({ result: 'x'.repeat(100_000), error: null, id: req.id }));
+    }) as typeof fetch;
+    const rpc = coreRpc('http://127.0.0.1:8332', fetchFn, { maxResponseBytes: 1024 });
+    await expect(rpc('big', [])).rejects.toThrow(/exceeded cap|content-length/);
+    expect(sawSignal).toBe(true);
   });
 });
 

@@ -9,8 +9,8 @@ import {
   type L2Assurances,
   type VerifiedInscription,
 } from '@ordspv/core';
-import { EsploraBackend, OrdBackend, type FetchFn } from './backends.js';
-import { defaultDecompressor, type Decompressor } from './decompress.js';
+import { EsploraBackend, OrdBackend, type BackendLimits, type FetchFn } from './backends.js';
+import { boundedDecompressor, defaultDecompressor, type Decompressor } from './decompress.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { buildProofBundle } from './proofbuilder.js';
 import { parseOrdUri, type ParsedOrdUri } from './uri.js';
@@ -42,10 +42,20 @@ export interface ResolverOptions {
   ordGateways?: string[];
   /** default verification level for resolve() (default 'L2') */
   verification?: VerificationMode;
-  /** independent header sources that must agree (default min(2, esplora count)) */
+  /**
+   * Independent sources that must support a non-checkpoint header (default 2:
+   * the proof-building backend plus one other agreeing esplora). The builder
+   * is excluded from the attesting vote; anchoring fails closed below this.
+   */
   minHeaderAgreement?: number;
   minConfirmations?: number;
   checkpoints?: ReadonlyMap<number, string>;
+  /**
+   * Compact-bits proof-of-work floor for accepted headers. Defaults to the
+   * mainnet powLimit (0x1d00ffff); pass the network's own limit (or null to
+   * disable) when resolving against non-mainnet chains.
+   */
+  powLimitBits?: number | null;
   /**
    * Replace checkpoint/M-of-N anchoring entirely with a custom header anchor
    * (e.g. headerSyncTrust over a locally synced chain; see
@@ -54,6 +64,10 @@ export interface ResolverOptions {
   trustHeader?: (header: BlockHeader, height: number) => Promise<HeaderTrustReport>;
   fetchFn?: FetchFn;
   decompressor?: Decompressor;
+  /** cap on decoded (decompressed) body size when auto-decoding tag-9 encodings */
+  maxDecompressedBytes?: number;
+  /** per-request deadline and per-endpoint response-size caps for all backends */
+  limits?: Partial<BackendLimits>;
 }
 
 export interface Verification {
@@ -104,11 +118,18 @@ export class OrdResolver {
   constructor(options: ResolverOptions = {}) {
     this.options = options;
     const fetchFn = options.fetchFn;
-    this.esploras = (options.esplora ?? DEFAULT_ESPLORA).map((u) => new EsploraBackend(u, fetchFn));
-    this.ordServers = (options.ordGateways ?? DEFAULT_ORD_GATEWAYS).map(
-      (u) => new OrdBackend(u, fetchFn),
+    const limits = options.limits ?? {};
+    this.esploras = (options.esplora ?? DEFAULT_ESPLORA).map(
+      (u) => new EsploraBackend(u, fetchFn, limits),
     );
-    this.decompressor = options.decompressor ?? defaultDecompressor;
+    this.ordServers = (options.ordGateways ?? DEFAULT_ORD_GATEWAYS).map(
+      (u) => new OrdBackend(u, fetchFn, limits),
+    );
+    this.decompressor =
+      options.decompressor ??
+      (options.maxDecompressedBytes !== undefined
+        ? boundedDecompressor(options.maxDecompressedBytes)
+        : defaultDecompressor);
   }
 
   /** Resolve an ord URI to verified bytes. */
@@ -133,11 +154,13 @@ export class OrdResolver {
 
   // ---------- verified path (chain data, untrusted servers) ----------
 
-  private async withEsplora<T>(fn: (e: EsploraBackend) => Promise<T>): Promise<T> {
+  private async withEsplora<T>(
+    fn: (e: EsploraBackend) => Promise<T>,
+  ): Promise<{ value: T; source: EsploraBackend }> {
     const errors: string[] = [];
     for (const e of this.esploras) {
       try {
-        return await fn(e);
+        return { value: await fn(e), source: e };
       } catch (err) {
         errors.push(`${e.baseUrl}: ${(err as Error).message}`);
       }
@@ -150,7 +173,9 @@ export class OrdResolver {
     level: 'L2' | 'L3',
   ): Promise<{ verified: VerifiedInscription; headerTrust: HeaderTrustReport }> {
     const parsed = parseOrdUri(idString);
-    const bundle = await this.withEsplora((e) => buildProofBundle(e, parsed.id, level));
+    const { value: bundle, source } = await this.withEsplora((e) =>
+      buildProofBundle(e, parsed.id, level),
+    );
     let verified: VerifiedInscription;
     try {
       verified = verifyProofBundle(bundle);
@@ -164,6 +189,9 @@ export class OrdResolver {
         minAgreement: this.options.minHeaderAgreement,
         minConfirmations: this.options.minConfirmations,
         checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS,
+        // the backend that built the proof cannot also attest to its header
+        proofSource: source.baseUrl,
+        powLimitBits: this.options.powLimitBits,
       });
     let headerTrust: HeaderTrustReport;
     try {
@@ -175,7 +203,9 @@ export class OrdResolver {
   }
 
   private async resolveVerified(parsed: ParsedOrdUri, level: 'L2' | 'L3'): Promise<ResolveResult> {
-    const { verified, headerTrust } = await this.verifyInscription(parsed.idString, level);
+    // headerTrust is reassigned when a delegate serves the content: the report
+    // must describe the block of the bytes actually served
+    let { verified, headerTrust } = await this.verifyInscription(parsed.idString, level);
     const inscription = verified.inscription;
 
     if (parsed.path === 'metadata') {
@@ -201,6 +231,7 @@ export class OrdResolver {
       const delegate = await this.verifyInscription(inscription.delegate, level);
       source = delegate.verified.inscription;
       sourceVerified = delegate.verified;
+      headerTrust = delegate.headerTrust;
       viaDelegate = inscription.delegate;
     }
     if (!source.body) {

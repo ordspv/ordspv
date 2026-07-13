@@ -44,9 +44,13 @@ export interface ParsedTx {
 /**
  * Parse a raw Bitcoin transaction (segwit-aware, BIP-144 serialization).
  * Throws on malformed or trailing data (strict = exact fit by default).
+ * `offset` starts the parse mid-buffer without copying the tail (block parsing).
  */
-export function parseTx(raw: Uint8Array, opts: { allowTrailing?: boolean } = {}): ParsedTx {
-  const r = new ByteReader(raw);
+export function parseTx(
+  raw: Uint8Array,
+  opts: { allowTrailing?: boolean; offset?: number } = {},
+): ParsedTx {
+  const r = new ByteReader(raw, opts.offset ?? 0);
   const start = r.pos;
   const version = r.readI32LE();
 

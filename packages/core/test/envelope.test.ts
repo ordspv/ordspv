@@ -151,6 +151,37 @@ describe('envelope grammar (ord envelope.rs semantics)', () => {
     );
   });
 
+  it('accepts the fixed-width 4-byte index encoding with trailing zeros (ord parity)', () => {
+    // ord's InscriptionId::from_value rejects a trailing zero index byte only
+    // when the index is NOT exactly 4 bytes; the fixed-width form is legal.
+    const txid = sha256(te.encode('fixed-width'));
+    const display = Buffer.from(txid).reverse().toString('hex');
+    const fixed = (index: number) => {
+      const b = new Uint8Array(4);
+      new DataView(b.buffer).setUint32(0, index, true);
+      return concatBytes(txid, b);
+    };
+    expect(parseInscriptionIdValue(fixed(0))).toBe(`${display}i0`);
+    expect(parseInscriptionIdValue(fixed(1))).toBe(`${display}i1`);
+    expect(parseInscriptionIdValue(fixed(2))).toBe(`${display}i2`);
+    expect(parseInscriptionIdValue(fixed(256))).toBe(`${display}i256`);
+    // variable-width trailing zeros (1-3 index bytes) stay rejected
+    expect(parseInscriptionIdValue(concatBytes(txid, new Uint8Array([0])))).toBeUndefined();
+    expect(parseInscriptionIdValue(concatBytes(txid, new Uint8Array([1, 0])))).toBeUndefined();
+    expect(parseInscriptionIdValue(concatBytes(txid, new Uint8Array([1, 0, 0])))).toBeUndefined();
+    expect(parseInscriptionIdValue(concatBytes(txid, new Uint8Array([1, 2, 0])))).toBeUndefined();
+
+    // the fixed-width form must round-trip through BOTH delegate and parent tags
+    const viaDelegate = interpret([new Uint8Array([11]), fixed(1)]);
+    expect(viaDelegate.delegate).toBe(`${display}i1`);
+    const viaParent = interpret([new Uint8Array([3]), fixed(256)]);
+    expect(viaParent.parents).toEqual([`${display}i256`]);
+    // and through a full envelope parse from a reveal tx
+    const s = envelopeScript({ fields: [[11, fixed(2)]] });
+    const [insc] = inscriptionsFromTx(revealTx([{ script: s, controlBlock: DUMMY_CONTROL_BLOCK }]));
+    expect(insc.delegate).toBe(`${display}i2`);
+  });
+
   it('numbers multiple envelopes across scripts and inputs flatly', () => {
     const s1 = concatBytes(
       envelopeScript({ fields: [[1, 'text/plain']], body: ['first'] }),

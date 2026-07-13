@@ -346,3 +346,342 @@ describe('headerSyncTrust as the resolver anchor (drop-in)', () => {
     await expect(trust(someHeader, 766100)).resolves.toMatchObject({ anchoredBySync: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// hardening: reorg discipline, most-work rule, transport bounds, TLS
+// ---------------------------------------------------------------------------
+
+import { calcNextBits, workFromBits } from '@ordspv/core';
+import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createServer as createNetServer, type AddressInfo, type Server as NetServer } from 'node:net';
+import { createServer as createTlsServer, type Server as TlsServer } from 'node:tls';
+import { mkdtempSync as mkdtemp2 } from 'node:fs';
+import { afterAll, beforeAll } from 'vitest';
+import { ElectrumTcpTransport, MAX_FUTURE_DRIFT_SECONDS, ReorgLinkError } from '../src/headersync.js';
+
+describe('sync-loop reorg discipline', () => {
+  const CHAIN2 = mineChain(40, 5000);
+  const BASE2 = { height: 0, headerHex: bytesToHex(CHAIN2[0]) };
+
+  it('consensus failures do NOT truncate the chain (only linkage at the tip does)', async () => {
+    const chain = await HeaderChain.open({ base: BASE2, params: TEST_PARAMS, checkpoints: new Map() });
+    const server = new FakeElectrum(CHAIN2.slice(0, 30));
+    await syncHeaders(chain, server);
+    expect(chain.tipHeight).toBe(29);
+    const tipBefore = chain.tipHash;
+
+    // serve an extension whose SECOND header has tampered bits: a bad batch,
+    // not reorg evidence; the sync must abort without rewinding anything
+    const ext = [CHAIN2[30], CHAIN2[31].slice()];
+    ext[1][72] ^= 0x01;
+    const badServer = new FakeElectrum([...CHAIN2.slice(0, 30), ...ext]);
+    await expect(syncHeaders(chain, badServer)).rejects.toThrow(/bits/);
+    expect(chain.tipHeight).toBe(29);
+    expect(chain.tipHash).toBe(tipBefore);
+  });
+
+  it('appendBatch types the tip-linkage failure as ReorgLinkError, deeper breaks as plain Error', async () => {
+    const chain = await HeaderChain.open({ base: BASE2, params: TEST_PARAMS, checkpoints: new Map() });
+    chain.appendBatch(concatRaw(CHAIN2.slice(1, 10)));
+    // first header of the batch does not link to our tip: reorg evidence
+    expect(() => chain.appendBatch(CHAIN2[12])).toThrow(ReorgLinkError);
+    // a batch broken INTERNALLY is not: same message, plain Error
+    try {
+      chain.appendBatch(concatRaw([CHAIN2[10], CHAIN2[12]]));
+      expect.unreachable('batch must throw');
+    } catch (e) {
+      expect((e as Error).message).toMatch(/does not link/);
+      expect(e instanceof ReorgLinkError).toBe(false);
+    }
+  });
+
+  it('rejects a malformed electrum header batch before decoding it', async () => {
+    const chain = await HeaderChain.open({ base: BASE2, params: TEST_PARAMS, checkpoints: new Map() });
+    const inner = new FakeElectrum(CHAIN2.slice(0, 20));
+    const liar: ElectrumTransport = {
+      async request(method, params) {
+        const res = await inner.request(method, params);
+        if (method === 'blockchain.block.headers') {
+          const r = res as { hex: string; count: number };
+          return { ...r, hex: r.hex + 'ab'.repeat(80) }; // hex longer than claimed count
+        }
+        return res;
+      },
+    };
+    await expect(syncHeaders(chain, liar)).rejects.toThrow(/malformed/);
+    expect(chain.tipHeight).toBe(0);
+
+    const overCount: ElectrumTransport = {
+      async request(method, params) {
+        const res = await inner.request(method, params);
+        if (method === 'blockchain.block.headers') {
+          const r = res as { hex: string; count: number };
+          return { ...r, count: r.count + 5 }; // claims more than requested
+        }
+        return res;
+      },
+    };
+    await expect(syncHeaders(chain, overCount)).rejects.toThrow(/malformed/);
+  });
+
+  it('rejects headers timestamped beyond the future-drift bound', async () => {
+    const NOW = 1_700_000_000 + 40 * 600;
+    const chain = await HeaderChain.open({
+      base: BASE2,
+      params: TEST_PARAMS,
+      checkpoints: new Map(),
+      now: () => NOW,
+    });
+    chain.appendBatch(concatRaw(CHAIN2.slice(1, 5)));
+    const prev = parseHeader(CHAIN2[4]).hashLE;
+    const tooNew = mineHeader(prev, NOW + MAX_FUTURE_DRIFT_SECONDS + 60, 7777);
+    expect(() => chain.appendBatch(tooNew)).toThrow(/in the future/);
+    const okNew = mineHeader(prev, NOW + MAX_FUTURE_DRIFT_SECONDS - 60, 7778);
+    expect(chain.appendBatch(okNew)).toBe(5);
+  });
+});
+
+function concatRaw(headers: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(headers.length * 80);
+  headers.forEach((h, i) => out.set(h, i * 80));
+  return out;
+}
+
+describe('most-work reorg rule (forced-easier-retarget fork is rejected)', () => {
+  // tiny retarget interval so a boundary crossing is cheap to mine
+  const FORK_PARAMS: ChainParams = {
+    retargetInterval: 4,
+    targetTimespan: 4 * 600,
+    powLimitBits: 0x207fffff,
+  };
+  const START_BITS = 0x2000ffff; // well below the pow limit: room to retarget easier
+  const T0 = 1_700_000_000;
+  const NOW = T0 + 10 * 600;
+
+  function mineAt(prevHashLE: Uint8Array, time: number, bits: number, seed: number): Uint8Array {
+    const h = new Uint8Array(80);
+    const view = new DataView(h.buffer);
+    view.setInt32(0, 4, true);
+    h.set(prevHashLE, 4);
+    h.set(sha256(new Uint8Array([seed & 0xff, seed >> 8, 0x77])), 36);
+    view.setUint32(68, time, true);
+    view.setUint32(72, bits, true);
+    for (let nonce = 0; ; nonce++) {
+      view.setUint32(76, nonce, true);
+      const parsed = parseHeader(h.slice());
+      if (checkProofOfWork(parsed)) return h.slice();
+    }
+  }
+
+  /** extend a chain of (raw, time, bits) tuples following FORK_PARAMS retargeting */
+  function extend(
+    rows: { raw: Uint8Array; time: number; bits: number }[],
+    time: number,
+    seed: number,
+  ): void {
+    const h = rows.length;
+    const bits =
+      h === 0
+        ? START_BITS
+        : h % FORK_PARAMS.retargetInterval === 0
+          ? calcNextBits(
+              rows[h - 1].bits,
+              rows[h - FORK_PARAMS.retargetInterval].time,
+              rows[h - 1].time,
+              FORK_PARAMS,
+            )
+          : rows[h - 1].bits;
+    const prev = h === 0 ? new Uint8Array(32) : parseHeader(rows[h - 1].raw).hashLE;
+    rows.push({ raw: mineAt(prev, time, bits, seed), time, bits });
+  }
+
+  it('a taller fork with less cumulative work is refused and the chain restored', async () => {
+    // honest chain: heights 0..9, 600s spacing (difficulty ratchets harder)
+    const honest: { raw: Uint8Array; time: number; bits: number }[] = [];
+    for (let h = 0; h < 10; h++) extend(honest, T0 + h * 600, 100 + h);
+
+    // attack fork from height 6: timestamps pushed forward (inside the +2h
+    // bound) so the height-8 retarget lands EASIER; taller but lighter
+    const fork = honest.slice(0, 6);
+    const JUMP = 6000;
+    for (let h = 6; h < 11; h++) extend(fork, T0 + h * 600 + JUMP, 900 + h);
+
+    const honestWork = honest.slice(6).reduce((w, r) => w + workFromBits(r.bits), 0n);
+    const forkWork = fork.slice(6).reduce((w, r) => w + workFromBits(r.bits), 0n);
+    expect(fork.length).toBeGreaterThan(honest.length); // taller
+    expect(forkWork).toBeLessThan(honestWork); // lighter
+
+    const chain = await HeaderChain.open({
+      base: { height: 0, headerHex: bytesToHex(honest[0].raw) },
+      params: FORK_PARAMS,
+      checkpoints: new Map(),
+      now: () => NOW,
+    });
+    await syncHeaders(chain, new FakeElectrum(honest.map((r) => r.raw)));
+    expect(chain.tipHeight).toBe(9);
+    const honestTip = chain.tipHash;
+    const honestWorkTotal = chain.chainwork;
+
+    const forkServer = new FakeElectrum(fork.map((r) => r.raw));
+    await expect(syncHeaders(chain, forkServer)).rejects.toThrow(/most-work/);
+    // fully restored: same tip, same work, no partial adoption
+    expect(chain.tipHeight).toBe(9);
+    expect(chain.tipHash).toBe(honestTip);
+    expect(chain.chainwork).toBe(honestWorkTotal);
+  });
+
+  it('a heavier fork is still adopted (the legitimate reorg path keeps working)', async () => {
+    const honest: { raw: Uint8Array; time: number; bits: number }[] = [];
+    for (let h = 0; h < 8; h++) extend(honest, T0 + h * 600, 300 + h);
+
+    // same-difficulty fork from height 6, one block taller: strictly more work
+    const fork = honest.slice(0, 6);
+    for (let h = 6; h < 9; h++) extend(fork, T0 + h * 600 + 30, 1300 + h);
+
+    const chain = await HeaderChain.open({
+      base: { height: 0, headerHex: bytesToHex(honest[0].raw) },
+      params: FORK_PARAMS,
+      checkpoints: new Map(),
+      now: () => NOW,
+    });
+    await syncHeaders(chain, new FakeElectrum(honest.map((r) => r.raw)));
+    expect(chain.tipHeight).toBe(7);
+
+    await syncHeaders(chain, new FakeElectrum(fork.map((r) => r.raw)));
+    expect(chain.tipHeight).toBe(8);
+    expect(chain.tipHash).toBe(parseHeader(fork[8].raw).hash);
+  });
+});
+
+describe('electrum transport bounds and TLS verification', () => {
+  let floodServer: NetServer;
+  let floodPort = 0;
+
+  beforeAll(async () => {
+    // a hostile server that answers any request with an endless unterminated line
+    floodServer = createNetServer((socket) => {
+      const junk = 'a'.repeat(64 * 1024);
+      const timer = setInterval(() => {
+        if (!socket.writableEnded) socket.write(junk);
+      }, 5);
+      socket.on('close', () => clearInterval(timer));
+      socket.on('error', () => clearInterval(timer));
+    });
+    await new Promise<void>((resolve) => floodServer.listen(0, '127.0.0.1', resolve));
+    floodPort = (floodServer.address() as AddressInfo).port;
+  });
+
+  afterAll(() => new Promise<void>((resolve) => floodServer.close(() => resolve())));
+
+  it('destroys the connection once the receive buffer cap is exceeded', async () => {
+    const transport = new ElectrumTcpTransport({
+      host: '127.0.0.1',
+      port: floodPort,
+      tls: false,
+      maxBufferBytes: 256 * 1024,
+      timeoutMs: 10_000,
+    });
+    await expect(transport.request('server.version', [])).rejects.toThrow(
+      /receive buffer exceeded|socket closed/,
+    );
+    transport.close();
+  });
+});
+
+const hasOpenssl = (() => {
+  try {
+    execSync('openssl version', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!hasOpenssl)('electrum TLS certificate verification', () => {
+  let tlsServer: TlsServer;
+  let tlsPort = 0;
+  let certPem = '';
+
+  beforeAll(async () => {
+    const dir = mkdtemp2(join(tmpdir(), 'electrum-tls-'));
+    execSync(
+      `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj /CN=localhost`,
+      { cwd: dir, stdio: 'ignore' },
+    );
+    certPem = readFileSync(join(dir, 'cert.pem'), 'utf8');
+    const keyPem = readFileSync(join(dir, 'key.pem'), 'utf8');
+    tlsServer = createTlsServer({ key: keyPem, cert: certPem }, (socket) => {
+      socket.setEncoding('utf8');
+      let buf = '';
+      socket.on('data', (chunk: string) => {
+        buf += chunk;
+        let nl;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          try {
+            const msg = JSON.parse(line) as { id: number };
+            socket.write(`${JSON.stringify({ id: msg.id, result: ['stub/1.4', '1.4'] })}\n`);
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+      socket.on('error', () => {});
+    });
+    await new Promise<void>((resolve) => tlsServer.listen(0, '127.0.0.1', resolve));
+    tlsPort = (tlsServer.address() as AddressInfo).port;
+  });
+
+  afterAll(() => new Promise<void>((resolve) => tlsServer.close(() => resolve())));
+
+  const fingerprint = () => {
+    const der = Buffer.from(
+      certPem.replace(/-----(BEGIN|END) CERTIFICATE-----|\s/g, ''),
+      'base64',
+    );
+    return createHash('sha256').update(der).digest('hex');
+  };
+
+  it('rejects a self-signed server by default (rejectUnauthorized)', async () => {
+    const transport = new ElectrumTcpTransport({ host: '127.0.0.1', port: tlsPort, timeoutMs: 5000 });
+    await expect(transport.request('server.version', [])).rejects.toThrow(
+      /self.signed|self signed|certificate|SELF_SIGNED/i,
+    );
+    transport.close();
+  });
+
+  it('accepts it behind the explicit insecure opt-in', async () => {
+    const transport = new ElectrumTcpTransport({
+      host: '127.0.0.1',
+      port: tlsPort,
+      insecure: true,
+      timeoutMs: 5000,
+    });
+    await expect(transport.request('server.version', [])).resolves.toEqual(['stub/1.4', '1.4']);
+    transport.close();
+  });
+
+  it('accepts a matching pinned certificate fingerprint (no insecure needed)', async () => {
+    const transport = new ElectrumTcpTransport({
+      host: '127.0.0.1',
+      port: tlsPort,
+      pinnedCertSha256: fingerprint(),
+      timeoutMs: 5000,
+    });
+    await expect(transport.request('server.version', [])).resolves.toEqual(['stub/1.4', '1.4']);
+    transport.close();
+  });
+
+  it('rejects a wrong pinned fingerprint', async () => {
+    const transport = new ElectrumTcpTransport({
+      host: '127.0.0.1',
+      port: tlsPort,
+      pinnedCertSha256: '11'.repeat(32),
+      timeoutMs: 5000,
+    });
+    await expect(transport.request('server.version', [])).rejects.toThrow(/fingerprint/);
+    transport.close();
+  });
+});
