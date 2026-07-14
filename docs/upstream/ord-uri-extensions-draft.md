@@ -1,12 +1,3 @@
-# DRAFT: do not post without explicit sign-off
-
-Target: `ordinals/ord` GitHub **Discussion** (category: ideas), referencing
-discussion #3780 and `docs/src/inscriptions/uris.md`.
-Authorship: pseudonymous (post from the project handle; no personal info).
-Status: draft v1, 2026-07-11.
-
----
-
 ## Title: `ord:` URI extensions: compatibility alias, paths, integrity, IANA registration
 
 The `ord:` scheme drafted in [uris.md](https://docs.ordinals.com/inscriptions/uris.html)
@@ -66,22 +57,6 @@ against the draft was to avoid forking the referent semantics, and the parity
 corpus means we notice immediately if we drift.
 
 *Links: [resolver + specs + corpus](https://github.com/ordspv/ordspv),
-[in-browser demo verifying inscription 0 client-side](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html)
-(`examples/verify-inscription-0.html` in the repo; the Pages URL goes live
-once GitHub Pages is enabled),
+[live browser demo](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html),
 [witness-proof electrs branch](https://github.com/ordspv/electrs/tree/witness-merkle-proof)
 (companion infrastructure so L3 verification is cheap everywhere).*
-
----
-
-## Posting notes (not part of the draft)
-
-- Links are concrete (github.com/ordspv/…) and live. Verify no identifying
-  info in repo metadata before posting.
-- GitHub Pages (deploy from `master`, root) must be enabled so the demo
-  link resolves; verify it renders before posting.
-- Post AFTER the esplora witness-proof PR exists so the "cheap L3" claim has a
-  concrete artifact behind it (see esplora-witness-proof-draft.md).
-- Tone calibration: casey historically rejects scope creep in the scheme itself;
-  the draft therefore proposes uris.md EXTENSIONS + alias acceptance, not changes
-  to the canonical form.

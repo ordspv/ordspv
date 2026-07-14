@@ -1,13 +1,3 @@
-# DRAFT: do not post without explicit sign-off
-
-Target: `Blockstream/electrs` **Pull Request** (code) + `Blockstream/esplora`
-API.md addition (docs commit inside the same PR family).
-Authorship: pseudonymous. Patch series: `patches/electrs-witness-merkle-proof/`
-(same content as the `witness-merkle-proof` branch of the local fork).
-Status: draft v1, 2026-07-11. Bench numbers measured on the branch.
-
----
-
 ## Title: Add `/tx/:txid/witness-merkle-proof` (+ `blockchain.transaction.get_witness_merkle`)
 
 ### What
@@ -110,18 +100,3 @@ including witness data: fold wtxid(tx) up `merkle`, then verify
 `witness_root` against the coinbase witness commitment (prove the coinbase
 with an ordinary txid proof at position 0). Not available on Liquid.
 ```
-
----
-
-## Posting notes (not part of the draft)
-
-- The fork is github.com/ordspv/electrs, branch `witness-merkle-proof`
-  (pushed); `patches/electrs-witness-merkle-proof/*.patch` is
-  the format-patch backup. Arrive with code.
-- Check Blockstream/electrs `CONTRIBUTING.md` and issue-first norms at post
-  time; open a tracking issue first if the repo expects one before the PR.
-- Platform caveat to mention if CI asks: the electrumd wallet test-harness
-  dev-dependency doesn't build on macos-arm64 (pre-existing, unrelated);
-  everything else validated locally on macOS + expected green on Linux CI.
-- The upstream ord discussion draft (ord-uri-extensions-draft.md) links here as
-  the "cheap L3 everywhere" companion; post this one FIRST.

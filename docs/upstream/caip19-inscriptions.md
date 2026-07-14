@@ -1,13 +1,3 @@
-# DRAFT: do not post without explicit sign-off
-
-Target: PR to `ChainAgnostic/namespaces` adding `bip122/caip19.md` (the bip122
-namespace currently defines only `slip44` for native coins). Authorship:
-pseudonymous. Written to the repo's namespace-profile conventions (frontmatter,
-Syntax, Rationale, Test Cases, References).
-Status: draft v1, 2026-07-11.
-
----
-
 ```
 ---
 namespace-identifier: bip122-caip19
@@ -89,9 +79,6 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6fb976ab49dcec017f1e201e8439598
 # a batch-minted inscription at envelope index 665
 bip122:000000000019d6689c085ae165831e93/ordinals:11d3f4b39e8ab97995bab1eacf7dcbf1345ec59c07261c0197e18bf29b88d8dai665
 
-# signet
-bip122:00000008819873e925422c1ff0f99f7c/ordinals:<txid>i<index>
-
 # INVALID: inscription number, not an id
 bip122:000000000019d6689c085ae165831e93/ordinals:0
 # INVALID: sat addressing out of scope
@@ -114,16 +101,3 @@ bip122:000000000019d6689c085ae165831e93/ordinals:6FB976ABi0
 [ord-docs]: https://docs.ordinals.com/inscriptions.html
 [ord-uris]: https://docs.ordinals.com/inscriptions/uris.html
 [spec-verification]: https://github.com/ordspv/ordspv/blob/master/docs/spec/SPEC-VERIFICATION.md
-
----
-
-## Posting notes (not part of the draft)
-
-- File goes in the namespaces repo as `bip122/caip19.md`; check whether the
-  repo wants a companion update to `bip122/README.md` listing the new profile.
-- Links are concrete (github.com/ordspv/ordspv) and the repo is live. Keep
-  authorship the pseudonymous handle.
-- Signet chain id re-derived 2026-07-12 from the current signet genesis
-  (first 32 hex chars; two independent esplora sources agree) and it matches
-  the test case above. Re-check only if posting is long delayed (signet
-  resets are possible).
