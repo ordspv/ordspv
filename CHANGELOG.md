@@ -3,6 +3,44 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-14
+
+Operational hardening in the gateway proxy and header-anchoring layers. The
+verification core is unchanged; `@ordspv/core` stays at 0.2.0.
+
+### Fixed
+
+- **Gateway proxy caching is limited to immutable content.** Only
+  `/content/<id>` responses enter the LRU; chain-tip endpoints
+  (`/blockheight`, `/blocktime`, `/blockhash*`, `/r/*`, `/preview/*`) always
+  pass through to the upstream and are marked `x-cache: BYPASS`, so the cache
+  can no longer serve stale chain-tip data. Upstream
+  `no-store`/`no-cache`/`max-age=0`/`private` responses are honored and kept
+  out of the LRU.
+- **Gateway upstream fetches carry a deadline.** Each proxied request is
+  aborted after a configurable timeout (`GatewayOptions.upstreamTimeoutMs` /
+  `UPSTREAM_TIMEOUT_MS`, default 20 s) and when the client disconnects, so a
+  hung upstream fails over quickly instead of pinning sockets.
+- **Gateway proxy requests fixed `Accept-Encoding: identity` upstream** and
+  no longer forwards the client's encoding preference or copies upstream
+  `Content-Encoding`, so cached bodies are one canonical byte sequence
+  regardless of which client populated the cache.
+- **Header anchoring separates agreement from confirmation-depth queries.**
+  An attester's hash-at-height vote now counts even when its tip-height
+  endpoint fails; tip heights are queried only when `minConfirmations` is
+  set.
+- **Byte-cap violations are reported as such.** `fetchCapped` no longer
+  labels an oversized-body abort as a timeout; the descriptive cap error
+  surfaces instead.
+- **`syncHeaders` reports net tip growth.** The `added` counter no longer
+  double-counts batches re-requested across reorg rewinds.
+
+### Changed
+
+- `@ordspv/fetch`, `@ordspv/gateway`, `@ordspv/cli`, and
+  `@ordspv/proof-sidecar` bumped to 0.2.1; inter-package pins updated to
+  match. `@ordspv/core` is unchanged at 0.2.0.
+
 ## [0.2.0] - 2026-07-13
 
 Security-hardening release across all five packages. Upgrading from 0.1.x is

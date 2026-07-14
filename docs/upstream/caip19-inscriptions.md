@@ -36,7 +36,7 @@ trusted indexer (SPV-grade verification levels are specified in the companion
 [verification spec][spec-verification]).
 
 `asset_namespace` = `ordinals` (8 chars, within CAIP-19's `[-a-z0-9]{3,8}`).
-`asset_reference` = the inscription id (67–75 chars, within CAIP-19's
+`asset_reference` = the inscription id (66–75 chars, within CAIP-19's
 `[-.%a-zA-Z0-9]{1,128}`; the only non-hex character is the literal `i`).
 No `token_id` component is used: an inscription is a singleton asset, not a
 class with instances.

@@ -530,6 +530,7 @@ export interface SyncOptions {
 
 export interface SyncResult {
   tipHeight: number;
+  /** net tip growth this sync; headers replaced across a reorg rewind are not double-counted */
   added: number;
 }
 
@@ -555,7 +556,9 @@ export async function syncHeaders(
   const sub = (await transport.request('blockchain.headers.subscribe', [])) as { height: number };
   const serverTip = sub.height;
 
-  let added = 0;
+  // `added` is NET tip growth: batches re-requested after a reorg rewind
+  // must not be double-counted
+  const startTip = chain.tipHeight;
   let rewinds = 0;
   let preFork: HeaderChainState | undefined;
   try {
@@ -600,7 +603,6 @@ export async function syncHeaders(
       if (useCp) {
         verifyCpBranch(chain, res, options.checkpoint!);
       }
-      added += raw.length / 80;
     }
   } catch (e) {
     if (preFork) chain.restoreState(preFork);
@@ -617,7 +619,7 @@ export async function syncHeaders(
       );
     }
   }
-  return { tipHeight: chain.tipHeight, added };
+  return { tipHeight: chain.tipHeight, added: Math.max(0, chain.tipHeight - startTip) };
 }
 
 function verifyCpBranch(

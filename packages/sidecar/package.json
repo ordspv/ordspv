@@ -1,6 +1,6 @@
 {
   "name": "@ordspv/proof-sidecar",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Serve SPEC-VERIFICATION proof bundles straight from a Bitcoin Core node (txindex): L2/L3 for ord: resolvers without hosting esplora.",
   "exports": {
@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@ordspv/core": "0.2.0",
-    "@ordspv/fetch": "0.2.0",
-    "@ordspv/gateway": "0.2.0"
+    "@ordspv/fetch": "0.2.1",
+    "@ordspv/gateway": "0.2.1"
   },
   "repository": {
     "type": "git",

@@ -81,6 +81,43 @@ describe('fail-closed header anchoring', () => {
     expect(report.sourcesAgreed).toBe(1);
   });
 
+  it('counts an agreeing attester whose tip endpoint fails (agreement is hash-only)', async () => {
+    // the attester answers hash-at-height but its tip endpoint 404s; without
+    // minConfirmations the tip must not be consulted at all, so the agreeing
+    // vote survives a flaky tip endpoint
+    const builder = esplora('https://builder.test', {});
+    const flakyTip = esplora('https://h1.test', {
+      [`https://h1.test/block-height/${HEIGHT}`]: HEADER.hash,
+    });
+    const trust = makeHeaderTrust({
+      esploras: [builder, flakyTip],
+      checkpoints: new Map(),
+      proofSource: 'https://builder.test',
+    });
+    const report = await trust(HEADER, HEIGHT);
+    expect(report.anchored).toBe(true);
+    expect(report.independentSources).toBe(2);
+    expect(report.sourcesAgreed).toBe(1);
+    expect(report.tipHeight).toBeUndefined(); // tip phase skipped entirely
+  });
+
+  it('still enforces minConfirmations through the separate tip phase', async () => {
+    const builder = esplora('https://builder.test', {});
+    // attester agrees; its tip is only 2 blocks above the proof height
+    const attester = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash, HEIGHT + 2));
+    const common = {
+      esploras: [builder, attester],
+      checkpoints: new Map<number, string>(),
+      proofSource: 'https://builder.test',
+    };
+    await expect(
+      makeHeaderTrust({ ...common, minConfirmations: 6 })(HEADER, HEIGHT),
+    ).rejects.toThrow(/only 3 confirmations/);
+    await expect(
+      makeHeaderTrust({ ...common, minConfirmations: 3 })(HEADER, HEIGHT),
+    ).resolves.toMatchObject({ anchored: true, tipHeight: HEIGHT + 2 });
+  });
+
   it('checkpoint hit anchors without any live source', async () => {
     const trust = makeHeaderTrust({ esploras: [] });
     const report = await trust(HEADER, HEIGHT); // 767430 is a compiled checkpoint

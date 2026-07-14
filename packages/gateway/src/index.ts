@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { isInscriptionId, parseInscriptionId } from '@ordspv/core';
 import {
   buildProofBundle,
+  DEFAULT_HTTP_TIMEOUT_MS,
   EsploraBackend,
   OrdResolver,
   readBodyCapped,
@@ -48,6 +49,8 @@ export interface GatewayOptions {
   cacheMaxBytes?: number;
   /** largest single cacheable body (default 8 MiB) */
   cacheMaxEntryBytes?: number;
+  /** deadline for each upstream proxy fetch in ms (default 20s) */
+  upstreamTimeoutMs?: number;
   /** sustained requests/second per IP (default 10; 0 disables) */
   rateLimitPerSec?: number;
   /** burst size per IP (default 40) */
@@ -70,6 +73,16 @@ const CONTENT_CSP = [
   "default-src *:*/content/ *:*/blockheight *:*/blockhash *:*/blockhash/ *:*/blocktime *:*/r/ 'unsafe-eval' 'unsafe-inline' data: blob:",
 ];
 const IMMUTABLE = 'public, max-age=1209600, immutable';
+
+/** upstream Cache-Control directives that veto insertion into the LRU */
+function upstreamForbidsCaching(cacheControl: string | null): boolean {
+  if (!cacheControl) return false;
+  return cacheControl
+    .toLowerCase()
+    .split(',')
+    .map((d) => d.trim())
+    .some((d) => d === 'no-store' || d === 'no-cache' || d === 'private' || /^max-age\s*=\s*0+$/.test(d));
+}
 
 function send(
   res: ServerResponse,
@@ -125,6 +138,7 @@ export function createGateway(options: GatewayOptions = {}): Server {
 
   const cacheMaxBytes = options.cacheMaxBytes ?? 256 * 1024 * 1024;
   const cacheMaxEntry = options.cacheMaxEntryBytes ?? 8 * 1024 * 1024;
+  const upstreamTimeoutMs = options.upstreamTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
   const cache = new ByteLru(cacheMaxBytes, cacheMaxEntry);
   const ratePerSec = options.rateLimitPerSec ?? 10;
   const limiter = new TokenBucketLimiter(ratePerSec, options.rateBurst ?? 40);
@@ -177,36 +191,66 @@ export function createGateway(options: GatewayOptions = {}): Server {
 
   async function proxy(req: IncomingMessage, res: ServerResponse, path: string, cacheKey: string): Promise<void> {
     const url = `${upstream}${path}`;
-    const upstreamRes = await fetchFn(url, {
-      headers: { 'accept-encoding': req.headers['accept-encoding'] ?? 'identity' },
-    });
-    const headers: Record<string, string> = {};
-    for (const name of ['content-type', 'content-encoding', 'cache-control']) {
-      const v = upstreamRes.headers.get(name);
-      if (v) headers[name] = v;
-    }
-    if (path.startsWith('/content/')) {
-      headers['cache-control'] = IMMUTABLE;
-    }
-    const extra: Record<string, string | string[]> = path.startsWith('/content/')
-      ? { 'content-security-policy': CONTENT_CSP }
-      : {};
-
-    const length = Number(upstreamRes.headers.get('content-length') ?? NaN);
-    const cacheable = upstreamRes.status === 200 && !Number.isNaN(length) && length <= cacheMaxEntry;
-    if (cacheable || !upstreamRes.body) {
-      // Content-Length may lie: the buffered read is capped regardless
-      const body = await readBodyCapped(upstreamRes, cacheMaxEntry, url);
-      if (upstreamRes.status === 200) {
-        if (cacheMaxBytes > 0) cache.set(cacheKey, { status: 200, headers: { ...headers, ...flat(extra) }, body });
-        return send(res, 200, body, { ...headers, ...extra, 'x-cache': 'MISS' });
+    // Only /content/<id> bytes are immutable on the proxied ord surface;
+    // /blockheight, /blocktime, /blockhash*, /r/*, /preview/* move with the
+    // chain tip and must never be served stale from the LRU.
+    const immutable = path.startsWith('/content/');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), upstreamTimeoutMs);
+    const onClientClose = () => controller.abort();
+    res.on('close', onClientClose);
+    try {
+      // fixed identity encoding: the cached body must be one canonical byte
+      // sequence, not whichever variant the first client happened to negotiate
+      const upstreamRes = await fetchFn(url, {
+        headers: { 'accept-encoding': 'identity' },
+        signal: controller.signal,
+      });
+      const headers: Record<string, string> = {};
+      for (const name of ['content-type', 'cache-control']) {
+        const v = upstreamRes.headers.get(name);
+        if (v) headers[name] = v;
       }
-      return send(res, upstreamRes.status, body, { ...headers, ...extra });
+      const forbidden = upstreamForbidsCaching(upstreamRes.headers.get('cache-control'));
+      if (immutable && !forbidden) {
+        headers['cache-control'] = IMMUTABLE;
+      }
+      const extra: Record<string, string | string[]> = immutable
+        ? { 'content-security-policy': CONTENT_CSP }
+        : {};
+
+      const mayCache = immutable && !forbidden && cacheMaxBytes > 0;
+      const length = Number(upstreamRes.headers.get('content-length') ?? NaN);
+      const bufferable = !Number.isNaN(length) && length <= cacheMaxEntry;
+      if ((mayCache && bufferable) || !upstreamRes.body) {
+        // Content-Length may lie: the buffered read is capped regardless
+        const body = await readBodyCapped(upstreamRes, cacheMaxEntry, url, controller);
+        if (upstreamRes.status === 200) {
+          if (mayCache) {
+            cache.set(cacheKey, { status: 200, headers: { ...headers, ...flat(extra) }, body });
+            return send(res, 200, body, { ...headers, ...extra, 'x-cache': 'MISS' });
+          }
+          return send(res, 200, body, { ...headers, ...extra, 'x-cache': 'BYPASS' });
+        }
+        return send(res, upstreamRes.status, body, { ...headers, ...extra });
+      }
+      // mutable, cache-vetoed, oversized, or unknown-length: stream through,
+      // uncached. The deadline covers connect + headers + buffered reads; a
+      // streamed body paces at the client and is torn down by the client-close
+      // abort instead.
+      clearTimeout(timer);
+      res.writeHead(upstreamRes.status, {
+        'access-control-allow-origin': '*',
+        ...headers,
+        ...extra,
+        ...(upstreamRes.status === 200 ? { 'x-cache': 'BYPASS' } : {}),
+      });
+      Readable.fromWeb(upstreamRes.body as import('node:stream/web').ReadableStream).pipe(res);
+      await new Promise<void>((resolve) => res.on('close', resolve));
+    } finally {
+      clearTimeout(timer);
+      res.off('close', onClientClose);
     }
-    // large or unknown-length body: stream through, uncached
-    res.writeHead(upstreamRes.status, { 'access-control-allow-origin': '*', ...headers, ...extra });
-    Readable.fromWeb(upstreamRes.body as import('node:stream/web').ReadableStream).pipe(res);
-    await new Promise<void>((resolve) => res.on('close', resolve));
   }
 
   function flat(h: Record<string, string | string[]>): Record<string, string> {
@@ -398,6 +442,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     verification: process.env.GATEWAY_LEVEL === 'L3' ? 'L3' : 'L2',
     cacheMaxBytes: process.env.CACHE_MAX_BYTES ? Number(process.env.CACHE_MAX_BYTES) : undefined,
     cacheMaxEntryBytes: process.env.CACHE_MAX_ENTRY_BYTES ? Number(process.env.CACHE_MAX_ENTRY_BYTES) : undefined,
+    upstreamTimeoutMs: process.env.UPSTREAM_TIMEOUT_MS ? Number(process.env.UPSTREAM_TIMEOUT_MS) : undefined,
     rateLimitPerSec: process.env.RATE_LIMIT ? Number(process.env.RATE_LIMIT) : undefined,
     rateBurst: process.env.RATE_BURST ? Number(process.env.RATE_BURST) : undefined,
     // TRUST_PROXY = number of trusted proxy hops (1 for a single LB/CDN)

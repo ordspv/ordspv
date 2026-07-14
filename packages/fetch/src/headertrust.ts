@@ -123,16 +123,15 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
     const builderCredit = options.proofSource !== undefined ? 1 : 0;
     const required = options.minAgreement ?? 2;
 
-    const results = await Promise.allSettled(
-      attesters.map(async (e) => ({
-        hash: (await e.getBlockHashAtHeight(height)).trim().toLowerCase(),
-        tip: Number((await e.getTipHeight()).trim()),
-      })),
+    // Phase (a): hash-at-height only. Agreement must not depend on any other
+    // endpoint of the same attester — a flaky tip lookup would otherwise
+    // discard a perfectly good agreeing vote.
+    const hashResults = await Promise.allSettled(
+      attesters.map(async (e) => (await e.getBlockHashAtHeight(height)).trim().toLowerCase()),
     );
-    const successes = results.filter(
-      (r): r is PromiseFulfilledResult<{ hash: string; tip: number }> => r.status === 'fulfilled',
+    const agreed = hashResults.filter(
+      (r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && r.value === header.hash,
     );
-    const agreed = successes.filter((r) => r.value.hash === header.hash);
     const independentSources = agreed.length + builderCredit;
     if (independentSources < required) {
       throw new HeaderTrustError(
@@ -142,12 +141,23 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
           `or a headerSyncTrust anchor.`,
       );
     }
-    const tips = successes.map((r) => r.value.tip).sort((a, b) => a - b);
-    const tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : undefined;
-    if (options.minConfirmations && tipHeight !== undefined) {
-      const confs = tipHeight - height + 1;
-      if (confs < options.minConfirmations) {
-        throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
+    // Phase (b): tip heights, queried only when a confirmation depth is
+    // actually enforced.
+    let tipHeight: number | undefined;
+    if (options.minConfirmations) {
+      const tipResults = await Promise.allSettled(
+        attesters.map(async (e) => Number((await e.getTipHeight()).trim())),
+      );
+      const tips = tipResults
+        .filter((r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled')
+        .map((r) => r.value)
+        .sort((a, b) => a - b);
+      tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : undefined;
+      if (tipHeight !== undefined) {
+        const confs = tipHeight - height + 1;
+        if (confs < options.minConfirmations) {
+          throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
+        }
       }
     }
     return {

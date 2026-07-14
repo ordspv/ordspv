@@ -122,18 +122,118 @@ describe('gateway ops integration', () => {
   });
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  it('caches immutable 200s: MISS then HIT, and /metrics reflects it', async () => {
-    const first = await fetch(`${base}/r/blockheight`);
+  it('caches immutable /content 200s: MISS then HIT, and /metrics reflects it', async () => {
+    const first = await fetch(`${base}/content/abc`);
     expect(first.headers.get('x-cache')).toBe('MISS');
-    expect(await first.text()).toBe('767430');
-    const second = await fetch(`${base}/r/blockheight`);
+    expect(await first.text()).toBe(upstreamBody);
+    const second = await fetch(`${base}/content/abc`);
     expect(second.headers.get('x-cache')).toBe('HIT');
-    expect(await second.text()).toBe('767430');
+    expect(await second.text()).toBe(upstreamBody);
 
     const metrics = await (await fetch(`${base}/metrics`)).text();
     expect(metrics).toContain('gateway_cache_hits_total 1');
     expect(metrics).toContain('# TYPE gateway_http_requests_total counter');
-    expect(metrics).toMatch(/gateway_http_request_duration_seconds_count\{route="\/r\/\*"\} \d+/);
+    expect(metrics).toMatch(/gateway_http_request_duration_seconds_count\{route="\/content\/:id"\} \d+/);
+  });
+
+  it('never caches chain-tip endpoints: an upstream change is reflected, not masked by a HIT', async () => {
+    let height = 767430;
+    const mutating: FetchFn = async () =>
+      new Response(String(height++), {
+        headers: { 'content-type': 'text/plain', 'content-length': '6' },
+      });
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: mutating,
+      rateLimitPerSec: 0,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    for (const path of ['/r/blockheight', '/blockheight']) {
+      const before = height;
+      const first = await fetch(`${b}${path}`);
+      expect(first.headers.get('x-cache')).toBe('BYPASS');
+      expect(await first.text()).toBe(String(before));
+      const second = await fetch(`${b}${path}`);
+      expect(second.headers.get('x-cache')).toBe('BYPASS');
+      expect(await second.text()).toBe(String(before + 1));
+    }
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('honors upstream no-store on /content: no LRU insertion', async () => {
+    let calls = 0;
+    const noStore: FetchFn = async () =>
+      new Response(`v${++calls}`, {
+        headers: { 'content-type': 'text/plain', 'content-length': '2', 'cache-control': 'no-store' },
+      });
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: noStore,
+      rateLimitPerSec: 0,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const first = await fetch(`${b}/content/nostore`);
+    expect(first.headers.get('x-cache')).toBe('BYPASS');
+    expect(await first.text()).toBe('v1');
+    const second = await fetch(`${b}/content/nostore`);
+    expect(second.headers.get('x-cache')).toBe('BYPASS');
+    expect(await second.text()).toBe('v2');
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('rejects a non-resolving upstream within the configured deadline (502)', async () => {
+    const hung: FetchFn = (_url, init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('upstream aborted')), {
+          once: true,
+        });
+      });
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: hung,
+      upstreamTimeoutMs: 120,
+      rateLimitPerSec: 0,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const started = Date.now();
+    const res = await fetch(`${b}/r/blockheight`);
+    expect(res.status).toBe(502);
+    expect(Date.now() - started).toBeLessThan(5000);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('requests identity encoding upstream; gzip- and identity-negotiating clients read identical bytes', async () => {
+    const seen: string[] = [];
+    const echo: FetchFn = async (_url, init) => {
+      seen.push(new Headers(init?.headers).get('accept-encoding') ?? '(none)');
+      return new Response('canonical bytes', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' },
+      });
+    };
+    const server = createGateway({
+      upstream: 'https://up.test',
+      esplora: ['https://e.test'],
+      fetchFn: echo,
+      rateLimitPerSec: 0,
+    });
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const gz = await fetch(`${b}/content/enc`, { headers: { 'accept-encoding': 'gzip' } });
+    const id = await fetch(`${b}/content/enc`, { headers: { 'accept-encoding': 'identity' } });
+    expect(await gz.text()).toBe('canonical bytes');
+    expect(await id.text()).toBe('canonical bytes');
+    expect(gz.headers.get('content-encoding')).toBeNull();
+    expect(id.headers.get('content-encoding')).toBeNull();
+    // one upstream call (second was a HIT), and it negotiated identity —
+    // never the client's own accept-encoding
+    expect(seen).toEqual(['identity']);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
   it('rate limits per IP with retry-after', async () => {
@@ -159,7 +259,7 @@ describe('gateway ops integration', () => {
     await new Promise<void>((resolve) => limited.close(() => resolve()));
   });
 
-  it('streams oversized bodies through uncached', async () => {
+  it('streams oversized bodies through uncached, even on /content', async () => {
     const big = 'x'.repeat(64);
     const bigStub: FetchFn = async () =>
       new Response(big, {
@@ -174,11 +274,11 @@ describe('gateway ops integration', () => {
     });
     await new Promise<void>((resolve) => tiny.listen(0, () => resolve()));
     const tbase = `http://127.0.0.1:${(tiny.address() as AddressInfo).port}`;
-    const res = await fetch(`${tbase}/r/blockheight`);
+    const res = await fetch(`${tbase}/content/big`);
     expect(await res.text()).toBe(big);
-    expect(res.headers.get('x-cache')).toBeNull(); // streamed, not cached
-    const again = await fetch(`${tbase}/r/blockheight`);
-    expect(again.headers.get('x-cache')).toBeNull();
+    expect(res.headers.get('x-cache')).toBe('BYPASS'); // streamed, not cached
+    const again = await fetch(`${tbase}/content/big`);
+    expect(again.headers.get('x-cache')).toBe('BYPASS'); // still no HIT
     await new Promise<void>((resolve) => tiny.close(() => resolve()));
   });
 });
@@ -286,10 +386,10 @@ describe('adversarial: junk-query cache-buster', () => {
     await new Promise<void>((resolve) => server.listen(0, () => resolve()));
     const b = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-    const miss = await fetch(`${b}/r/blockheight?x=1`);
+    const miss = await fetch(`${b}/content/abc?x=1`);
     expect(miss.headers.get('x-cache')).toBe('MISS');
     for (const q of ['x=2', 'x=3', 'foo=bar&x=9', '']) {
-      const res = await fetch(`${b}/r/blockheight?${q}`);
+      const res = await fetch(`${b}/content/abc?${q}`);
       expect(res.headers.get('x-cache')).toBe('HIT');
       expect(await res.text()).toBe('767430');
     }

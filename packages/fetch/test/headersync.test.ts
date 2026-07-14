@@ -268,6 +268,23 @@ describe('syncHeaders loop (fake transport, regtest params)', () => {
     expect(chain.hashAt(50)).toBe(parseHeader(alt50).hash);
   });
 
+  it('reports net tip growth across reorg rewinds, not the sum of re-requested batches', async () => {
+    const chain = await HeaderChain.open({ base: BASE, params: TEST_PARAMS, checkpoints: new Map() });
+    const server = new FakeElectrum(CHAIN.slice(0, 50));
+    await syncHeaders(chain, server);
+    expect(chain.tipHeight).toBe(49);
+
+    // reorg the last block and extend by one: rewind 1, append 2, net +1
+    const prev48 = parseHeader(CHAIN[48]).hashLE;
+    const alt49 = mineHeader(prev48, 1_700_000_000 + 49 * 600 + 1, 9149);
+    const alt50 = mineHeader(parseHeader(alt49).hashLE, 1_700_000_000 + 50 * 600 + 1, 9150);
+    server.swapTail(49, [alt49, alt50]);
+
+    const result = await syncHeaders(chain, server);
+    expect(result.tipHeight).toBe(50);
+    expect(result.added).toBe(1); // the old batch-sum counter reported 2
+  });
+
   it('verifies Electrum cp_height branches against a pinned root, rejecting forgeries', async () => {
     const hashes = CHAIN.map((raw) => parseHeader(raw).hashLE);
     const CP = 55;

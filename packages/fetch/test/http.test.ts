@@ -29,6 +29,38 @@ describe('fetchCapped: deadline', () => {
   });
 });
 
+describe('fetchCapped: cap violations are not mislabeled as timeouts', () => {
+  it('a declared oversize content-length throws the descriptive cap error', async () => {
+    const big: FetchFn = async () =>
+      new Response('x'.repeat(100), { headers: { 'content-length': '100' } });
+    const err = await fetchCapped('https://big.test', {
+      fetchFn: big,
+      timeoutMs: 5_000,
+      maxBytes: 50,
+    }).then(() => undefined, (e: Error) => e);
+    expect(err?.message).toMatch(/exceeds cap/);
+    expect(err?.message).not.toMatch(/timed out/);
+  });
+
+  it('a body overshooting the cap mid-stream throws the descriptive cap error', async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(40));
+        controller.enqueue(new Uint8Array(40));
+        controller.close();
+      },
+    });
+    const noLength: FetchFn = async () => new Response(stream);
+    const err = await fetchCapped('https://stream.test', {
+      fetchFn: noLength,
+      timeoutMs: 5_000,
+      maxBytes: 50,
+    }).then(() => undefined, (e: Error) => e);
+    expect(err?.message).toMatch(/exceeded cap/);
+    expect(err?.message).not.toMatch(/timed out/);
+  });
+});
+
 describe('readBodyCapped: size bound', () => {
   it('rejects when Content-Length already exceeds the cap', async () => {
     const res = new Response('x'.repeat(100), { headers: { 'content-length': '100' } });

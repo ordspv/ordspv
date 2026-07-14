@@ -36,12 +36,21 @@ export async function fetchCapped(url: string, options: FetchCappedOptions): Pro
   const timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
   const fetchFn = options.fetchFn ?? ((u: string, i?: RequestInit) => fetch(u, i));
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     const deadline = new Promise<never>((_, reject) => {
       controller.signal.addEventListener(
         'abort',
-        () => reject(new Error(`${url}: timed out after ${timeoutMs}ms`)),
+        () => {
+          // the controller is also aborted on byte-cap violations; only the
+          // deadline timer's own abort may be reported as a timeout — any
+          // other abort lets `work` surface its descriptive error instead
+          if (timedOut) reject(new Error(`${url}: timed out after ${timeoutMs}ms`));
+        },
         { once: true },
       );
     });
