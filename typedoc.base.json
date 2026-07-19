@@ -1,0 +1,10 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "tsconfig": "tools/docs/tsconfig.json",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "exclude": ["**/test/**", "**/*.test.ts", "**/*.fuzz.test.ts"],
+  "gitRevision": "master",
+  "sourceLinkTemplate": "https://github.com/ordspv/ordspv/blob/{gitRevision}/{path}#L{line}"
+}

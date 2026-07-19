@@ -1,0 +1,17 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "ordspv",
+  "entryPointStrategy": "packages",
+  "entryPoints": ["packages/core", "packages/fetch"],
+  "out": "build/api",
+  "readme": "none",
+  "navigationLinks": {
+    "Docs home": "../",
+    "GitHub": "https://github.com/ordspv/ordspv"
+  },
+  "validation": {
+    "invalidLink": true,
+    "notExported": true,
+    "notDocumented": false
+  }
+}

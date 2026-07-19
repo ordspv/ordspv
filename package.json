@@ -11,12 +11,14 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "build": "tsx scripts/build.ts",
-    "build:publish-dry-run": "tsx scripts/build.ts --publish-dry-run"
+    "build:publish-dry-run": "tsx scripts/build.ts --publish-dry-run",
+    "docs": "tools/docs/node_modules/.bin/typedoc"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "docs-env": "file:tools/docs",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
