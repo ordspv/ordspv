@@ -55,7 +55,7 @@ inscriber-level caveat is characterized precisely, tested, and surfaced as assur
 
 ```bash
 npm install
-npm test                                  # 246 tests, incl. real mainnet vectors, offline
+npm test                                  # 261 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json
@@ -77,13 +77,18 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 
 - [examples/verify-inscription-0.html](examples/verify-inscription-0.html): open
   the file. Your browser fetches inscription 0, verifies every byte against
-  Bitcoin PoW client-side, and renders it. No server, no build step.
+  Bitcoin PoW client-side, and renders it. No server, no build step. Also
+  [hosted on the docs site](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html).
 - [extension/](extension/README.md): MV3 extension with gateway-URL interception,
   `ord:` links, and an in-browser verifying viewer. `chrome://extensions`, Load
   unpacked, `extension/dist-unpacked/`.
 
 ## Documents
 
+- [Docs site](https://ordspv.github.io/ordspv/): landing page with the live
+  demo and the API reference
+- [API reference](https://ordspv.github.io/ordspv/api/): generated from source
+  for `@ordspv/core` and `@ordspv/fetch`
 - [docs/RESEARCH.md](docs/RESEARCH.md): cited synthesis of protocol facts (verified
   against ord master), verification analysis, ecosystem survey, design decisions
 - [docs/spec/SPEC-URI.md](docs/spec/SPEC-URI.md): the `ord:` scheme profile
