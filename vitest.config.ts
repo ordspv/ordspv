@@ -10,15 +10,15 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'extension/src/**/*.ts'],
       reporter: ['text', 'text-summary'],
-      // Ratchet floors: set just under the measured baseline (2026-07-19:
-      // 75.03 / 65.88 / 80.11 / 78.19 across all src incl. the untested CLI
-      // and extension UI scripts). Raise deliberately as coverage grows;
-      // never lower to admit a regression.
+      // Ratchet floors: set just under the measured baseline (2026-07-19
+      // after the second fixture wave: 75.24 / 66.17 / 80.11 / 78.23 across
+      // all src incl. the untested CLI and extension UI scripts). Raise
+      // deliberately as coverage grows; never lower to admit a regression.
       thresholds: {
-        statements: 74,
-        branches: 65,
-        functions: 79,
-        lines: 77,
+        statements: 75,
+        branches: 65.9,
+        functions: 79.9,
+        lines: 78,
       },
     },
   },
