@@ -92,6 +92,9 @@ async function vendorExtended(ids: string[]): Promise<void> {
         length: result.body.length,
         viaDelegate: result.viaDelegate,
         decoded: result.decoded,
+        // for tag-9 encoded bodies, pin the decompressed bytes too (result.body
+        // is the decoded content when decoded=true)
+        sha256Decoded: result.decoded ? bytesToHex(sha256(result.body)) : undefined,
       };
     } catch (e) {
       served = { error: (e as { code?: string }).code ?? (e as Error).message };
@@ -106,6 +109,7 @@ async function vendorExtended(ids: string[]): Promise<void> {
       pointer: insc.pointer?.toString(),
       metaprotocol: insc.metaprotocol,
       metadataHex: insc.metadata ? bytesToHex(insc.metadata) : undefined,
+      input: insc.input,
       bodyLength: insc.body?.length,
       bodySha256: insc.body ? bytesToHex(sha256(insc.body)) : undefined,
       flags: insc.flags,
