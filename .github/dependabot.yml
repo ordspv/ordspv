@@ -15,6 +15,20 @@ updates:
         patterns:
           - "*"
 
+  # tools/docs is its own manifest (typedoc + its pinned-line typescript);
+  # the root entry does not see path-dependency manifests.
+  - package-ecosystem: npm
+    directory: /tools/docs
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      docs-tooling:
+        patterns:
+          - "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
