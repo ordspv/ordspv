@@ -1,0 +1,47 @@
+name: fuzz
+
+# Weekly heavy fuzz run. The seeded envelope/proof-bundle suites run on every
+# push at their fast default budget; this job re-runs just them with a much
+# larger iteration budget and a fresh per-run seed (echoed everywhere), so
+# each week walks a new — still fully reproducible — corpus. Any
+# counterexample fails the job.
+
+on:
+  schedule:
+    - cron: '41 6 * * 1' # Mondays 06:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FUZZ_ITERS: '80000' # 200x the inline-CI baseline (~1 min locally, seeded)
+  FUZZ_SEED: ${{ github.run_id }}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: envelope + proof-bundle fuzz (heavy budget)
+        shell: bash
+        run: |
+          echo "FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED"
+          npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts
+      - name: job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "Heavy fuzz budget: \`FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED\`"
+            echo
+            echo "A failure here is a seeded, reproducible counterexample. Reproduce with:"
+            echo
+            echo "    FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts"
+          } >> "$GITHUB_STEP_SUMMARY"

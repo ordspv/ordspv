@@ -15,9 +15,11 @@ import {
 } from '../src/index.js';
 
 /**
- * Property fuzz for the envelope parser. Everything is driven by a fixed-seed
- * PRNG, so the corpus is fully reproducible; bump SEED variants deliberately,
- * never randomly. Properties:
+ * Property fuzz for the envelope parser. Everything is driven by a seeded
+ * PRNG, so the corpus is fully reproducible; the in-file SEED constant is
+ * bumped deliberately, never randomly (the weekly fuzz workflow explores
+ * fresh corpora via the FUZZ_SEED env knob below, always printing the seed
+ * it used). Properties:
  *
  *   1. parseEnvelopesFromScript is TOTAL over arbitrary bytes (never throws)
  *      and deterministic.
@@ -34,7 +36,23 @@ import {
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures');
 
-const SEED = 0xd15ea5e;
+/**
+ * Budget/seed knobs for the weekly heavy-fuzz workflow (.github/workflows/fuzz.yml):
+ *
+ *   FUZZ_ITERS  scales every loop below proportionally (default 400, the fast
+ *               inline-CI baseline; values below the baseline clamp to it —
+ *               the tripwire assertions assume at least baseline coverage).
+ *   FUZZ_SEED   uint32 selecting a different, equally reproducible corpus.
+ *
+ * Both are echoed in the suite name, so a counterexample always names the
+ * exact configuration that produced it. With neither set, this file runs the
+ * same fixed-seed 400-iteration suite as always.
+ */
+const BASE_ITERS = 400;
+const FUZZ_ITERS = Math.max(BASE_ITERS, Number(process.env.FUZZ_ITERS) || BASE_ITERS);
+const iters = (n: number) => Math.round((n * FUZZ_ITERS) / BASE_ITERS);
+
+const SEED = process.env.FUZZ_SEED ? Number(process.env.FUZZ_SEED) >>> 0 : 0xd15ea5e;
 
 /** mulberry32, a tiny deterministic PRNG */
 function mulberry32(seed: number): () => number {
@@ -180,17 +198,17 @@ function checkScriptProperties(script: Uint8Array): void {
   }
 }
 
-describe('envelope parser fuzz (seeded, reproducible)', () => {
+describe(`envelope parser fuzz (seed=0x${SEED.toString(16)}, iters=${FUZZ_ITERS})`, () => {
   it('is total and deterministic on random byte scripts', () => {
     const rng = mulberry32(SEED);
     checkScriptProperties(new Uint8Array(0));
-    for (let i = 0; i < 400; i++) checkScriptProperties(randBytes(rng, 512));
+    for (let i = 0; i < iters(400); i++) checkScriptProperties(randBytes(rng, 512));
   });
 
   it('is total and deterministic on envelope-token soup (and actually finds envelopes)', () => {
     const rng = mulberry32(SEED ^ 0x1);
     let found = 0;
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < iters(400); i++) {
       const script = tokenSoup(rng);
       checkScriptProperties(script);
       found += parseEnvelopesFromScript(script).length;
@@ -205,13 +223,13 @@ describe('envelope parser fuzz (seeded, reproducible)', () => {
     expect(scripts.length).toBeGreaterThanOrEqual(8);
     for (const script of scripts) {
       checkScriptProperties(script); // unmutated sanity
-      for (let i = 0; i < 40; i++) checkScriptProperties(mutateBytes(script, rng));
+      for (let i = 0; i < iters(40); i++) checkScriptProperties(mutateBytes(script, rng));
     }
   });
 
   it('interpretEnvelope is total on random payloads and honors the body rule', () => {
     const rng = mulberry32(SEED ^ 0x3);
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < iters(600); i++) {
       const payload: Uint8Array[] = [];
       const n = randInt(rng, 13);
       for (let j = 0; j < n; j++) {
@@ -269,7 +287,7 @@ describe('envelope parser fuzz (seeded, reproducible)', () => {
 
     let parsedOk = 0;
     for (const raw of reveals) {
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < iters(30); i++) {
         const mutated = i === 0 ? raw : mutateBytes(raw, rng);
         let tx;
         try {

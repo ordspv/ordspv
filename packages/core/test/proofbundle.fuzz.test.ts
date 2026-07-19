@@ -41,7 +41,18 @@ import {
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures');
 
-const SEED = 0xb0bb1e;
+/**
+ * FUZZ_ITERS / FUZZ_SEED: the same contract as envelope.fuzz.test.ts — the
+ * budget is normalized against the shared 400-iteration baseline and scales
+ * this file's per-mutator variants and splice loops proportionally, so the
+ * one knob drives the whole heavy-fuzz run (.github/workflows/fuzz.yml).
+ * Unset, this file runs its usual fixed-seed baseline suite.
+ */
+const BASE_ITERS = 400;
+const FUZZ_ITERS = Math.max(BASE_ITERS, Number(process.env.FUZZ_ITERS) || BASE_ITERS);
+const iters = (n: number) => Math.round((n * FUZZ_ITERS) / BASE_ITERS);
+
+const SEED = process.env.FUZZ_SEED ? Number(process.env.FUZZ_SEED) >>> 0 : 0xb0bb1e;
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -232,7 +243,7 @@ const MUTATORS: Mutator[] = [
   },
 ];
 
-describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () => {
+describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, iters=${FUZZ_ITERS})`, () => {
   const synthetic = syntheticL3();
   const baselines: ProofBundleJson[] = [insc0Bundle(), ...extendedBundles(), synthetic.bundle];
 
@@ -248,7 +259,7 @@ describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () =>
     for (const baseline of baselines) {
       const expected = attestation(verifyProofBundle(baseline));
       for (const mutator of MUTATORS) {
-        for (let variant = 0; variant < 8; variant++) {
+        for (let variant = 0; variant < iters(8); variant++) {
           const clone = structuredClone(baseline);
           const desc = mutator(clone, rng);
           if (!desc) continue;
@@ -272,7 +283,7 @@ describe('verifyProofBundle malformed-bundle fuzz (seeded, reproducible)', () =>
   it('cross-bundle splices are rejected', () => {
     const rng = mulberry32(SEED ^ 0x5);
     const l2s = baselines.filter((b) => b.level === 'L2');
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < iters(20); i++) {
       const a = pick(rng, l2s);
       const b = pick(rng, l2s);
       if (a.inscriptionId === b.inscriptionId) continue;
