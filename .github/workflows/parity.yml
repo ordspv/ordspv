@@ -1,0 +1,54 @@
+name: parity
+
+# Weekly envelope-parity sweep against LIVE public ord + esplora instances.
+# Deliberately separate from the offline push/PR CI so external network
+# weather never reddens ordinary commits: in --ci mode the sweep retries
+# transient fetch failures with backoff and skips (loudly) what stays
+# unreachable. A red run therefore means one thing: a genuine parity
+# MISMATCH, i.e. the parser has drifted from live ord behavior — a potential
+# P0 (DEVELOPMENT.md invariant 2).
+
+on:
+  schedule:
+    - cron: '23 5 * * 1' # Mondays 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: parity sweep (live ord + esplora)
+        id: sweep
+        shell: bash
+        run: npx tsx scripts/parity-sweep.ts --ci 2>&1 | tee sweep.log
+      - name: job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            if [ "${{ steps.sweep.outcome }}" = "failure" ]; then
+              echo "## Parity sweep FAILED — treat as potential P0"
+              echo
+              echo "A mismatch against live ord means the envelope parser has drifted from"
+              echo "ord behavior (DEVELOPMENT.md invariant 2), or ord itself changed."
+              echo "Triage before shipping anything else; reproduce locally with:"
+              echo
+              echo '    npx tsx scripts/parity-sweep.ts'
+            else
+              echo "## Parity sweep passed"
+            fi
+            echo
+            echo '```'
+            grep -E 'parity sweep:|MISMATCH|SKIPPED|ERROR|PASSED|FAILED' sweep.log | tail -n 60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -20,7 +20,16 @@
  * Usage:
  *   npx tsx scripts/parity-sweep.ts                 # curated default corpus
  *   npx tsx scripts/parity-sweep.ts <id> [<id>…]    # specific inscriptions
+ *   npx tsx scripts/parity-sweep.ts --ci            # scheduled-CI mode, see below
  *   ORD_BASE=https://my-ord:80 npx tsx scripts/parity-sweep.ts
+ *
+ * --ci separates NETWORK weather from PARITY signal, for unattended runs:
+ * fetches are retried with backoff, each attempt carries a deadline, and an
+ * endpoint that stays unreachable or keeps answering with a non-definitive
+ * status (429/5xx/…) SKIPS that sweep — loudly, but without failing the run.
+ * Only definitive answers (HTTP 200/404, the statuses the checks interpret)
+ * feed the checks, so a non-zero exit still means exactly one thing: a real
+ * parity mismatch, P0.
  */
 import {
   bytesToHex,
@@ -79,7 +88,41 @@ const esploras = [
 ];
 const ord = new OrdBackend(process.env.ORD_BASE ?? 'https://ordinals.com');
 
+const CI = process.argv.includes('--ci');
+/** per-attempt fetch budget in CI (plain fetch has no default deadline) */
+const CI_ATTEMPT_TIMEOUT_MS = 30_000;
+const CI_ATTEMPTS = 3;
+const CI_BACKOFF_MS = [2_000, 6_000];
+
+/** endpoint stayed unreachable / non-definitive after CI retries; not a parity signal */
+class TransientFetchError extends Error {}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * CI retry driver: `attempt` must either return a definitive result or throw.
+ * Transient throws are retried with backoff; exhaustion throws
+ * TransientFetchError so the caller can skip instead of counting a mismatch.
+ * Outside --ci this is a single pass-through attempt (behavior unchanged).
+ */
+async function withRetries<T>(what: string, attempt: () => Promise<T>): Promise<T> {
+  if (!CI) return attempt();
+  const errors: string[] = [];
+  for (let i = 0; i < CI_ATTEMPTS; i++) {
+    if (i > 0) await sleep(CI_BACKOFF_MS[i - 1] ?? CI_BACKOFF_MS.at(-1)!);
+    try {
+      return await attempt();
+    } catch (e) {
+      errors.push((e as Error).message);
+    }
+  }
+  throw new TransientFetchError(
+    `${what}: still failing after ${CI_ATTEMPTS} attempts (${errors.join(' | ')})`,
+  );
+}
+
 let failures = 0;
+const skips: string[] = [];
 
 function check(ok: boolean, what: string, detail = ''): void {
   if (!ok) failures++;
@@ -91,23 +134,34 @@ function note(what: string): void {
 }
 
 async function fetchRevealHex(txid: string): Promise<string> {
-  const errors: string[] = [];
-  for (const e of esploras) {
-    try {
-      return (await e.getTxHex(txid)).trim();
-    } catch (err) {
-      errors.push((err as Error).message);
+  // the esplora pool is itself a failover chain; in CI the whole chain is retried
+  return withRetries(`esplora tx ${txid}`, async () => {
+    const errors: string[] = [];
+    for (const e of esploras) {
+      try {
+        return (await e.getTxHex(txid)).trim();
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
     }
-  }
-  throw new Error(`all esploras failed for ${txid}: ${errors.join('; ')}`);
+    throw new Error(`all esploras failed for ${txid}: ${errors.join('; ')}`);
+  });
 }
 
 /** raw fetch against the ord instance, returning status + bytes + headers */
 async function ordRaw(path: string): Promise<{ status: number; bytes: Uint8Array; headers: Headers }> {
-  const res = await fetch(`${ord.baseUrl}${path}`, {
-    headers: { 'accept-encoding': 'br, gzip, identity' },
+  return withRetries(`ord ${path}`, async () => {
+    const res = await fetch(`${ord.baseUrl}${path}`, {
+      headers: { 'accept-encoding': 'br, gzip, identity' },
+      ...(CI ? { signal: AbortSignal.timeout(CI_ATTEMPT_TIMEOUT_MS) } : {}),
+    });
+    // the checks interpret exactly 200 and 404; anything else (429, 5xx,
+    // gateway errors) is server weather, not an envelope-parity statement
+    if (CI && res.status !== 200 && res.status !== 404) {
+      throw new Error(`non-definitive HTTP ${res.status}`);
+    }
+    return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
   });
-  return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
 }
 
 const parsedTxCache = new Map<string, Inscription[]>();
@@ -255,28 +309,46 @@ async function sweepCount(txid: string): Promise<void> {
   );
 }
 
-const args = process.argv.slice(2);
+/** in CI a transient exhaustion skips the sweep; anything else is a failure */
+function handleSweepError(what: string, e: unknown): void {
+  if (e instanceof TransientFetchError) {
+    skips.push(what);
+    console.log(`    ⚠ SKIPPED ${what}: ${(e as Error).message}`);
+    return;
+  }
+  failures++;
+  console.log(`    ✗ ERROR ${what}: ${(e as Error).message}`);
+}
+
+const args = process.argv.slice(2).filter((a) => a !== '--ci');
 const ids: [string, string][] = args.length
   ? args.map((a) => [a, 'cli arg'] as [string, string])
   : DEFAULT_IDS;
 
-console.log(`parity sweep: ${ids.length} inscription(s) against ${ord.baseUrl}`);
+console.log(
+  `parity sweep: ${ids.length} inscription(s) against ${ord.baseUrl}` +
+    (CI ? ' (--ci: retrying transient fetch failures)' : ''),
+);
 for (const [id, label] of ids) {
   try {
     await sweep(id, label);
   } catch (e) {
-    failures++;
-    console.log(`    ✗ ERROR sweeping ${id}: ${(e as Error).message}`);
+    handleSweepError(`sweeping ${id}`, e);
   }
 }
 for (const txid of new Set(ids.map(([id]) => id.slice(0, 64)))) {
   try {
     await sweepCount(txid);
   } catch (e) {
-    failures++;
-    console.log(`    ✗ ERROR count-checking ${txid}: ${(e as Error).message}`);
+    handleSweepError(`count-checking ${txid}`, e);
   }
 }
 
+if (skips.length > 0) {
+  console.log(
+    `\n${skips.length} sweep(s) SKIPPED on persistent transient fetch failures (network weather, not parity):`,
+  );
+  for (const s of skips) console.log(`    ⚠ ${s}`);
+}
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED: parity bug, treat as P0`}`);
 process.exitCode = failures === 0 ? 0 : 1;
