@@ -1,0 +1,28 @@
+# Weekly dependency maintenance. npm updates arrive as one grouped PR to keep
+# review cheap; GitHub Actions pins get the same treatment. CI (offline tests,
+# typecheck, build, coverage gate) is the merge arbiter.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      actions:
+        patterns:
+          - "*"
