@@ -4,8 +4,8 @@
 #
 # Serving this build requires the one-time repo setting
 # Settings -> Pages -> Source = "GitHub Actions". Until that switch, the
-# legacy branch build keeps serving the repo root and this workflow's deploy
-# step fails without affecting the live site.
+# legacy branch build keeps serving the repo root: this workflow's
+# deployments are accepted (build and deploy both green) but not served.
 name: pages
 
 on:
