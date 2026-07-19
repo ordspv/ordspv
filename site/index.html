@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Trustless resolution of Bitcoin ordinals inscription content: ord: URIs resolve to bytes verified against Bitcoin proof of work, with no trusted ord server." />
+<title>ordspv — trustless ordinals inscription resolution</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #ffffff; --dim: #666; --line: #e2e2e2;
+    --accent: #f7931a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --bg: #131313; --dim: #9a9a9a; --line: #2c2c2c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 44rem; padding: 2.5rem 1.25rem 4rem;
+         font: 16px/1.55 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.55rem; margin: 0 0 .4rem; }
+  h1 b { color: var(--accent); }
+  h2 { font-size: 1.05rem; margin: 2.2rem 0 .6rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.6rem; }
+  p { margin: .8rem 0; }
+  dl.levels { margin: 1rem 0 0; }
+  dl.levels dt { font-family: ui-monospace, monospace; font-weight: 700; color: var(--accent); }
+  dl.levels dd { margin: .15rem 0 .9rem; color: var(--fg); }
+  dl.levels dd .how { color: var(--dim); }
+  ul.links { list-style: none; padding: 0; margin: .6rem 0 0; }
+  ul.links li { padding: .6rem .2rem; border-bottom: 1px solid var(--line); }
+  ul.links .title { font-weight: 600; }
+  ul.links .detail { color: var(--dim); font-size: .88rem; }
+  .mono { font-family: ui-monospace, monospace; font-size: .9em; }
+  footer { margin-top: 2.5rem; font-size: .8rem; color: var(--dim);
+           border-top: 1px solid var(--line); padding-top: .9rem; }
+  a { color: inherit; }
+</style>
+<body>
+  <h1>ord<b>spv</b></h1>
+  <p class="lede">Trustless resolution of Bitcoin ordinals inscription content.</p>
+
+  <p>
+    An <span class="mono">ord:&lt;id&gt;</span> URI resolves to bytes verified
+    against Bitcoin proof of work, with no trusted ord server — the way
+    <span class="mono">ipfs://&lt;cid&gt;</span> works, except the check is an
+    SPV proof. Inscription content lives in the reveal transaction's witness,
+    which the txid does not commit to, so "the txid matched" proves nothing
+    about the bytes. This project supplies the missing plumbing: a URI scheme
+    profile, a verification protocol that binds inscription bytes to Bitcoin
+    proof of work, a verified-fetch client library, and a reference gateway.
+  </p>
+
+  <h2>Verification levels</h2>
+  <dl class="levels">
+    <dt>L0</dt>
+    <dd>Trusted gateway: a plain fetch from a server you chose to believe —
+        availability only, nothing verified.</dd>
+    <dt>L1</dt>
+    <dd>Integrity pin: a <span class="mono">#integrity=</span> sha256 over the
+        stored body bytes, checkable with zero Bitcoin infrastructure.</dd>
+    <dt>L2</dt>
+    <dd>Tapscript commitment <span class="how">(BIP-341)</span>: the reveal
+        input named by the txid points at a commit output whose taproot key
+        must commit to the served envelope script — about 0.9&nbsp;KB of
+        proof, available from any esplora instance.</dd>
+    <dt>L3</dt>
+    <dd>Witness commitment <span class="how">(BIP-141)</span>: the coinbase
+        commitment pins the exact reveal witness bytes through the wtxid tree
+        — the check a full node enforces.</dd>
+  </dl>
+
+  <h2>Start here</h2>
+  <ul class="links">
+    <li>
+      <div class="title"><a href="examples/verify-inscription-0.html">Live demo</a></div>
+      <div class="detail">Fetch and verify inscription 0 client-side in your
+        browser: PoW-checked header, merkle inclusion, BIP-341 commitment.
+        One static page; view source.</div>
+    </li>
+    <li>
+      <div class="title"><a href="api/">API reference</a></div>
+      <div class="detail">Generated documentation for
+        <span class="mono">@ordspv/core</span> (zero-IO primitives and proof
+        verification) and <span class="mono">@ordspv/fetch</span> (the
+        verified resolver, plus the node-only
+        <span class="mono">/headersync</span> subpath).</div>
+    </li>
+    <li>
+      <div class="title">Specifications</div>
+      <div class="detail">
+        <a href="https://github.com/ordspv/ordspv/blob/master/docs/spec/SPEC-URI.md">SPEC-URI</a>
+        (the <span class="mono">ord:</span> scheme profile) ·
+        <a href="https://github.com/ordspv/ordspv/blob/master/docs/spec/SPEC-VERIFICATION.md">SPEC-VERIFICATION</a>
+        (levels L0–L3 and the proof bundle format) ·
+        <a href="https://github.com/ordspv/ordspv/blob/master/docs/spec/SPEC-GATEWAY.md">SPEC-GATEWAY</a>
+        (the HTTP surface)</div>
+    </li>
+    <li>
+      <div class="title"><a href="https://www.npmjs.com/org/ordspv">npm packages</a></div>
+      <div class="detail"><span class="mono">@ordspv/core</span>,
+        <span class="mono">@ordspv/fetch</span>,
+        <span class="mono">@ordspv/gateway</span>,
+        <span class="mono">@ordspv/cli</span>,
+        <span class="mono">@ordspv/proof-sidecar</span></div>
+    </li>
+    <li>
+      <div class="title"><a href="https://github.com/ordspv/ordspv">Source repository</a></div>
+      <div class="detail">Code, specs, research notes, and the roadmap.</div>
+    </li>
+  </ul>
+
+  <footer>
+    ISC license ·
+    <a href="https://github.com/ordspv/ordspv">github.com/ordspv/ordspv</a> ·
+    static page, no scripts
+  </footer>
+</body>
+</html>

@@ -1,0 +1,63 @@
+# Docs site: landing page (site/), the committed demo (examples/, whose
+# /examples/verify-inscription-0.html path is linked externally and must keep
+# resolving), and the typedoc API reference (generated, never committed).
+#
+# Serving this build requires the one-time repo setting
+# Settings -> Pages -> Source = "GitHub Actions". Until that switch, the
+# legacy branch build keeps serving the repo root and this workflow's deploy
+# step fails without affecting the live site.
+name: pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run docs
+      - name: Assemble _site
+        run: |
+          mkdir _site
+          cp -R examples _site/examples
+          cp -R build/api _site/api
+          cp site/index.html _site/index.html
+      - name: Check required paths
+        run: |
+          test -f _site/examples/verify-inscription-0.html
+          test -f _site/api/index.html
+          test -f _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    # Branch builds (e.g. a temporary ci-validation trigger) stop after the
+    # build job; only master deploys.
+    if: github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -19,6 +19,14 @@
   publish staging plus pack dry-run into `build/staging/`. The repo package.json
   keeps exporting src/*.ts, so dev always runs live sources; staging is the
   publish shape. Scope `@ordspv/*`, canonical repo github.com/ordspv/ordspv.
+- `npm run docs`: typedoc API reference for `@ordspv/core` + `@ordspv/fetch`
+  into `build/api/` (generated, never committed). Published at `/api/` on the
+  Pages site by `.github/workflows/pages.yml`, which assembles `_site/` from
+  `examples/` (verbatim — the demo URL is linked externally and must keep its
+  exact path), `build/api/`, and `site/index.html`. typedoc drives the JS
+  TypeScript compiler API, which the native 7.x `typescript` no longer ships,
+  so `tools/docs/` pins typedoc plus its own `typescript` 6.0.x (npm nests
+  them there on a normal root `npm ci`; root `tsc` stays 7.x).
 
 ## Invariants (do not break)
 
