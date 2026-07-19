@@ -1,0 +1,26 @@
+{
+  "inscriptionId": "758b032b5f407900aa1c0bc0fea187e0c2649b6fbc0f1fe97f9fa339fd8d68b2i1",
+  "height": 828500,
+  "contentType": "application/json;charset=utf-8",
+  "parents": [],
+  "input": 0,
+  "bodyLength": 353,
+  "bodySha256": "2b51b235f3b53f821704609945bd757f0acef3c4b5a772e53971b10114ffa9ba",
+  "flags": {
+    "incompleteField": false,
+    "duplicateField": false,
+    "unrecognizedEvenField": false,
+    "pushnum": false,
+    "stutter": false
+  },
+  "served": {
+    "sha256Stored": "2b51b235f3b53f821704609945bd757f0acef3c4b5a772e53971b10114ffa9ba",
+    "length": 353,
+    "decoded": false
+  },
+  "l2": {
+    "controlBlockDepth": 1,
+    "singleLeafTree": false,
+    "singleInputReveal": true
+  }
+}
