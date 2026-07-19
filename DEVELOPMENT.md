@@ -7,7 +7,9 @@
 - `npx tsx packages/cli/src/main.ts …`: the CLI (needs live network for resolve/proof)
 - `npx tsx scripts/fetch-fixtures.ts`: refresh/extend fixtures and run LIVE
   end-to-end validation. Run this first when network access is available. Pass
-  inscription ids to vendor extended fixtures into `fixtures/extended/`.
+  inscription ids to vendor extended fixtures into `fixtures/extended/`
+  (per-vector provenance notes live in `fixtures/extended/SOURCES.md`; add new
+  ids to the parity-sweep corpus too).
 - `npx tsx scripts/parity-sweep.ts`: envelope-parser parity against a live ord
   instance (`ORD_BASE` to point at your own) over a curated corpus of eras and
   features. ANY mismatch is a P0 bug per invariant 2.

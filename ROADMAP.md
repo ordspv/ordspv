@@ -32,10 +32,16 @@ docs/RESEARCH.md for the full technical rationale.*
 3. Re-verify the 824544 checkpoint hash in `packages/fetch/src/headertrust.ts`
    against your own node or two explorers. *(Confirmed identical on mempool.space,
    blockstream.info, blockchain.info 2026-07-11; still not re-verified in tests.)*
-4. ~~Vendor extended vectors~~ **DONE 2026-07-11.** Seven mainnet vectors in
-   `fixtures/extended/` (pushnum pre-Jubilee cursed, i>0 with pointer, brotli,
-   gzip with a tag-15 note, chunked >520B metadata, delegate with empty body, and
-   the delegate target), offline-tested in `packages/fetch/test/extended.test.ts`.
+4. ~~Vendor extended vectors~~ **DONE 2026-07-11, extended 2026-07-19.**
+   Thirteen mainnet vectors in `fixtures/extended/` (first wave: pushnum
+   pre-Jubilee cursed, i>0 with pointer, brotli, gzip with a tag-15 note,
+   chunked >520B metadata, delegate with empty body, and the delegate target;
+   second wave: recursive `/r/sat` html with a parent, a brotli library with
+   a pinned decoded sha256 plus bounded-decode cap test, a child of
+   inscription 0 in reveal input 1, application/json at i1, text/css, and
+   cbrc-20 tag-7 metaprotocol with CBOR metadata), offline-tested in
+   `packages/fetch/test/extended.test.ts`; per-vector provenance and fetch
+   URLs in `fixtures/extended/SOURCES.md`.
    `scripts/parity-sweep.ts` additionally cross-checks the parser against a live ord
    instance (existence/index/count via 404-at-i(count), content_type, content_length,
    delegate, body sha256 incl. tag-9 encodings, metadata hex, pre-Jubilee curse

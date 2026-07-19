@@ -80,6 +80,12 @@ const DEFAULT_IDS: [string, string][] = [
   ['4c83f2e1d12d6f71e9f69159aff48f7946ce04c5ffcc3a3feee4080bac343722i0', 'tag-15 note (chisel.xyz)'],
   // input>0 + pointer + metadata, big webp
   ['a87a8ed81799a321ecfe5a14c0652a77d482de718a10f4d8e3f103d29b26fe49i0', 'input>0 + pointer + metadata (h860000)'],
+  // second-wave vendored vectors (fixtures/extended/SOURCES.md)
+  ['52b4ea10c2518c954c73594e403ccfb2d50044f5a3b09a224dfa3bf06dd1d499i0', 'recursive /r/sat html + parent (h842600)'],
+  ['3891327c4bbefc8f0683c51338504d1bfdcc850c5bd8d16c6b34b6f400a8f214i0', 'brotli js library + parent, input 1 (h825451)'],
+  ['47c7260764af2ee17aa584d9c035f2e5429aefd96b8016cfe0e3f0bcf04869a3i0', 'child of inscription 0, input 1 (h839876)'],
+  ['758b032b5f407900aa1c0bc0fea187e0c2649b6fbc0f1fe97f9fa339fd8d68b2i1', 'application/json at i1 (h828500)'],
+  ['6c76e134aaaa83912fb74c1ba235f09f4c94c36be6f9fd93343cda82f90d4245i0', 'text/css asset (h824886)'],
 ];
 
 const esploras = [
