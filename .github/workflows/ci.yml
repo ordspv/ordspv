@@ -15,8 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # fully offline: fixtures are vendored and self-verifying
-      - run: npm test
+      # fully offline: fixtures are vendored and self-verifying.
+      # Coverage thresholds (vitest.config.ts) gate against regressions.
+      - run: npm run test:coverage
       - run: npx tsc --noEmit
       # publish pipeline stays green: tsup ESM + tsc declarations + pack dry-run
       - run: npm run build
