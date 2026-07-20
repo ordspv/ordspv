@@ -40,6 +40,7 @@ jobs:
       - name: Check required paths
         run: |
           test -f _site/examples/verify-inscription-0.html
+          test -f _site/examples/evm-nft/index.html
           test -f _site/api/index.html
           test -f _site/index.html
       - uses: actions/upload-pages-artifact@v3

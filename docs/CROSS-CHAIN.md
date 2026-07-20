@@ -20,6 +20,12 @@ transport.
 }
 ```
 
+**Live example**: [examples/evm-nft/](../examples/evm-nft/index.html) is exactly this
+document — a token whose `image` is an `ord:` URI — plus a page that resolves and
+verifies it client-side against Bitcoin PoW
+([hosted](https://ordspv.github.io/ordspv/examples/evm-nft/index.html); the Solidity
+side is [Contract.sol](../examples/evm-nft/Contract.sol)).
+
 Recommendations (rationale in SPEC-URI):
 
 1. **Use `/content`** in `image`/`animation_url`: delegation is the dominant pattern

@@ -79,6 +79,11 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
   the file. Your browser fetches inscription 0, verifies every byte against
   Bitcoin PoW client-side, and renders it. No server, no build step. Also
   [hosted on the docs site](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html).
+- [examples/evm-nft/](examples/evm-nft/): the cross-chain capstone. An ERC-721
+  token document whose `image` is an `ord:` URI with an integrity pin; the page
+  pulls the URI out of the token metadata, resolves it, and verifies the image
+  against Bitcoin PoW in your browser. Also
+  [hosted on the docs site](https://ordspv.github.io/ordspv/examples/evm-nft/index.html).
 - [extension/](extension/README.md): MV3 extension with gateway-URL interception,
   `ord:` links, and an in-browser verifying viewer. `chrome://extensions`, Load
   unpacked, `extension/dist-unpacked/`.
