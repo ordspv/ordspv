@@ -18,10 +18,11 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "docs-env": "file:tools/docs",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
+    "docs-env": "file:tools/docs",
+    "playwright-core": "^1.61.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.0",
     "typescript": "^7.0.2",

@@ -13,6 +13,12 @@
 - `npx tsx scripts/parity-sweep.ts`: envelope-parser parity against a live ord
   instance (`ORD_BASE` to point at your own) over a curated corpus of eras and
   features. ANY mismatch is a P0 bug per invariant 2.
+- `npx tsx scripts/demo-smoke.ts`: headless-chromium drive of both committed
+  demo pages against LIVE esplora — serves the checkout, clicks verify, and
+  requires every step to pass and the verified image to decode. One-time
+  local setup: `npx playwright-core install --only-shell chromium`. The
+  weekly demo-smoke.yml workflow runs it with `--ci` (transient network
+  trouble retries, then skips loudly; definitive failures red the run).
 - `npx tsx scripts/build-demo.ts` / `scripts/build-extension.ts`: regenerate the
   committed demo pages (examples/verify-inscription-0.html and
   examples/evm-nft/index.html, which also inlines evm-nft/metadata.json) and

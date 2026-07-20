@@ -1,0 +1,63 @@
+name: demo-smoke
+
+# Weekly headless drive of the committed demo pages against LIVE esplora
+# instances (scripts/demo-smoke.ts): serve the checkout statically, click each
+# page's verify button in headless chromium, require every step to pass and
+# the verified image to decode. Push CI already proves the pages are in sync
+# with their sources; this proves they still verify end-to-end in a real
+# browser, which no offline check can.
+#
+# Deliberately separate from the offline push/PR CI (needs live esplora) and
+# from parity.yml (whose red is reserved for parser drift). Same
+# transient-vs-definitive discipline as the parity sweep: in --ci mode network
+# weather retries with backoff and then skips (loudly); a red run means a page
+# definitively failed — the demo linked from the README and the Pages site is
+# broken for visitors.
+
+on:
+  schedule:
+    - cron: '23 6 * * 1' # Mondays 06:23 UTC, an hour after the parity sweep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # playwright-core has no postinstall download; fetch the headless shell
+      # (and its system libraries) only here, where it is actually used
+      - run: npx playwright-core install --with-deps --only-shell chromium
+      - name: headless demo smoke (live esplora)
+        id: smoke
+        shell: bash
+        run: npx tsx scripts/demo-smoke.ts --ci 2>&1 | tee smoke.log
+      - name: job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            if [ "${{ steps.smoke.outcome }}" = "failure" ]; then
+              echo "## Demo smoke FAILED — the published demo pages are broken"
+              echo
+              echo "A definitive failure means a page no longer verifies end-to-end in a"
+              echo "browser (crypto check failed, data source answered definitively with"
+              echo "bytes the page rejects, or the page itself is broken). Reproduce with:"
+              echo
+              echo '    npx tsx scripts/demo-smoke.ts'
+            else
+              echo "## Demo smoke passed"
+            fi
+            echo
+            echo '```'
+            grep -E 'demo smoke:|PASSED|FAILED|SKIPPED|skipped' smoke.log | tail -n 40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
