@@ -20,8 +20,8 @@ tokenURI: ord:6fb976…2799i0/content#integrity=sha256-…
    └──────┬──────────────────┬─────────────┘
           │ untrusted        │ untrusted
    esplora/electrum      ord gateways
-   (txs, proofs,         (content, recursion
-    headers, blocks)      — availability only)
+   (txs, proofs,         (content, recursion;
+    headers, blocks)       availability only)
 ```
 
 ## The trick
@@ -77,7 +77,7 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 
 - [examples/verify-inscription-0.html](examples/verify-inscription-0.html): open
   the file. Your browser fetches inscription 0, verifies every byte against
-  Bitcoin PoW client-side, and renders it. No server, no build step. Also
+  Bitcoin PoW client-side, and renders it. Also
   [hosted on the docs site](https://ordspv.github.io/ordspv/examples/verify-inscription-0.html).
 - [examples/evm-nft/](examples/evm-nft/): the cross-chain capstone. An ERC-721
   token document whose `image` is an `ord:` URI with an integrity pin; the page

@@ -47,9 +47,8 @@
     This page fetches inscription 0 from public Bitcoin data sources and
     cryptographically verifies every byte client-side: transaction hashing,
     merkle inclusion against a proof-of-work-checked header, and the BIP-341
-    tapscript commitment. The servers are treated as untrusted. No backend, no
-    build step; view source. The single trust anchor is one pinned block hash
-    you can check against any explorer.
+    tapscript commitment. The servers are treated as untrusted. The single
+    trust anchor is one pinned block hash you can check against any explorer.
   </p>
   <button id="run">Fetch &amp; verify inscription 0</button>
   <ol id="steps"></ol>
@@ -58,8 +57,7 @@
     Verification levels, proof format, and the resolver library live at
     <a href="https://github.com/ordspv/ordspv">github.com/ordspv/ordspv</a>
     (see SPEC-VERIFICATION for L0–L3).
-    Static page; works offline-from-file. Data sources: mempool.space,
-    blockstream.info (failover).
+    Data sources: mempool.space, blockstream.info (failover).
   </footer>
   <script>
 /*BUNDLE*/

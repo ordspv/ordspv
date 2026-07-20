@@ -55,7 +55,7 @@
     hosted gateway URL. This page pulls that URI out of the token's metadata,
     resolves it from public Bitcoin data sources, and cryptographically
     verifies every byte client-side before rendering. The servers are treated
-    as untrusted. No backend, no build step; view source.
+    as untrusted.
   </p>
 
   <h2>The token's metadata</h2>
@@ -76,8 +76,7 @@
     of <a href="https://github.com/ordspv/ordspv">github.com/ordspv/ordspv</a>;
     the companion page <a href="../verify-inscription-0.html">verify-inscription-0.html</a>
     verifies the same inscription without the token wrapping.
-    Static page; works offline-from-file until you click. Data sources:
-    mempool.space, blockstream.info (failover).
+    Data sources: mempool.space, blockstream.info (failover).
   </footer>
   <script type="application/json" id="token-metadata">/*METADATA*/</script>
   <script>

@@ -2,7 +2,7 @@
 
 ## verify-inscription-0.html
 
-Open the file. That's it. A single self-contained page (inline bundle of
+Open the file. A single self-contained page (inline bundle of
 `@ordspv/core`, ~55 KB) that fetches inscription 0 from public esplora
 instances (mempool.space, blockstream.info failover; both serve
 `Access-Control-Allow-Origin: *`) and verifies it client-side at L2:
@@ -23,10 +23,9 @@ The cross-chain demo (docs/CROSS-CHAIN.md made clickable): `metadata.json` is a
 realistic ERC-721 token document whose `image` is an
 `ord:<id>/content#integrity=sha256-…` URI, `Contract.sol` is the illustrative
 (not deployed) Solidity side, and `index.html` extracts the URI from the token
-metadata, resolves it, and verifies the image exactly like the page above —
+metadata, resolves it, and verifies the image exactly like the page above,
 plus the cross-chain step: the stored bytes must hash to the integrity pin
-embedded in the token's own metadata. Same rules: single self-contained page,
-open the file.
+embedded in the token's own metadata. Same rules: open the file.
 
 Rebuild after changing `src/` or `evm-nft/metadata.json`:
 `npx tsx scripts/build-demo.ts` (the committed HTML files are the artifact;
