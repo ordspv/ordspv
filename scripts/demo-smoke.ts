@@ -2,8 +2,8 @@
 /**
  * Headless smoke of the committed demo pages against LIVE esplora instances.
  *
- * Serves the repo statically (the pages.yml site copies examples/ verbatim, so
- * the served paths match production), opens each demo in headless chromium
+ * Serves the repo statically (the pages.yml site publishes the same committed
+ * pages at the same paths), opens each demo in headless chromium
  * (playwright-core; browser installed separately, see demo-smoke.yml), clicks
  * the verify button, and requires every step to report success AND the
  * verified image to actually decode. Anything less fails loudly.
