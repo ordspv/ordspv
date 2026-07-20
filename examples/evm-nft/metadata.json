@@ -1,0 +1,14 @@
+{
+  "name": "Skull on Bitcoin",
+  "description": "Demonstration ERC-721 metadata for the ordspv cross-chain pattern: the image is Bitcoin inscription 0, named by an ord: URI with a sha256 integrity pin instead of a hosted gateway URL. Any wallet or marketplace can resolve the URI from public Bitcoin data sources and verify every byte against proof of work; no single server has to stay up or stay honest.",
+  "image": "ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0/content#integrity=sha256-846d05123db3601c8591bd144f474f1fbe7f873f3af04db4cab326db73f8d087",
+  "external_url": "https://ordspv.github.io/ordspv/examples/evm-nft/index.html",
+  "attributes": [
+    { "trait_type": "Chain of record", "value": "Bitcoin" },
+    { "trait_type": "Inscription number", "value": 0 },
+    { "trait_type": "Reveal block", "value": 767430 },
+    { "trait_type": "Content type", "value": "image/png" },
+    { "trait_type": "Stored bytes", "value": 793 },
+    { "trait_type": "Image verification", "value": "SPV, level L2" }
+  ]
+}

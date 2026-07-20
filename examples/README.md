@@ -17,5 +17,17 @@ instances (mempool.space, blockstream.info failover; both serve
 then renders the PNG and prints the stored-bytes sha256 as a copy-pasteable
 `#integrity=` pin. The page refuses to render anything that fails a step.
 
-Rebuild after changing `src/`: `npx tsx scripts/build-demo.ts`
-(the committed HTML is the artifact; viewers need no tooling).
+## evm-nft/
+
+The cross-chain demo (docs/CROSS-CHAIN.md made clickable): `metadata.json` is a
+realistic ERC-721 token document whose `image` is an
+`ord:<id>/content#integrity=sha256-…` URI, `Contract.sol` is the illustrative
+(not deployed) Solidity side, and `index.html` extracts the URI from the token
+metadata, resolves it, and verifies the image exactly like the page above —
+plus the cross-chain step: the stored bytes must hash to the integrity pin
+embedded in the token's own metadata. Same rules: single self-contained page,
+open the file.
+
+Rebuild after changing `src/` or `evm-nft/metadata.json`:
+`npx tsx scripts/build-demo.ts` (the committed HTML files are the artifact;
+viewers need no tooling).
