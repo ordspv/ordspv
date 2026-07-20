@@ -8,7 +8,7 @@
  *
  * Decoded output is bounded: on-chain bodies are small, but a crafted stream
  * can expand enormously, so every decoder enforces a maximum output size and
- * reports "cannot decode" (undefined) past it — the caller then serves the
+ * reports "cannot decode" (undefined) past it. The caller then serves the
  * stored encoded bytes instead of buffering an unbounded expansion.
  */
 

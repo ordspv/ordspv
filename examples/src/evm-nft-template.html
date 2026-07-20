@@ -51,7 +51,7 @@
   <h1>An EVM NFT whose image lives <b>on Bitcoin</b></h1>
   <p class="lede">
     This ERC-721 token names its image with an <span class="mono">ord:</span>
-    URI — a Bitcoin inscription id plus a sha256 integrity pin — instead of a
+    URI (a Bitcoin inscription id plus a sha256 integrity pin) instead of a
     hosted gateway URL. This page pulls that URI out of the token's metadata,
     resolves it from public Bitcoin data sources, and cryptographically
     verifies every byte client-side before rendering. The servers are treated
@@ -60,8 +60,8 @@
 
   <h2>The token's metadata</h2>
   <p class="note">
-    The document <span class="mono">tokenURI()</span> points at
-    (<a href="metadata.json">metadata.json</a>; the Solidity side is
+    The document <span class="mono">tokenURI()</span> points at is
+    <a href="metadata.json">metadata.json</a> (the Solidity side is
     <a href="Contract.sol">Contract.sol</a>). The highlighted
     <span class="mono">image</span> field is the entire cross-chain reference:
   </p>

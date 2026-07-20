@@ -141,8 +141,8 @@ async function main(meta: TokenMetadata): Promise<void> {
         value: uri,
         detail:
           `inscription ${uri.idString.slice(0, 12)}…i${uri.id.index}, path /${uri.path}, ` +
-          `integrity pin sha256-${uri.integrity.digestHex.slice(0, 12)}… — id and expected ` +
-          `content hash both live in the token, not on a server`,
+          `integrity pin sha256-${uri.integrity.digestHex.slice(0, 12)}…; both the id and the ` +
+          `expected content hash come from the token's metadata rather than from a server`,
       };
     });
 
@@ -180,8 +180,8 @@ async function main(meta: TokenMetadata): Promise<void> {
       return {
         value: undefined,
         detail:
-          `sha256 of the ${inscription.body!.length} stored bytes equals the pin in the token metadata — ` +
-          `this check alone (L1) needs zero Bitcoin infrastructure; the steps below anchor it to proof of work`,
+          `sha256 of the ${inscription.body!.length} stored bytes equals the pin in the token metadata. ` +
+          `This check alone (L1) needs zero Bitcoin infrastructure; the steps below anchor it to proof of work`,
       };
     });
 
@@ -281,12 +281,12 @@ function render(
         <dt>block</dt><dd>${CHECKPOINT_HEIGHT} (${reveal.inputs.length}-input reveal)</dd>
       </dl>
     </div>
-    <p class="note">A marketplace rendering this token today would dereference a hosted URL —
-    typically ordinals.com — and trust whatever bytes came back. Here every byte was verified
-    against Bitcoin proof of work in this browser, and the expected content hash lives in the
-    token's own metadata, so the image survives any gateway dying, throttling, or lying. This is
-    verification level <b>L2</b> (integrity pin + tapscript commitment); L3 additionally pins
-    the witness through the coinbase commitment.</p>`;
+    <p class="note">A marketplace rendering this token today would dereference a hosted URL,
+    typically ordinals.com, and trust whatever bytes came back. This page verified every byte
+    against Bitcoin proof of work in this browser. The expected content hash lives in the
+    token's own metadata, so the image does not depend on any gateway staying reachable or
+    honest. This is verification level <b>L2</b> (integrity pin + tapscript commitment); L3
+    additionally pins the witness through the coinbase commitment.</p>`;
   (container.querySelector('img') as HTMLImageElement).src = url;
   (container.querySelector('dd') as HTMLElement).textContent = String(meta.name ?? 'unnamed token');
 }

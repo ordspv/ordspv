@@ -3,7 +3,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="Trustless resolution of Bitcoin ordinals inscription content: ord: URIs resolve to bytes verified against Bitcoin proof of work, with no trusted ord server." />
-<title>ordspv — trustless ordinals inscription resolution</title>
+<title>ordspv: trustless ordinals inscription resolution</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -40,32 +40,33 @@
 
   <p>
     An <span class="mono">ord:&lt;id&gt;</span> URI resolves to bytes verified
-    against Bitcoin proof of work, with no trusted ord server — the way
-    <span class="mono">ipfs://&lt;cid&gt;</span> works, except the check is an
-    SPV proof. Inscription content lives in the reveal transaction's witness,
-    which the txid does not commit to, so "the txid matched" proves nothing
-    about the bytes. This project supplies the missing plumbing: a URI scheme
-    profile, a verification protocol that binds inscription bytes to Bitcoin
-    proof of work, a verified-fetch client library, and a reference gateway.
+    against Bitcoin proof of work, with no trusted ord server. It works the
+    way <span class="mono">ipfs://&lt;cid&gt;</span> does, except the check is
+    an SPV proof. Inscription content lives in the reveal transaction's
+    witness, which the txid does not commit to, so "the txid matched" proves
+    nothing about the bytes. This project specifies the URI scheme profile
+    and a verification protocol that binds inscription bytes to Bitcoin proof
+    of work. A verified-fetch client library and a reference gateway
+    implement both.
   </p>
 
   <h2>Verification levels</h2>
   <dl class="levels">
     <dt>L0</dt>
-    <dd>Trusted gateway: a plain fetch from a server you chose to believe —
-        availability only, nothing verified.</dd>
+    <dd>Trusted gateway: a plain fetch from a server you chose to believe.
+        Availability only; nothing about the bytes is verified.</dd>
     <dt>L1</dt>
     <dd>Integrity pin: a <span class="mono">#integrity=</span> sha256 over the
         stored body bytes, checkable with zero Bitcoin infrastructure.</dd>
     <dt>L2</dt>
     <dd>Tapscript commitment <span class="how">(BIP-341)</span>: the reveal
         input named by the txid points at a commit output whose taproot key
-        must commit to the served envelope script — about 0.9&nbsp;KB of
-        proof, available from any esplora instance.</dd>
+        must commit to the served envelope script. The proof is about
+        0.9&nbsp;KB and available from any esplora instance.</dd>
     <dt>L3</dt>
     <dd>Witness commitment <span class="how">(BIP-141)</span>: the coinbase
-        commitment pins the exact reveal witness bytes through the wtxid tree
-        — the check a full node enforces.</dd>
+        commitment pins the exact reveal witness bytes through the wtxid
+        tree, the same check a full node enforces.</dd>
   </dl>
 
   <h2>Start here</h2>
@@ -73,8 +74,8 @@
     <li>
       <div class="title"><a href="examples/verify-inscription-0.html">Live demo</a></div>
       <div class="detail">Fetch and verify inscription 0 client-side in your
-        browser: PoW-checked header, merkle inclusion, BIP-341 commitment.
-        One static page; view source.</div>
+        browser, from the PoW-checked header through merkle inclusion to the
+        BIP-341 commitment. One static page; view source.</div>
     </li>
     <li>
       <div class="title"><a href="examples/evm-nft/index.html">Cross-chain demo</a></div>

@@ -42,7 +42,7 @@ export interface HeaderTrustOptions {
    * How many independent sources must support the header at a non-checkpoint
    * height (default 2). The proof-building backend counts as one; each
    * agreeing backend OTHER than the builder counts as one more. Lowering
-   * this to 1 disables independent anchoring — do that only when a covering
+   * this to 1 disables independent anchoring; do that only when a covering
    * checkpoint set or headerSyncTrust provides the anchor instead.
    */
   minAgreement?: number;

@@ -32,7 +32,7 @@ import { MAINNET_CHECKPOINTS, HeaderTrustError, type HeaderTrustReport } from '.
  *
  * Trust model note: the Electrum transport verifies server certificates by
  * default (see ElectrumTcpOptions for CA/pinning/insecure), but TLS is NOT
- * the trust anchor — every header is validated locally and reorgs are only
+ * the trust anchor: every header is validated locally and reorgs are only
  * adopted on strictly greater cumulative work. TLS just denies a trivial
  * on-path attacker free tampering with an otherwise-authenticated stream.
  *
@@ -351,7 +351,7 @@ export interface ElectrumTcpOptions {
   tls?: boolean;
   timeoutMs?: number;
   /**
-   * Accept ANY certificate (self-signed servers) — explicit opt-in only.
+   * Accept ANY certificate (self-signed servers); explicit opt-in only.
    * TLS here is transport hygiene, not the trust anchor (headers are
    * validated by PoW/checkpoints either way), but verified TLS still stops
    * trivial on-path tampering and downgrade games. Prefer `ca` or
