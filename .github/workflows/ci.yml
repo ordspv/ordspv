@@ -21,3 +21,17 @@ jobs:
       - run: npx tsc --noEmit
       # publish pipeline stays green: tsup ESM + tsc declarations + pack dry-run
       - run: npm run build
+      # The demo pages are committed build artifacts ("edit sources, not
+      # output"): regenerating them from examples/src must be a no-op. A diff
+      # here means either a source edit skipped `npx tsx scripts/build-demo.ts`
+      # or a dependency bump changed the emitted bundle — regenerate, re-drive
+      # the pages, and commit the result either way.
+      - name: committed demo pages in sync
+        run: |
+          npx tsx scripts/build-demo.ts
+          if [ -n "$(git status --porcelain -- examples/verify-inscription-0.html examples/evm-nft/index.html)" ]; then
+            git status --porcelain -- examples/verify-inscription-0.html examples/evm-nft/index.html
+            git diff --stat -- examples/verify-inscription-0.html examples/evm-nft/index.html
+            echo 'stale committed demo pages: run `npx tsx scripts/build-demo.ts` and commit the output' >&2
+            exit 1
+          fi

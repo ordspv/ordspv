@@ -16,7 +16,9 @@
 - `npx tsx scripts/build-demo.ts` / `scripts/build-extension.ts`: regenerate the
   committed demo pages (examples/verify-inscription-0.html and
   examples/evm-nft/index.html, which also inlines evm-nft/metadata.json) and
-  extension dist-unpacked/
+  extension dist-unpacked/. Push CI re-runs the demo build and fails on any
+  drift from the committed pages, so "edit sources, not output" is enforced —
+  after touching examples/src/ or a bundling dep, regenerate and commit.
 - `npm run build`: tsup ESM, tsc declarations, browser bundle (fetch), then
   publish staging plus pack dry-run into `build/staging/`. The repo package.json
   keeps exporting src/*.ts, so dev always runs live sources; staging is the
