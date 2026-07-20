@@ -39,7 +39,9 @@
   so a typedoc layout change cannot silently 404 a link. typedoc drives the JS
   TypeScript compiler API, which the native 7.x `typescript` no longer ships,
   so `tools/docs/` pins typedoc plus its own `typescript` 6.0.x (npm nests
-  them there on a normal root `npm ci`; root `tsc` stays 7.x).
+  them there on a normal root `npm ci`; root `tsc` stays 7.x). That 6.0.x pin
+  is deliberate, not stale — Dependabot ignores major/minor for it, and it
+  only moves when typedoc's peer range admits TS 7.
 
 ## Invariants (do not break)
 

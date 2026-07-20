@@ -28,6 +28,14 @@ updates:
       docs-tooling:
         patterns:
           - "*"
+    ignore:
+      # typescript is deliberately 6.0.x here: typedoc's peer range excludes
+      # TS 7 (whose native compiler drops the JS API typedoc drives — the
+      # reason this separate manifest exists). Patch updates stay welcome.
+      - dependency-name: typescript
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   - package-ecosystem: github-actions
     directory: /
