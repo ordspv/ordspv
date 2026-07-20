@@ -35,6 +35,9 @@ jobs:
         run: |
           mkdir _site
           cp -R examples _site/examples
+          # build inputs, not site content: the unbuilt templates in src/ are
+          # broken as pages (unsubstituted markers, dangling relative links)
+          rm -rf _site/examples/src
           cp -R build/api _site/api
           cp site/index.html _site/index.html
       - name: Check required paths
@@ -43,6 +46,10 @@ jobs:
           test -f _site/examples/evm-nft/index.html
           test -f _site/api/index.html
           test -f _site/index.html
+      # every internal href/src must resolve to a file in the tree, so a
+      # typedoc layout change or a moved page cannot silently 404 after deploy
+      - name: Check internal links
+        run: npx tsx scripts/check-site-links.ts _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

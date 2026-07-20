@@ -32,8 +32,11 @@
 - `npm run docs`: typedoc API reference for `@ordspv/core` + `@ordspv/fetch`
   into `build/api/` (generated, never committed). Published at `/api/` on the
   Pages site by `.github/workflows/pages.yml`, which assembles `_site/` from
-  `examples/` (verbatim — the demo URL is linked externally and must keep its
-  exact path), `build/api/`, and `site/index.html`. typedoc drives the JS
+  `examples/` (minus `examples/src/`, which is build input, not site content;
+  the demo URL is linked externally and must keep its exact path),
+  `build/api/`, and `site/index.html`, then checks that every internal
+  href/src in the tree resolves (`npx tsx scripts/check-site-links.ts _site`),
+  so a typedoc layout change cannot silently 404 a link. typedoc drives the JS
   TypeScript compiler API, which the native 7.x `typescript` no longer ships,
   so `tools/docs/` pins typedoc plus its own `typescript` 6.0.x (npm nests
   them there on a normal root `npm ci`; root `tsc` stays 7.x).
