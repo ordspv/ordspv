@@ -383,6 +383,37 @@ describe('verifyCustodyBundle', () => {
     expect(outValue > 0n).toBe(true);
   });
 
+  it('rejects a duplicate hop transaction', () => {
+    const outValue = revealTx.outputs[0].value;
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    const hop = {
+      block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] as string[] },
+      prevTxs: [revealHex],
+    };
+    // the same transaction presented as two hops; the duplicate check fires
+    // before chain order or spend linkage can object
+    bundle.hops.push(hop, { ...hop, block: { ...hop.block, height: hop.block.height + 1 } });
+    bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/duplicate transaction/);
+  });
+
+  it('refuses a coinbase as a later hop with CustodyUnsupportedError', () => {
+    const coinbase = buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff }], [5000000000n, 0n]);
+    const mined = mineSingleTxBlock(coinbase.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    bundle.hops.push({
+      block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: coinbase.hex, pos: 0, txidBranch: [] },
+      prevTxs: [],
+    });
+    bundle.finalSatpoint = `${coinbase.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(bundle)).toThrow(CustodyUnsupportedError);
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/coinbase/);
+  });
+
   it('rejects hop txs whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
     // stripped: version(4) inCount(1) outpoint(36) scriptSigLen(1)=0 seq(4)
     //           outCount(1) value(8) spkLen(1) spk(4) locktime(4) = 64 bytes
