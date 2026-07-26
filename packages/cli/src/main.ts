@@ -1,5 +1,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { verifyProofBundle, type ProofBundleJson } from '@ordspv/core';
+import {
+  formatSatpoint,
+  verifyCustodyBundle,
+  verifyProofBundle,
+  verifySatGenealogy,
+  type CustodyBundleJson,
+  type ProofBundleJson,
+  type SatGenealogyBundleJson,
+} from '@ordspv/core';
+import { classifyBundle, type BundleKind } from './bundlekind.js';
 import {
   buildProofBundle,
   EsploraBackend,
@@ -20,7 +29,7 @@ import {
  *   ord-resolve <uri> --json                   resolution report as JSON
  *   ord-resolve <uri> --verify none|L1|L2|L3   verification level (default L2)
  *   ord-resolve proof <id> [--level L2|L3]     emit a proof bundle
- *   ord-resolve verify <bundle.json>           verify a bundle offline
+ *   ord-resolve verify <bundle.json>           verify a proof, custody or sat bundle offline
  *   ord-resolve custody <id>                   prove where the inscribed sat is
  *   ord-resolve sat <id>                       prove which sat it is
  *   ord-resolve parse <uri>                    normalize/inspect a URI
@@ -71,7 +80,7 @@ async function main(): Promise<void> {
         'usage:',
         '  ord-resolve <uri> [--verify none|L1|L2|L3] [--out FILE] [--json]',
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
-        '  ord-resolve verify <bundle.json>',
+        '  ord-resolve verify <bundle.json>            proof, custody or sat genealogy',
         '  ord-resolve custody <inscription-id> [--json]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE]',
         '  ord-resolve parse <uri>',
@@ -194,13 +203,66 @@ async function main(): Promise<void> {
 
   if (command === 'verify') {
     const file = positional[1] ?? fail('verify: missing bundle file', 2);
-    const bundle = JSON.parse(readFileSync(file, 'utf8')) as ProofBundleJson;
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    let kind: BundleKind;
     try {
-      const result = verifyProofBundle(bundle);
+      kind = classifyBundle(parsed);
+    } catch (e) {
+      fail(`verify: ${(e as Error).message}`, 2);
+    }
+    const anchorNote = 'header PoW verified; anchor the block hash against your own chain view';
+    try {
+      if (kind === 'genealogy') {
+        const bundle = parsed as SatGenealogyBundleJson;
+        const result = verifySatGenealogy(bundle);
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              kind,
+              inscriptionId: result.inscriptionId,
+              sat: result.sat.toString(),
+              name: result.name,
+              rarity: result.rarity,
+              coinbaseHeight: result.coinbaseHeight,
+              depth: result.depth,
+              revealPosition: result.revealPosition.toString(),
+              // the two endpoints the bundle proves into headers
+              reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
+              coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
+              note: anchorNote,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      if (kind === 'custody') {
+        const result = verifyCustodyBundle(parsed as CustodyBundleJson);
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              kind,
+              inscriptionId: result.inscriptionId,
+              satpoint: formatSatpoint(result.satpoint),
+              hops: result.hops,
+              height: result.height,
+              note: anchorNote,
+            },
+            (_, v) => (typeof v === 'bigint' ? v.toString() : v),
+            2,
+          ),
+        );
+        return;
+      }
+      const result = verifyProofBundle(parsed as ProofBundleJson);
       console.log(
         JSON.stringify(
           {
             ok: true,
+            kind,
             level: result.level,
             inscriptionId: result.inscriptionId,
             block: result.header.hash,
@@ -208,7 +270,7 @@ async function main(): Promise<void> {
             contentType: result.inscription.contentType,
             contentLength: result.inscription.body?.length ?? 0,
             l2Assurances: result.l2,
-            note: 'header PoW verified; anchor the block hash against your own chain view',
+            note: anchorNote,
           },
           null,
           2,
