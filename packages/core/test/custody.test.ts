@@ -383,6 +383,42 @@ describe('verifyCustodyBundle', () => {
     expect(outValue > 0n).toBe(true);
   });
 
+  it('rejects hop txs whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
+    // stripped: version(4) inCount(1) outpoint(36) scriptSigLen(1)=0 seq(4)
+    //           outCount(1) value(8) spkLen(1) spk(4) locktime(4) = 64 bytes
+    const stripped = cat(
+      u32le(2),
+      varint(1),
+      hexToBytes(T0).reverse(),
+      u32le(0),
+      varint(0),
+      u32le(0xffffffff),
+      varint(1),
+      u64le(1000n),
+      varint(4),
+      new Uint8Array([0x51, 0x51, 0x51, 0x51]),
+      u32le(0),
+    );
+    expect(stripped.length).toBe(64);
+    // segwit-wrap it: marker+flag and a one-item witness stack, so the RAW
+    // length grows past 64 while the txid preimage stays exactly 64
+    const raw = cat(
+      stripped.slice(0, 4),
+      new Uint8Array([0x00, 0x01]),
+      stripped.slice(4, 60),
+      varint(1),
+      varint(1),
+      new Uint8Array([0x00]),
+      stripped.slice(60),
+    );
+    const b = singleHopBundle();
+    b.hops[0].tx.hex = bytesToHex(raw);
+    expect(() => verifyCustodyBundle(b)).toThrow(/64-byte/);
+    // and the legacy (raw==stripped) form is rejected the same way
+    b.hops[0].tx.hex = bytesToHex(stripped);
+    expect(() => verifyCustodyBundle(b)).toThrow(/64-byte/);
+  });
+
   it('respects trustHeader rejection', () => {
     expect(() =>
       verifyCustodyBundle(singleHopBundle(), {
