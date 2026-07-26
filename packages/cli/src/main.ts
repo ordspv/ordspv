@@ -7,6 +7,7 @@ import {
   parseOrdUri,
   DEFAULT_ESPLORA,
   fetchCustody,
+  fetchSatIdentity,
   type VerificationMode,
 } from '@ordspv/fetch';
 
@@ -19,6 +20,8 @@ import {
  *   ord-resolve <uri> --verify none|L1|L2|L3   verification level (default L2)
  *   ord-resolve proof <id> [--level L2|L3]     emit a proof bundle
  *   ord-resolve verify <bundle.json>           verify a bundle offline
+ *   ord-resolve custody <id>                   prove where the inscribed sat is
+ *   ord-resolve sat <id>                       prove which sat it is
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
  * Options: --esplora url[,url]   --gateway url[,url]
@@ -69,6 +72,7 @@ async function main(): Promise<void> {
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
         '  ord-resolve verify <bundle.json>',
         '  ord-resolve custody <inscription-id> [--json]',
+        '  ord-resolve sat <inscription-id> [--json] [--bundle FILE]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]',
       ].join('\n'),
@@ -137,6 +141,45 @@ async function main(): Promise<void> {
       return;
     } catch (e) {
       fail(`custody: ${(e as Error).message}`);
+    }
+  }
+
+  if (command === 'sat') {
+    const idArg = positional[1] ?? fail('sat: missing inscription id', 2);
+    const parsed = parseOrdUri(idArg);
+    try {
+      const res = await fetchSatIdentity(`${parsed.id.txid}i${parsed.id.index}`, { esplora });
+      const bundleOut = str(flags.get('bundle'));
+      if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));
+      const { identity } = res;
+      if (flags.has('json')) {
+        console.log(
+          JSON.stringify(
+            {
+              inscriptionId: identity.inscriptionId,
+              sat: identity.sat,
+              name: identity.name,
+              rarity: identity.rarity,
+              coinbaseHeight: identity.coinbaseHeight,
+              depth: identity.depth,
+              revealPosition: identity.revealPosition,
+              headerTrust: res.headerTrust,
+            },
+            (_, v) => (typeof v === 'bigint' ? v.toString() : v),
+            2,
+          ),
+        );
+      } else {
+        console.log(`inscription ${identity.inscriptionId}`);
+        console.log(`sat         ${identity.sat} (${identity.name}, ${identity.rarity})`);
+        console.log(
+          `mined       block ${identity.coinbaseHeight}, traced through ${identity.depth} funding tx${identity.depth === 1 ? '' : 's'}`,
+        );
+        if (bundleOut) console.log(`bundle      ${bundleOut}`);
+      }
+      return;
+    } catch (e) {
+      fail(`sat: ${(e as Error).message}`);
     }
   }
 
