@@ -285,7 +285,7 @@ function parseHopTx(hex: string, label: string): ParsedTx {
   return tx;
 }
 
-function verifyHopInclusion(hop: CustodyHopJson, tx: ParsedTx, label: string, opts: CustodyVerifyOptions): void {
+export function verifyAnchoredHop(hop: CustodyHopJson, tx: ParsedTx, label: string, opts: CustodyVerifyOptions): void {
   const header = parseHeader(hexToBytes(hop.block.header));
   if (header.hash !== hop.block.hash.toLowerCase()) {
     throw new Error(`${label}: header hashes to ${header.hash}, bundle claims ${hop.block.hash}`);
@@ -329,7 +329,7 @@ export function verifyCustodyBundle(
   if (reveal.txid !== id.txid) {
     throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
   }
-  verifyHopInclusion(revealHop, reveal, 'hop 0 (reveal)', opts);
+  verifyAnchoredHop(revealHop, reveal, 'hop 0 (reveal)', opts);
 
   const allInscriptions = inscriptionsFromTx(reveal);
   const inscription: Inscription | undefined = allInscriptions.find((i) => i.index === id.index);
@@ -366,7 +366,7 @@ export function verifyCustodyBundle(
       throw new Error(`${label}: does not come after hop ${h - 1} in chain order`);
     }
 
-    verifyHopInclusion(hop, tx, label, opts);
+    verifyAnchoredHop(hop, tx, label, opts);
 
     const j = tx.inputs.findIndex((inp) => inp.prevTxid === current.txid && inp.vout === current.vout);
     if (j === -1) {
