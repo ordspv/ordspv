@@ -51,6 +51,14 @@ export interface EsploraMerkleProof {
   pos: number;
 }
 
+export interface EsploraOutspend {
+  spent: boolean;
+  /** spending txid, present when spent */
+  txid?: string;
+  vin?: number;
+  status?: EsploraTxStatus;
+}
+
 export interface EsploraTxStatus {
   confirmed: boolean;
   block_height?: number;
@@ -129,6 +137,10 @@ export class EsploraBackend {
 
   getTipHeight(): Promise<string> {
     return this.text('/blocks/tip/height', this.limits.smallMaxBytes);
+  }
+
+  getOutspend(txid: string, vout: number): Promise<EsploraOutspend> {
+    return this.json(`/tx/${txid}/outspend/${vout}`, this.limits.smallMaxBytes);
   }
 
   async getBlockRaw(blockHash: string): Promise<Uint8Array> {

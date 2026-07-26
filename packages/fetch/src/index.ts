@@ -5,3 +5,4 @@ export * from './proofbuilder.js';
 export * from './headertrust.js';
 export * from './decompress.js';
 export * from './resolver.js';
+export * from './custodybuilder.js';

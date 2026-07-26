@@ -6,6 +6,7 @@ import {
   OrdResolver,
   parseOrdUri,
   DEFAULT_ESPLORA,
+  fetchCustody,
   type VerificationMode,
 } from '@ordspv/fetch';
 
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
         '  ord-resolve <uri> [--verify none|L1|L2|L3] [--out FILE] [--json]',
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
         '  ord-resolve verify <bundle.json>',
+        '  ord-resolve custody <inscription-id> [--json]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]',
       ].join('\n'),
@@ -101,6 +103,41 @@ async function main(): Promise<void> {
       }
     }
     fail(`could not build proof:\n${errors.join('\n')}`);
+  }
+
+  if (command === 'custody') {
+    const idArg = positional[1] ?? fail('custody: missing inscription id', 2);
+    const parsed = parseOrdUri(idArg);
+    try {
+      const res = await fetchCustody(`${parsed.id.txid}i${parsed.id.index}`, { esplora });
+      if (flags.has('json')) {
+        console.log(
+          JSON.stringify(
+            {
+              inscriptionId: res.custody.inscriptionId,
+              satpoint: res.custody.satpoint,
+              genesis: res.custody.genesis,
+              hops: res.custody.hops,
+              height: res.custody.height,
+              path: res.custody.path,
+              tip: res.tip,
+              pendingSpendTxid: res.pendingSpendTxid,
+            },
+            (_, v) => (typeof v === 'bigint' ? v.toString() : v),
+            2,
+          ),
+        );
+      } else {
+        const sp = res.custody.satpoint;
+        console.log(`inscription ${res.custody.inscriptionId}`);
+        console.log(`satpoint    ${sp.txid}:${sp.vout}:${sp.offset} (proven through ${res.custody.hops} hop${res.custody.hops === 1 ? '' : 's'}, last at height ${res.custody.height})`);
+        for (const t of res.tip) console.log(`tip         ${t.source}: ${t.state}${t.detail ? ` (${t.detail})` : ''}`);
+        if (res.pendingSpendTxid) console.log(`pending     unconfirmed spend ${res.pendingSpendTxid}`);
+      }
+      return;
+    } catch (e) {
+      fail(`custody: ${(e as Error).message}`);
+    }
   }
 
   if (command === 'verify') {
