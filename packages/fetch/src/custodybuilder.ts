@@ -121,7 +121,7 @@ export async function buildCustodyBundle(
   );
   let pendingSpendTxid: string | undefined;
 
-  for (let h = 1; h <= maxHops; h++) {
+  for (let h = 1; ; h++) {
     const outspend = await backend.getOutspend(current.txid, current.vout);
     if (!outspend.spent) break;
     if (!outspend.txid) throw new CustodyBuildError('outspend reports spent without a txid');
@@ -129,6 +129,10 @@ export async function buildCustodyBundle(
       pendingSpendTxid = outspend.txid;
       break;
     }
+    // the cap bounds how many transfers the walk will follow; it only fires
+    // when a further confirmed spend exists, so a path that COMPLETES at
+    // exactly maxHops transfers still builds
+    if (h > maxHops) throw new CustodyBuildError(`custody path exceeds ${maxHops} hops`);
     const hex = await backend.getTxHex(outspend.txid);
     const tx = parseTx(hexToBytes(hex.trim()));
     const j = tx.inputs.findIndex((inp) => inp.prevTxid === current.txid && inp.vout === current.vout);
@@ -145,7 +149,6 @@ export async function buildCustodyBundle(
       current,
       hop.block.height,
     );
-    if (h === maxHops) throw new CustodyBuildError(`custody path exceeds ${maxHops} hops`);
   }
 
   return {

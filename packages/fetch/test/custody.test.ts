@@ -180,6 +180,72 @@ describe('fetchCustody', () => {
     );
   });
 
+  it('completes a path of exactly maxHops transfers', async () => {
+    const { commit, reveal, block, id } = inscriptionSetup();
+    const value = reveal.outputs[0].value;
+    const spend1 = legacySpend(reveal.txid, 0, [value]);
+    const spend2 = legacySpend(spend1.txid, 0, [value]);
+    const blockB = buildBlock([spend1]);
+    const blockC = buildBlock([spend2]);
+
+    const routes = {
+      ...routesForBlock(block, 100, 120),
+      ...routesForBlock(blockB, 105, 120),
+      ...routesForBlock(blockC, 106, 120),
+    };
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend1.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 105, block_hash: blockB.blockHash },
+    };
+    routes[`${E}/tx/${spend1.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend2.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 106, block_hash: blockC.blockHash },
+    };
+    routes[`${E}/tx/${spend2.txid}/outspend/0`] = { spent: false };
+    routes[`${E2}/tx/${spend2.txid}/outspend/0`] = { spent: false };
+
+    const res = await fetchCustody(id, { ...OPTS, maxHops: 2, fetchFn: stubFetch(routes) });
+    expect(res.custody.hops).toBe(3);
+    expect(res.custody.satpoint.txid).toBe(spend2.txid);
+    expect(res.pendingSpendTxid).toBeUndefined();
+  });
+
+  it('errors only when the walk is truncated at maxHops, naming the cap', async () => {
+    const { commit, reveal, block, id } = inscriptionSetup();
+    const value = reveal.outputs[0].value;
+    const spend1 = legacySpend(reveal.txid, 0, [value]);
+    const spend2 = legacySpend(spend1.txid, 0, [value]);
+    const blockB = buildBlock([spend1]);
+
+    const routes = {
+      ...routesForBlock(block, 100, 120),
+      ...routesForBlock(blockB, 105, 120),
+    };
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend1.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 105, block_hash: blockB.blockHash },
+    };
+    // a further confirmed spend exists past the cap, so the walk is truncated
+    routes[`${E}/tx/${spend1.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend2.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 106, block_hash: '11'.repeat(32) },
+    };
+
+    const p = fetchCustody(id, { ...OPTS, maxHops: 1, fetchFn: stubFetch(routes) });
+    await expect(p).rejects.toThrow(CustodyError);
+    await expect(p).rejects.toThrow(/exceeds 1 hops/);
+  });
+
   it('surfaces a fee-spillover path as CustodyUnsupportedError, not backend failover', async () => {
     const { commit, reveal, block, id } = inscriptionSetup();
     // the confirmed spend burns everything to fees (single zero-value output),
