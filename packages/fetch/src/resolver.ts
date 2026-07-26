@@ -38,14 +38,20 @@ export class OrdResolveError extends Error {
 export interface ResolverOptions {
   /** esplora API base URLs (proof + chain data). Order = preference. */
   esplora?: string[];
+  /**
+   * esplora base URLs asked to attest headers by hash-at-height (default
+   * `DEFAULT_ANCHOR_SOURCES`). The backend that served the proof is removed
+   * from this list before the vote, so overlap with `esplora` is harmless.
+   */
+  anchorSources?: string[];
   /** ord server base URLs (gateway-mode content). Order = preference. */
   ordGateways?: string[];
   /** default verification level for resolve() (default 'L2') */
   verification?: VerificationMode;
   /**
-   * Independent sources that must support a non-checkpoint header (default 2:
-   * the proof-building backend plus one other agreeing esplora). The builder
-   * is excluded from the attesting vote; anchoring fails closed below this.
+   * Agreeing outside attesters that must support a non-checkpoint header
+   * (default 2). The backend that served the proof is excluded from the vote
+   * and counts for nothing; anchoring fails closed below this.
    */
   minHeaderAgreement?: number;
   minConfirmations?: number;
@@ -109,8 +115,29 @@ export interface ResolveResult {
 export const DEFAULT_ESPLORA = ['https://mempool.space/api', 'https://blockstream.info/api'];
 export const DEFAULT_ORD_GATEWAYS = ['https://ordinals.com'];
 
+/**
+ * Endpoints asked to attest a header's hash at a height (SPEC-VERIFICATION §4).
+ * Kept separate from DEFAULT_ESPLORA on purpose: attesting needs one cheap
+ * endpoint (`/block-height/<n>`), while serving proofs needs the full esplora
+ * surface, so membership is a different question. `bitcoin.lu.ke` for instance
+ * 404s on `/tx/<txid>/merkle-proof` and answers hash-at-height fine.
+ *
+ * Backends that served the bundle are filtered out of this list before the
+ * vote, so an operator appearing in both lists still cannot vote for its own
+ * header. Each entry was checked against 767430 for three consecutive tries on
+ * 2026-07-26.
+ */
+export const DEFAULT_ANCHOR_SOURCES = [
+  'https://mempool.space/api',
+  'https://blockstream.info/api',
+  'https://bitcoin.lu.ke/api',
+  'https://mempool.emzy.de/api',
+  'https://mempool.bitaroo.net/api',
+];
+
 export class OrdResolver {
   private esploras: EsploraBackend[];
+  private anchors: EsploraBackend[];
   private ordServers: OrdBackend[];
   private options: ResolverOptions;
   private decompressor: Decompressor;
@@ -120,6 +147,9 @@ export class OrdResolver {
     const fetchFn = options.fetchFn;
     const limits = options.limits ?? {};
     this.esploras = (options.esplora ?? DEFAULT_ESPLORA).map(
+      (u) => new EsploraBackend(u, fetchFn, limits),
+    );
+    this.anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
       (u) => new EsploraBackend(u, fetchFn, limits),
     );
     this.ordServers = (options.ordGateways ?? DEFAULT_ORD_GATEWAYS).map(
@@ -185,7 +215,7 @@ export class OrdResolver {
     const trust =
       this.options.trustHeader ??
       makeHeaderTrust({
-        esploras: this.esploras,
+        esploras: this.anchors,
         minAgreement: this.options.minHeaderAgreement,
         minConfirmations: this.options.minConfirmations,
         checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS,

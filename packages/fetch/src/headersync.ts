@@ -695,6 +695,7 @@ export function headerSyncTrust(
       sourcesQueried: 1,
       sourcesAgreed: 1,
       independentSources: 1,
+      builderIsSource: false,
       anchored: true,
       tipHeight: chain.tipHeight,
       anchoredBySync: true,

@@ -9,13 +9,14 @@ import type { EsploraBackend } from './backends.js';
  * 1. Hard-coded checkpoints: heights whose hashes are compiled in. Cheap,
  *    covers historic content (most inscriptions), requires releases to
  *    refresh.
- * 2. Independent multi-source agreement: ask the configured esplora instances
- *    (ideally operated by unrelated parties) for the hash at the proof's
- *    height. The backend that BUILT the proof is excluded from this attesting
- *    set (its hash-at-height answer would be a self-vote), but it still
- *    counts as one independent source, since it served an internally
- *    verified proof. Anchoring is FAIL-CLOSED: a height covered by neither a
- *    checkpoint nor enough independent sources is rejected, never silently
+ * 2. Independent multi-source agreement: ask the configured attesting
+ *    instances (ideally operated by unrelated parties) for the hash at the
+ *    proof's height. Every backend that served bytes for the bundle is
+ *    excluded from this attesting set and contributes no count of its own: a
+ *    server vouching for the header it just served is a self-vote, whichever
+ *    endpoint carries it. The count is therefore the number of agreeing
+ *    outside attesters. Anchoring is FAIL-CLOSED: a height covered by neither
+ *    a checkpoint nor enough independent sources is rejected, never silently
  *    accepted.
  * 3. Header-chain sync from Electrum with local difficulty validation
  *    (`@ordspv/fetch/headersync`), which removes the server honesty
@@ -37,12 +38,18 @@ export const MAINNET_CHECKPOINTS: ReadonlyMap<number, string> = new Map([
 ]);
 
 export interface HeaderTrustOptions {
+  /**
+   * Attesting backends: the endpoints asked for the hash at the proof's
+   * height. Callers pass their anchor sources here (see
+   * `DEFAULT_ANCHOR_SOURCES`), which need only `/block-height/<n>` and are a
+   * different membership question from the backends that serve proofs.
+   */
   esploras?: EsploraBackend[];
   /**
-   * How many independent sources must support the header at a non-checkpoint
-   * height (default 2). The proof-building backend counts as one; each
-   * agreeing backend OTHER than the builder counts as one more. Lowering
-   * this to 1 disables independent anchoring; do that only when a covering
+   * How many agreeing attesters must support the header at a non-checkpoint
+   * height (default 2). Backends that served the bundle are excluded from the
+   * vote and add nothing to the count. Lowering this to 1 leaves a single
+   * outside source able to anchor a header; do that only when a covering
    * checkpoint set or headerSyncTrust provides the anchor instead.
    */
   minAgreement?: number;
@@ -56,6 +63,12 @@ export interface HeaderTrustOptions {
    */
   proofSource?: string;
   /**
+   * Every baseUrl that served bytes for the bundle, for builds spread across a
+   * pool. All of them are excluded from the attesting set, as `proofSource` is
+   * for a single-backend build; the two options are additive.
+   */
+  proofSources?: Iterable<string>;
+  /**
    * Compact-bits proof-of-work floor: reject any header whose target is
    * easier than this limit. Defaults to the mainnet powLimit (0x1d00ffff),
    * matching the default mainnet checkpoints; pass the network's own limit
@@ -66,16 +79,21 @@ export interface HeaderTrustOptions {
 
 export interface HeaderTrustReport {
   checkpointHit: boolean;
-  /** attesting sources queried (proof-building backend excluded) */
+  /** attesting sources queried (backends that served the bundle excluded) */
   sourcesQueried: number;
   /** attesting sources whose hash-at-height matched the header */
   sourcesAgreed: number;
   /**
-   * distinct independent sources supporting the header: the proof source
-   * (when known) plus each agreeing attester. 0 for checkpoint/sync anchors,
-   * which pin the header without live sources.
+   * independent sources supporting the header: the agreeing attesters, none
+   * of which served the bundle. 0 for checkpoint/sync anchors, which pin the
+   * header without live sources.
    */
   independentSources: number;
+  /**
+   * a serving backend was named, so its vote was excluded. Kept as a fact of
+   * its own rather than folded into `independentSources`.
+   */
+  builderIsSource: boolean;
   /** the header is pinned by a checkpoint, a synced chain, or enough independent sources */
   anchored: boolean;
   tipHeight?: number;
@@ -93,6 +111,9 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
   const esploras = options.esploras ?? [];
   const powLimitBits = options.powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
+  const serving = new Set<string>(options.proofSources ?? []);
+  if (options.proofSource !== undefined) serving.add(options.proofSource);
+  const builderIsSource = serving.size > 0;
 
   return async function checkHeader(header: BlockHeader, height: number): Promise<HeaderTrustReport> {
     if (powLimitBits !== null && bitsToTarget(header.bits) > bitsToTarget(powLimitBits)) {
@@ -114,13 +135,13 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
         sourcesQueried: 0,
         sourcesAgreed: 0,
         independentSources: 0,
+        builderIsSource,
         anchored: true,
       };
     }
 
-    // the proof-building backend cannot attest to its own header
-    const attesters = esploras.filter((e) => e.baseUrl !== options.proofSource);
-    const builderCredit = options.proofSource !== undefined ? 1 : 0;
+    // a backend that served the bundle cannot attest to its own header
+    const attesters = esploras.filter((e) => !serving.has(e.baseUrl));
     const required = options.minAgreement ?? 2;
 
     // Phase (a): hash-at-height only. Agreement must not depend on any other
@@ -132,13 +153,15 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
     const agreed = hashResults.filter(
       (r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && r.value === header.hash,
     );
-    const independentSources = agreed.length + builderCredit;
+    const independentSources = agreed.length;
     if (independentSources < required) {
       throw new HeaderTrustError(
         `height ${height} not independently anchored: ${independentSources} independent ` +
           `source(s) support header ${header.hash} (need ${required}; ${agreed.length}/${attesters.length} ` +
-          `attesters agreed). Provide >=2 independent esplora sources, a covering checkpoint, ` +
-          `or a headerSyncTrust anchor.`,
+          `attesters agreed` +
+          (builderIsSource ? `, ${serving.size} serving backend(s) excluded from the vote` : '') +
+          `). Pass --anchor-source with at least ${required} endpoints that did not serve ` +
+          `the bundle, a covering checkpoint, or a headerSyncTrust anchor.`,
       );
     }
     // Phase (b): tip heights, queried only when a confirmation depth is
@@ -165,6 +188,7 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
       sourcesQueried: attesters.length,
       sourcesAgreed: agreed.length,
       independentSources,
+      builderIsSource,
       anchored: true,
       tipHeight,
     };

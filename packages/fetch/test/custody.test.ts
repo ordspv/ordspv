@@ -28,6 +28,9 @@ import {
 
 const E = 'https://esplora.test';
 const E2 = 'https://esplora2.test';
+// attester-only stub: anchoring needs two agreeing sources that did not build
+// the bundle, and E is the builder
+const E3 = 'https://esplora3.test';
 
 type Route = string | Uint8Array | object | (() => Promise<Response> | Response);
 
@@ -50,6 +53,8 @@ function routesForBlock(block: TestBlock, height: number, tipHeight: number): Re
     [`${E}/blocks/tip/height`]: String(tipHeight),
     [`${E2}/block-height/${height}`]: block.blockHash,
     [`${E2}/blocks/tip/height`]: String(tipHeight),
+    [`${E3}/block-height/${height}`]: block.blockHash,
+    [`${E3}/blocks/tip/height`]: String(tipHeight),
   };
   const txids = block.txs.map((t) => t.txidLE);
   block.txs.forEach((tx, pos) => {
@@ -108,6 +113,7 @@ function inscriptionSetup() {
 
 const OPTS = {
   esplora: [E, E2],
+  anchorSources: [E2, E3],
   powLimitBits: null as null,
   checkpoints: new Map<number, string>(),
 };

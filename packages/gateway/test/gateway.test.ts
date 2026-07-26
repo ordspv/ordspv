@@ -17,9 +17,10 @@ const COMMIT = '274bda6667e60bedede0d87f351220da4089427e6122f7d0bbd8e662b3796358
 const BLOCK = '000000000000000000029730547464f056f8b6e2e0a02eaf69c24389983a04f5';
 const BR = '6dc2c16a74dedcae46300b2058ebadc7ca78aea78236459662375c8d7d9804dbi0';
 const E = 'https://esplora.test';
-// independent attester: fail-closed anchoring needs a second source for
-// non-checkpoint heights (the proof builder cannot vote for itself)
+// independent attesters: fail-closed anchoring needs two agreeing sources at
+// non-checkpoint heights, and the backend that served the proof is not one
 const E2 = 'https://esplora2.test';
+const E3 = 'https://esplora3.test';
 const U = 'https://upstream.test';
 
 const routes: Record<string, () => Response> = {
@@ -55,13 +56,21 @@ const brSummary = JSON.parse(readFileSync(join(EXTENDED, `${BR}.json`), 'utf8'))
     [`${E}/blocks/tip/height`]: () => new Response(String(brBundle.block.height + 100)),
     [`${E2}/block-height/${brBundle.block.height}`]: () => new Response(brBundle.block.hash),
     [`${E2}/blocks/tip/height`]: () => new Response(String(brBundle.block.height + 100)),
+    [`${E3}/block-height/${brBundle.block.height}`]: () => new Response(brBundle.block.hash),
+    [`${E3}/blocks/tip/height`]: () => new Response(String(brBundle.block.height + 100)),
   });
 }
 
 const stub: FetchFn = async (url) => routes[url]?.() ?? new Response(`no stub: ${url}`, { status: 404 });
 
 describe('gateway', () => {
-  const server = createGateway({ upstream: U, esplora: [E, E2], mode: 'verify', fetchFn: stub });
+  const server = createGateway({
+    upstream: U,
+    esplora: [E],
+    anchorSources: [E2, E3],
+    mode: 'verify',
+    fetchFn: stub,
+  });
   let base = '';
 
   beforeAll(async () => {

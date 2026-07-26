@@ -33,7 +33,10 @@ import { envelopeScript, taprootCommit } from '../../core/test/helpers.js';
  */
 
 const E = 'https://esplora.test';
+// attester-only stubs: E serves every proof ingredient and is therefore barred
+// from voting on its own headers
 const E2 = 'https://esplora2.test';
+const E3 = 'https://esplora3.test';
 
 type Route = string | Uint8Array | object | (() => Promise<Response> | Response);
 
@@ -182,6 +185,8 @@ function routesFor(block: MinedBlock, height: number, tipHeight: number): Record
     [`${E}/blocks/tip/height`]: String(tipHeight),
     [`${E2}/block-height/${height}`]: block.blockHash,
     [`${E2}/blocks/tip/height`]: String(tipHeight),
+    [`${E3}/block-height/${height}`]: block.blockHash,
+    [`${E3}/blocks/tip/height`]: String(tipHeight),
   };
   const txids = block.txs.map((t) => t.txidLE);
   block.txs.forEach((tx, pos) => {
@@ -226,7 +231,8 @@ const REVEAL_HEIGHT = 700_010;
 const TIP = 700_100;
 
 const OPTS = {
-  esplora: [E, E2],
+  esplora: [E],
+  anchorSources: [E2, E3],
   powLimitBits: null as null,
   checkpoints: new Map<number, string>(),
 };
@@ -267,9 +273,10 @@ describe('fetchSatIdentity', () => {
     expect(res.identity.depth).toBe(1);
     expect(res.identity.revealPosition).toBe(0n);
 
-    // both endpoints anchored: the builder's own backend plus one attester
+    // both endpoints anchored by two attesters that served none of the bundle
     expect(res.headerTrust.reveal.anchored).toBe(true);
     expect(res.headerTrust.reveal.independentSources).toBe(2);
+    expect(res.headerTrust.reveal.builderIsSource).toBe(true);
     expect(res.headerTrust.coinbase.anchored).toBe(true);
 
     // the bundle stands alone: re-verifying it offline yields the same identity

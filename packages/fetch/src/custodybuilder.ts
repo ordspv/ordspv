@@ -38,7 +38,7 @@ import {
   MAINNET_CHECKPOINTS,
   type HeaderTrustReport,
 } from './headertrust.js';
-import { DEFAULT_ESPLORA } from './resolver.js';
+import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -180,6 +180,8 @@ export async function buildCustodyBundle(
 
 export interface FetchCustodyOptions {
   esplora?: string[];
+  /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); see HeaderTrustOptions */
+  anchorSources?: string[];
   fetchFn?: FetchFn;
   limits?: Partial<BackendLimits>;
   maxHops?: number;
@@ -226,6 +228,9 @@ export async function fetchCustody(
   const backends = (options.esplora ?? DEFAULT_ESPLORA).map(
     (u) => new EsploraBackend(u, fetchFn, options.limits ?? {}),
   );
+  const anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
+    (u) => new EsploraBackend(u, fetchFn, options.limits ?? {}),
+  );
 
   // build with failover
   let built: BuildCustodyResult | undefined;
@@ -259,7 +264,7 @@ export async function fetchCustody(
   const trust =
     options.trustHeader ??
     makeHeaderTrust({
-      esploras: backends,
+      esploras: anchors,
       minAgreement: options.minHeaderAgreement,
       minConfirmations: options.minConfirmations,
       checkpoints: options.checkpoints ?? MAINNET_CHECKPOINTS,

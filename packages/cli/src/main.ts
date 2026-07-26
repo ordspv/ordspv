@@ -5,6 +5,7 @@ import {
   EsploraBackend,
   OrdResolver,
   parseOrdUri,
+  DEFAULT_ANCHOR_SOURCES,
   DEFAULT_ESPLORA,
   fetchCustody,
   fetchSatIdentity,
@@ -24,7 +25,7 @@ import {
  *   ord-resolve sat <id>                       prove which sat it is
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
- * Options: --esplora url[,url]   --gateway url[,url]
+ * Options: --esplora url[,url]   --gateway url[,url]   --anchor-source url[,url]
  */
 
 interface Args {
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
         '  ord-resolve custody <inscription-id> [--json]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE]',
         '  ord-resolve parse <uri>',
-        'options: --esplora url[,url]  --gateway url[,url]',
+        'options: --esplora url[,url]  --gateway url[,url]  --anchor-source url[,url]',
       ].join('\n'),
     );
     process.exit(positional.length === 0 ? 2 : 0);
@@ -82,6 +83,8 @@ async function main(): Promise<void> {
 
   const esplora = str(flags.get('esplora'))?.split(',') ?? DEFAULT_ESPLORA;
   const gateways = str(flags.get('gateway'))?.split(',');
+  // header attesters; distinct from --esplora, which serves proofs
+  const anchorSources = str(flags.get('anchor-source'))?.split(',') ?? DEFAULT_ANCHOR_SOURCES;
 
   const [command] = positional;
 
@@ -113,7 +116,10 @@ async function main(): Promise<void> {
     const idArg = positional[1] ?? fail('custody: missing inscription id', 2);
     const parsed = parseOrdUri(idArg);
     try {
-      const res = await fetchCustody(`${parsed.id.txid}i${parsed.id.index}`, { esplora });
+      const res = await fetchCustody(`${parsed.id.txid}i${parsed.id.index}`, {
+        esplora,
+        anchorSources,
+      });
       if (flags.has('json')) {
         console.log(
           JSON.stringify(
@@ -148,7 +154,10 @@ async function main(): Promise<void> {
     const idArg = positional[1] ?? fail('sat: missing inscription id', 2);
     const parsed = parseOrdUri(idArg);
     try {
-      const res = await fetchSatIdentity(`${parsed.id.txid}i${parsed.id.index}`, { esplora });
+      const res = await fetchSatIdentity(`${parsed.id.txid}i${parsed.id.index}`, {
+        esplora,
+        anchorSources,
+      });
       const bundleOut = str(flags.get('bundle'));
       if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));
       const { identity } = res;
@@ -216,7 +225,7 @@ async function main(): Promise<void> {
   const verification = (str(flags.get('verify')) ?? 'L2') as VerificationMode;
   if (!['none', 'L1', 'L2', 'L3'].includes(verification)) fail('--verify must be none|L1|L2|L3', 2);
 
-  const resolver = new OrdResolver({ esplora, ordGateways: gateways, verification });
+  const resolver = new OrdResolver({ esplora, anchorSources, ordGateways: gateways, verification });
   try {
     const result = await resolver.resolve(uri);
     if (flags.has('json')) {

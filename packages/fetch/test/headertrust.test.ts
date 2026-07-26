@@ -9,8 +9,9 @@ import { buildBlock, dummyTx } from '../../core/test/helpers.js';
 
 /**
  * Header-anchoring is FAIL-CLOSED: a proof header at a height covered by
- * neither a checkpoint nor enough independent sources must throw, and the
- * backend that built the proof must not be able to vote for its own header.
+ * neither a checkpoint nor enough independent sources must throw. A backend
+ * that served the bundle neither votes nor counts: the number reported is the
+ * number of agreeing attesters that had no hand in building it.
  */
 
 // the real vendored mainnet header at 767430 — satisfies the mainnet powLimit
@@ -66,19 +67,52 @@ describe('fail-closed header anchoring', () => {
     await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/not independently anchored/);
   });
 
-  it('accepts builder + one independent agreeing source (the 2-source default path)', async () => {
-    const builder = esplora('https://builder.test', {});
+  it('rejects a bundle served by one backend with only one agreeing outside attester', async () => {
+    // the pre-0.3.0 arithmetic credited the serving backend with a vote, so
+    // this configuration anchored on a single outside opinion
+    const builder = esplora('https://builder.test', agreeRoutes('https://builder.test', HEADER.hash));
     const attester = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
     const trust = makeHeaderTrust({
       esploras: [builder, attester],
       checkpoints: new Map(),
       proofSource: 'https://builder.test',
     });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(
+      /not independently anchored: 1 independent source/,
+    );
+    // the message names the excluded backend and the flag that adds attesters
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 serving backend\(s\) excluded/);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/--anchor-source/);
+  });
+
+  it('accepts two agreeing attesters that did not serve the bundle', async () => {
+    const builder = esplora('https://builder.test', agreeRoutes('https://builder.test', HEADER.hash));
+    const a1 = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
+    const a2 = esplora('https://h2.test', agreeRoutes('https://h2.test', HEADER.hash));
+    const trust = makeHeaderTrust({
+      esploras: [builder, a1, a2],
+      checkpoints: new Map(),
+      proofSource: 'https://builder.test',
+    });
     const report = await trust(HEADER, HEIGHT);
     expect(report.anchored).toBe(true);
     expect(report.independentSources).toBe(2);
-    expect(report.sourcesQueried).toBe(1); // the builder was not asked to attest
-    expect(report.sourcesAgreed).toBe(1);
+    expect(report.sourcesQueried).toBe(2); // the builder was not asked to attest
+    expect(report.sourcesAgreed).toBe(2);
+    expect(report.builderIsSource).toBe(true);
+  });
+
+  it('excludes every backend named by proofSources, not just one', async () => {
+    // a pooled build serves bytes from several backends; all of them are out
+    const p1 = esplora('https://p1.test', agreeRoutes('https://p1.test', HEADER.hash));
+    const p2 = esplora('https://p2.test', agreeRoutes('https://p2.test', HEADER.hash));
+    const attester = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
+    const trust = makeHeaderTrust({
+      esploras: [p1, p2, attester],
+      checkpoints: new Map(),
+      proofSources: new Set(['https://p1.test', 'https://p2.test']),
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/2 serving backend\(s\) excluded/);
   });
 
   it('counts an agreeing attester whose tip endpoint fails (agreement is hash-only)', async () => {
@@ -89,24 +123,26 @@ describe('fail-closed header anchoring', () => {
     const flakyTip = esplora('https://h1.test', {
       [`https://h1.test/block-height/${HEIGHT}`]: HEADER.hash,
     });
+    const attester = esplora('https://h2.test', agreeRoutes('https://h2.test', HEADER.hash));
     const trust = makeHeaderTrust({
-      esploras: [builder, flakyTip],
+      esploras: [builder, flakyTip, attester],
       checkpoints: new Map(),
       proofSource: 'https://builder.test',
     });
     const report = await trust(HEADER, HEIGHT);
     expect(report.anchored).toBe(true);
     expect(report.independentSources).toBe(2);
-    expect(report.sourcesAgreed).toBe(1);
+    expect(report.sourcesAgreed).toBe(2);
     expect(report.tipHeight).toBeUndefined(); // tip phase skipped entirely
   });
 
   it('still enforces minConfirmations through the separate tip phase', async () => {
     const builder = esplora('https://builder.test', {});
-    // attester agrees; its tip is only 2 blocks above the proof height
-    const attester = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash, HEIGHT + 2));
+    // both attesters agree; their tips are only 2 blocks above the proof height
+    const a1 = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash, HEIGHT + 2));
+    const a2 = esplora('https://h2.test', agreeRoutes('https://h2.test', HEADER.hash, HEIGHT + 2));
     const common = {
-      esploras: [builder, attester],
+      esploras: [builder, a1, a2],
       checkpoints: new Map<number, string>(),
       proofSource: 'https://builder.test',
     };
@@ -123,6 +159,8 @@ describe('fail-closed header anchoring', () => {
     const report = await trust(HEADER, HEIGHT); // 767430 is a compiled checkpoint
     expect(report.checkpointHit).toBe(true);
     expect(report.anchored).toBe(true);
+    expect(report.independentSources).toBe(0);
+    expect(report.builderIsSource).toBe(false);
   });
 });
 

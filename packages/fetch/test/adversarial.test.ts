@@ -30,7 +30,10 @@ import {
  */
 
 const E = 'https://esplora.test';
+// attester-only stubs: E serves the proofs, so anchoring needs two agreeing
+// sources outside it
 const E2 = 'https://esplora2.test';
+const E3 = 'https://esplora3.test';
 
 type Route = string | Uint8Array | object | (() => Promise<Response> | Response);
 
@@ -45,7 +48,7 @@ function stubFetch(routes: Record<string, Route>): FetchFn {
   };
 }
 
-/** esplora routes for a synthetic block; both E and E2 attest the height */
+/** esplora routes for a synthetic block; E2 and E3 attest the height */
 function routesForBlock(block: TestBlock, height: number): Record<string, Route> {
   const routes: Record<string, Route> = {
     [`${E}/block/${block.blockHash}/header`]: block.headerHex.trim(),
@@ -54,6 +57,8 @@ function routesForBlock(block: TestBlock, height: number): Record<string, Route>
     [`${E}/blocks/tip/height`]: String(height + 10),
     [`${E2}/block-height/${height}`]: block.blockHash,
     [`${E2}/blocks/tip/height`]: String(height + 10),
+    [`${E3}/block-height/${height}`]: block.blockHash,
+    [`${E3}/blocks/tip/height`]: String(height + 10),
     [`${E}/block/${block.blockHash}/raw`]: serializeBlock(hexToBytes(block.headerHex), block.txs),
   };
   const txids = block.txs.map((t) => t.txidLE);
@@ -70,7 +75,13 @@ function routesForBlock(block: TestBlock, height: number): Record<string, Route>
 }
 
 function newResolver(routes: Record<string, Route>, extra = {}) {
-  return new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), powLimitBits: null, ...extra });
+  return new OrdResolver({
+    esplora: [E],
+    anchorSources: [E2, E3],
+    fetchFn: stubFetch(routes),
+    powLimitBits: null,
+    ...extra,
+  });
 }
 
 /** a standard single-inscription reveal + its funding commit, in one block */
@@ -97,7 +108,8 @@ describe('adversarial: forged low-difficulty header + matching merkle', () => {
     // sanity: the regtest header would never satisfy mainnet difficulty
     expect(header.bits).toBe(0x207fffff);
     const resolver = new OrdResolver({
-      esplora: [E, E2],
+      esplora: [E],
+      anchorSources: [E2, E3],
       fetchFn: stubFetch(routes),
       checkpoints: new Map(), // no checkpoint to lean on
       // powLimitBits left at the mainnet default: the floor must catch this
@@ -247,11 +259,12 @@ describe('adversarial: slow-drip / hung backend', () => {
           });
         });
       }
-      // E2 attester answers mirror E's height routes
-      return onE(url.replace(E2, E));
+      // attester answers mirror E's height routes
+      return onE(url.replace(E2, E).replace(E3, E));
     };
     const resolver = new OrdResolver({
-      esplora: [HUNG, E, E2],
+      esplora: [HUNG, E],
+      anchorSources: [E2, E3],
       fetchFn,
       powLimitBits: null,
       limits: { timeoutMs: 200 },

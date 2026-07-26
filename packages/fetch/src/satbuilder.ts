@@ -38,7 +38,7 @@ import {
 import { EsploraBackend, type FetchFn, type BackendLimits } from './backends.js';
 import { assembleAnchoredHop, type AnchorBackend } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
-import { DEFAULT_ESPLORA } from './resolver.js';
+import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 
 export class SatBuildError extends Error {}
 
@@ -194,6 +194,8 @@ export async function buildSatGenealogyBundle(
 
 export interface FetchSatIdentityOptions {
   esplora?: string[];
+  /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); see HeaderTrustOptions */
+  anchorSources?: string[];
   fetchFn?: FetchFn;
   limits?: Partial<BackendLimits>;
   maxSteps?: number;
@@ -233,6 +235,9 @@ export async function fetchSatIdentity(
   const backends = (options.esplora ?? DEFAULT_ESPLORA).map(
     (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
   );
+  const anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
+    (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
+  );
 
   let built: BuildSatGenealogyResult | undefined;
   let source: EsploraBackend | undefined;
@@ -263,7 +268,7 @@ export async function fetchSatIdentity(
   const trust =
     options.trustHeader ??
     makeHeaderTrust({
-      esploras: backends,
+      esploras: anchors,
       minAgreement: options.minHeaderAgreement,
       minConfirmations: options.minConfirmations,
       checkpoints: options.checkpoints ?? MAINNET_CHECKPOINTS,

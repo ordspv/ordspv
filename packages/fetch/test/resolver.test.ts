@@ -106,11 +106,13 @@ describe('OrdResolver L2 against real inscription 0 (stubbed transport)', () => 
 
 describe('OrdResolver synthetic flows', () => {
   // synthetic blocks are mined at regtest difficulty and non-checkpoint
-  // heights, so these resolvers disable the mainnet powLimit and use a second
-  // stub esplora (E2) as the independent attester the fail-closed anchoring
-  // requires
+  // heights, so these resolvers disable the mainnet powLimit and point
+  // anchoring at two stub attesters (E2, E3). E serves the proofs and is
+  // therefore barred from the vote, which is what the default of two agreeing
+  // outside sources costs.
   const E2 = 'https://esplora2.test';
-  const SYNTHETIC = { powLimitBits: null } as const;
+  const E3 = 'https://esplora3.test';
+  const SYNTHETIC = { powLimitBits: null as null, anchorSources: [E2, E3] };
 
   function esploraRoutesForBlock(block: TestBlock, height: number): Record<string, Route> {
     const routes: Record<string, Route> = {
@@ -124,6 +126,8 @@ describe('OrdResolver synthetic flows', () => {
       [`${E}/blocks/tip/height`]: String(height + 10),
       [`${E2}/block-height/${height}`]: block.blockHash,
       [`${E2}/blocks/tip/height`]: String(height + 10),
+      [`${E3}/block-height/${height}`]: block.blockHash,
+      [`${E3}/blocks/tip/height`]: String(height + 10),
       [`${E}/block/${block.blockHash}/raw`]: serializeBlock(
         hexToBytes(block.headerHex),
         block.txs,
@@ -178,7 +182,7 @@ describe('OrdResolver synthetic flows', () => {
     routes[`${E}/tx/${commitA.txid}/hex`] = bytesToHex(commitA.raw);
     routes[`${E}/tx/${commitB.txid}/hex`] = bytesToHex(commitB.raw);
 
-    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), ...SYNTHETIC });
+    const resolver = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes), ...SYNTHETIC });
 
     // /content follows the delegate
     const viaContent = await resolver.resolve(`ord:${idA}/content`);
@@ -226,7 +230,7 @@ describe('OrdResolver synthetic flows', () => {
     routes[`${E}/tx/${commitB.txid}/hex`] = bytesToHex(commitB.raw);
 
     const resolver = new OrdResolver({
-      esplora: [E, E2],
+      esplora: [E],
       fetchFn: stubFetch(routes),
       checkpoints: new Map([[90, blockA.blockHash]]),
       ...SYNTHETIC,
@@ -257,7 +261,7 @@ describe('OrdResolver synthetic flows', () => {
     const routes = esploraRoutesForBlock(block, 100);
     routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
 
-    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), ...SYNTHETIC });
+    const resolver = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes), ...SYNTHETIC });
     const result = await resolver.resolve(`ord:${reveal.txid}i0`, { verification: 'L3' });
     expect(result.verification.level).toBe('L3');
     expect(new TextDecoder().decode(result.body)).toBe('strongest level');

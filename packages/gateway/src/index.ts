@@ -42,6 +42,8 @@ export interface GatewayOptions {
   port?: number;
   upstream?: string;
   esplora?: string[];
+  /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); never the proof backends */
+  anchorSources?: string[];
   mode?: 'proxy' | 'verify';
   verification?: 'L2' | 'L3';
   fetchFn?: FetchFn;
@@ -131,6 +133,7 @@ export function createGateway(options: GatewayOptions = {}): Server {
   );
   const resolver = new OrdResolver({
     esplora: esploras.map((e) => e.baseUrl),
+    anchorSources: options.anchorSources,
     ordGateways: [upstream],
     fetchFn,
     verification: level,
@@ -438,6 +441,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     port,
     upstream: process.env.ORD_UPSTREAM,
     esplora: process.env.ESPLORA?.split(','),
+    anchorSources: process.env.ANCHOR_SOURCES?.split(','),
     mode: (process.env.GATEWAY_MODE as 'proxy' | 'verify') ?? 'proxy',
     verification: process.env.GATEWAY_LEVEL === 'L3' ? 'L3' : 'L2',
     cacheMaxBytes: process.env.CACHE_MAX_BYTES ? Number(process.env.CACHE_MAX_BYTES) : undefined,

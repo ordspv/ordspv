@@ -137,7 +137,12 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   contradicting a checkpoint is rejected outright. Ships with genesis, 767430
   (verified cryptographically in-repo), 824544 (Jubilee).
 - **M-of-N independent sources** (SHOULD, default 2): hash-at-height agreement across
-  operator-diverse esplora/electrum endpoints; optional min-confirmations gate.
+  operator-diverse esplora/electrum endpoints; optional min-confirmations gate. Any
+  endpoint that served bytes for the bundle MUST be excluded from the vote and MUST NOT
+  be counted toward the threshold, so the default means two agreeing outsiders. Because
+  attesting needs only `/block-height/<n>`, the attesting list is configured separately
+  from the proof backends (`DEFAULT_ANCHOR_SOURCES`, `--anchor-source`), and an endpoint
+  named in both lists is filtered out of the vote for the bundles it served.
 - **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):
   a locally validated header chain. Electrum `blockchain.block.headers` batches are
   validated per header (linkage, PoW, exact pow.cpp retarget arithmetic,
