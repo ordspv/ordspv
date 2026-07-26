@@ -106,7 +106,9 @@ caller's own node), never as part of the proof. A custody proof is therefore
 - Unbound inscriptions (zero-value envelope input, unrecognized even field):
   ord's unbound outpoint is a bookkeeping location, not a chain location;
   refused loudly.
-- Backward sat identity (tracing to a coinbase for rare-sat claims): same
-  machinery run in reverse; unimplemented.
 - Inscription numbers: global aggregates with no path structure; out of scope
   for any custody proof.
+
+Backward sat identity (which sat an inscription lives on, traced to the
+coinbase that mined it) is this machinery run in reverse, and is specified
+separately in SPEC-SAT.

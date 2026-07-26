@@ -177,7 +177,38 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   verification (rendering depends on runtime context); SPEC-GATEWAY §6 tiers which
   recursion endpoints can themselves be served trustlessly.
 
-## 7. Level selection guidance
+## 7. Galleries (properties tag 17)
+
+An inscription whose properties CBOR carries an Items array is a gallery, and
+its member list is envelope data. That places it inside the byte-level model
+rather than beside it: an L2 or L3 proof over the gallery inscription settles
+membership and completeness together, because the list is part of the bytes the
+proof already binds. Children provenance is the opposite case, since a parent's
+envelope says nothing about who later claimed it, and enumeration needs an
+index.
+
+Two encodings are interchangeable and implementations MUST accept both:
+
+- inline, where each Item carries its serialized inscription id (32 to 36
+  bytes: txid followed by a trailing-zero-trimmed little-endian index) under
+  Item key 0;
+- packed, where properties key 2 holds the concatenated 32-byte txids and each
+  Item carries only its index under Item key 2 (absent means 0). The Item at
+  array position `i` takes txid slice `i`.
+
+Decoding is lenient, matching ord's treatment of malformed envelope data: an
+entry that does not decode is skipped rather than invalidating the list, and
+properties with no Items yield a non-gallery result. Implementations SHOULD
+report how many entries were skipped, so a caller claiming a *complete* member
+list can tell whether it has one.
+
+Properties may declare a `property_encoding` (tag 19). Decompression is subject
+to the same bomb limits as content (SPEC-GATEWAY), and a gallery reader given
+still-compressed bytes MUST refuse rather than report an empty gallery.
+
+Reference: `@ordspv/core` (`gallery.ts`).
+
+## 8. Level selection guidance
 
 | consumer | recommended |
 |---|---|
@@ -187,7 +218,7 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
 | bridge/custody attestation, disputes | L3, always, with header sync or checkpoint |
 | archival mirrors | L3 + full block retention |
 
-## 8. Conformance vectors
+## 9. Conformance vectors
 
 - Positive: inscription 0 L2 bundle (fixtures in `fixtures/insc0/`; assembled and
   verified in `resolver.test.ts`); synthetic L3 bundles at positions 1 and 2

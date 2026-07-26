@@ -56,21 +56,38 @@ per-source observations, since no inclusion proof can express a negative. The
 bundle format and verification rules are in
 [docs/spec/SPEC-CUSTODY.md](docs/spec/SPEC-CUSTODY.md).
 
+## Sat identity
+
+`ord-resolve sat <id>` answers which sat an inscription lives on, with its
+ordinal name and rarity, by running the same machinery backward to the coinbase
+that mined it. Reversing the walk removes the pathfinder entirely: forward
+custody has to ask a backend which transaction spent an outpoint, while
+backward every input already names its funding txid, so ancestry is a hash chain
+and a backend serving wrong bytes fails the check locally. Intermediate
+transactions need no inclusion proofs at all, since each is pinned by the txid
+its successor names, and only the reveal and terminal coinbase anchor to
+headers. Sat numbers come from the ordinal theory closed forms, and the
+coinbase's own BIP34 height is cross-checked against the bundle's claim so the
+one figure a server could otherwise choose freely is verified too. Fee-tail
+ancestries and unbound inscriptions are refused loudly, as in custody.
+`--bundle FILE` writes the genealogy artifact, which re-verifies offline with no
+network. Rules are in [docs/spec/SPEC-SAT.md](docs/spec/SPEC-SAT.md).
+
 ## Packages
 
 | package | what |
 |---|---|
-| `@ordspv/core` | zero-IO primitives: tx/header/block parsing, merkle and witness-commitment proofs, BIP-341 checks, ord-exact envelope parser, proof-bundle verifier, CBOR |
+| `@ordspv/core` | zero-IO primitives: tx/header/block parsing, merkle and witness-commitment proofs, BIP-341 checks, ord-exact envelope parser, proof-bundle verifier, custody and sat-genealogy verifiers, gallery decoding, CBOR |
 | `@ordspv/fetch` | `ordFetch()` / `OrdResolver`: URI parsing, esplora/ord backends with failover, proof building, header trust (checkpoints, M-of-N, header sync), delegation, integrity pins |
 | `@ordspv/gateway` | reference HTTP gateway: ord-parity `/content` and `/r/*`, `/ord/v1/proof` bundles, verify-before-serve mode |
-| `@ordspv/cli` | `ord-resolve <uri>`, `proof`, `verify`, `custody`, `parse` |
+| `@ordspv/cli` | `ord-resolve <uri>`, `proof`, `verify`, `custody`, `sat`, `parse` |
 | `@ordspv/proof-sidecar` | proof bundles straight from a Bitcoin Core node (txindex), for L2/L3 without hosting esplora |
 
 ## Quick start
 
 ```bash
 npm install
-npm test                                  # 294 tests, incl. real mainnet vectors, offline
+npm test                                  # 337 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json
@@ -81,6 +98,9 @@ npx tsx packages/cli/src/main.ts verify bundle.json
 
 # prove where the inscribed sat is now (live network):
 npx tsx packages/cli/src/main.ts custody 6fb976…2799i0 --json
+
+# prove which sat it is, and keep the artifact:
+npx tsx packages/cli/src/main.ts sat 6fb976…2799i0 --bundle genealogy.json
 
 # run a verifying gateway:
 GATEWAY_MODE=verify npx tsx packages/gateway/src/index.ts
@@ -121,6 +141,9 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
 - [docs/spec/SPEC-CUSTODY.md](docs/spec/SPEC-CUSTODY.md): verifiable satpoint
   custody paths (bundle format, transfer arithmetic, verification rules, v1
   boundaries)
+- [docs/spec/SPEC-SAT.md](docs/spec/SPEC-SAT.md): verifiable sat identity
+  (numbering closed forms, backward walk, genealogy bundle format, BIP34
+  cross-check)
 - [docs/spec/SPEC-GATEWAY.md](docs/spec/SPEC-GATEWAY.md): HTTP surface, personalities,
   attestation, recursion tiers
 - [docs/CROSS-CHAIN.md](docs/CROSS-CHAIN.md): how EVM tokens should embed `ord:` URIs

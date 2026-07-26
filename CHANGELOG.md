@@ -5,9 +5,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.3.0] - 2026-07-26
 
-Custody proofs: verifiable satpoint history for an inscription, from its
-reveal to its current location, on the same fail-closed trust model as
-content verification.
+Sat provenance in both directions, on the same fail-closed trust model as
+content verification. Forward, custody proofs give an inscription's satpoint
+history from its reveal to its current location. Backward, sat identity proves
+which sat it lives on, traced to the coinbase that mined it. Galleries decode
+from the envelope, which puts membership inside the bytes a content proof
+already binds.
 
 ### Added
 
@@ -30,8 +33,35 @@ content verification.
 - **`@ordspv/cli`: `ord-resolve custody <inscription-id> [--json]`** prints
   the proven satpoint with hop count and per-source tip state. A pending
   unconfirmed spend of the tip is surfaced when present.
-- **SPEC-CUSTODY** specifies the bundle format and the verification rules; a
-  deferred section states the v1 boundaries.
+- **`@ordspv/core`: sat identity.** `verifySatGenealogy` proves which sat an
+  inscription lives on, with its ordinal name and rarity, by folding a chain
+  of funding transactions back to the coinbase that mined the sat. Reversing
+  the walk removes the pathfinder: every input names its funding txid, so
+  ancestry is a hash chain and a backend serving wrong bytes fails locally.
+  Intermediate transactions therefore need no inclusion proofs, and only the
+  reveal and terminal coinbase anchor to headers. Sat numbers come from the
+  ordinal theory closed forms, with the coinbase's BIP34 height cross-checked
+  against the bundle's claim from height 230,000 on. Also exported:
+  `subsidySats`, `firstSatOfBlock`, `satToHeight`, `satName`, `satRarity`.
+- **`@ordspv/fetch`: sat genealogy building.** `buildSatGenealogyBundle` walks
+  funding transactions backward from the reveal, fetching previous
+  transactions one input at a time and only until their cumulative value
+  covers the traced position, so a consolidation with hundreds of inputs costs
+  one request when the sat sits in the first. `fetchSatIdentity` builds with
+  failover, verifies offline, and anchors both endpoint headers.
+- **`@ordspv/cli`: `ord-resolve sat <inscription-id> [--json] [--bundle FILE]`**
+  prints the sat number with its name, rarity, mining block, and walk depth.
+  `--bundle` writes the genealogy artifact for later offline re-verification.
+- **`@ordspv/core`: gallery member lists.** `parseGallery` and
+  `inscriptionGallery` decode the properties field (tag 17) in both the inline
+  and packed encodings. Because the member list is envelope data, an L2 or L3
+  proof over the gallery inscription settles membership and completeness with
+  no indexer, unlike children provenance where enumeration needs one. Decoding
+  is lenient in ord's style and reports a `skipped` count, so a caller
+  claiming a complete list can tell whether it has one.
+- **SPEC-CUSTODY** specifies the custody bundle format and the verification
+  rules; a deferred section states the v1 boundaries. **SPEC-SAT** does the
+  same for sat identity, and **SPEC-VERIFICATION §7** covers galleries.
 
 ### Fixed
 
@@ -125,7 +155,7 @@ recommended; the 0.1.x line is deprecated.
 - **Header-sync most-work reorgs.** A competing branch is adopted only when its
   cumulative work strictly exceeds the current chain's (most-work, not tallest);
   reorg rewinds are staged in memory and persisted once. Only a genuine tip
-  linkage break triggers a rewind — proof-of-work, difficulty, median-time-past,
+  linkage break triggers a rewind. Proof-of-work, difficulty, median-time-past,
   and checkpoint failures abort without truncating. Header timestamps are bounded
   against the local clock.
 - **Electrum TLS verification.** The Electrum transport verifies server

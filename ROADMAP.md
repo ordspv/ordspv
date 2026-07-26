@@ -1,21 +1,29 @@
 # Roadmap: state of the work and what to build next
 
-*Status as of 2026-07-12. Read DEVELOPMENT.md for operational invariants, and
+*Status as of 2026-07-26. Read DEVELOPMENT.md for operational invariants, and
 docs/RESEARCH.md for the full technical rationale.*
 
 ## What exists and what it proves
 
 - Specs (v0.1 drafts): URI scheme profile extending ord's own `ord:` draft
   (docs/spec/SPEC-URI.md), verification levels L0–L3 plus the proof bundle format
-  (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), and a cross-chain
+  (SPEC-VERIFICATION.md), gateway HTTP surface (SPEC-GATEWAY.md), satpoint custody
+  paths (SPEC-CUSTODY.md), sat identity (SPEC-SAT.md), and a cross-chain
   embedding guide (docs/CROSS-CHAIN.md). All of it is grounded in the cited research
   synthesis (docs/RESEARCH.md).
-- Working code, 246 tests, all offline-runnable. `@ordspv/core` has the consensus
+- Working code, 337 tests, all offline-runnable. `@ordspv/core` has the consensus
   primitives, the ord-exact envelope parser, and L2/L3 proof verification.
   `@ordspv/fetch` is the verified resolver: failover backends, checkpoint and M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling.
   `@ordspv/gateway` has the proxy/verify personalities and the proof endpoint.
   `@ordspv/cli` wraps it for the terminal.
+- Sat provenance in both directions (0.3.0). Forward: custody bundles walk the
+  satpoint from the reveal through each confirmed spend, with the backend as an
+  untrusted pathfinder. Backward: sat genealogy bundles fold funding transactions
+  to the coinbase that mined the sat, where no pathfinder exists because every
+  input names its funder. Both refuse fee paths and unbound inscriptions loudly
+  rather than guessing. Gallery member lists decode from the envelope's properties
+  field, so an L2/L3 proof settles membership with no indexer.
 - Live-validated: inscription 0 verifies at L2 end-to-end from real mainnet bytes
   (vendored, self-verifying fixtures). The BIP-341 check passes against the real
   commit output, and the esplora merkle proof folds to the real header.
@@ -25,7 +33,7 @@ docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network)
 
-1. `npm install && npm test && npx tsc --noEmit`: expect 246 green.
+1. `npm install && npm test && npx tsc --noEmit`: expect 337 green.
 2. `npx tsx scripts/fetch-fixtures.ts`: byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
    green 2026-07-11, before and after the envelope-parser rewrite.)*
@@ -47,6 +55,13 @@ docs/RESEARCH.md for the full technical rationale.*
    delegate, body sha256 incl. tag-9 encodings, metadata hex, pre-Jubilee curse
    charm) over a wider corpus incl. a 666-envelope batch and a multi-input reveal.
    142 checks green on 2026-07-11, zero mismatches.
+5. **Not yet run: sat identity against a live oracle.** `ord-resolve sat <id>`
+   should agree with ordinals.com's `sat`, `name`, and `rarity` fields for a
+   spread of inscriptions (one funded straight from a coinbase, one behind a deep
+   funding chain, one with a pointer, one on a rare sat). The derived prediction
+   for inscription 0 is sat 1252201400444387, name `ezcubunuovm`. Also worth
+   running the gallery decoder against a real gallery inscription in both
+   encodings.
 
 ## Known deltas vs ord to reconcile (small, flagged in code)
 
