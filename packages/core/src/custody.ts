@@ -135,6 +135,10 @@ function isCoinbaseTx(tx: ParsedTx): boolean {
  * pointer (tag 2) instead indexes the OUTPUT sat space directly; a pointer at
  * or past the total output sats is ignored per the handbook.
  *
+ * Inscriptions ord considers UNBOUND (zero-value envelope input, or an
+ * unrecognized even field) have no output-space location at all and are
+ * refused with CustodyUnsupportedError before any arithmetic.
+ *
  * inputValues must cover inputs 0..inscription.input (use provenInputValues).
  */
 export function genesisSatpoint(
@@ -150,6 +154,16 @@ export function genesisSatpoint(
   if (inputValues.length < inscription.input + 1) {
     throw new Error(`need input values for inputs 0..${inscription.input}`);
   }
+  // ord marks an inscription UNBOUND when its envelope input has zero value or
+  // its envelope carries an unrecognized even field; unbound inscriptions are
+  // assigned to the all-zeros unbound outpoint, never to an output, regardless
+  // of pointer or position arithmetic (inscription_updater.rs).
+  if (inscription.unboundByEvenField || inputValues[inscription.input] === 0n) {
+    throw new CustodyUnsupportedError(
+      'inscription is unbound at reveal (zero-value envelope input or unrecognized even field); ord binds it to the unbound outpoint, not to an output',
+      height,
+    );
+  }
   const totalOut = totalOutputSats(reveal);
   if (inscription.pointer !== undefined && inscription.pointer < totalOut) {
     const sp = mapToOutputs(reveal, inscription.pointer);
@@ -162,7 +176,7 @@ export function genesisSatpoint(
   const sp = mapToOutputs(reveal, position);
   if (!sp) {
     throw new CustodyUnsupportedError(
-      'inscription is bound to fee sats at reveal (unbound inscription); custody v1 does not track sats through fees',
+      'inscription is bound to fee sats at reveal; custody v1 does not track sats through fees',
       height,
     );
   }

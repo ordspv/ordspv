@@ -233,6 +233,36 @@ describe('genesisSatpoint', () => {
     expect(formatSatpoint(ok)).toBe(`${r.tx.txid}:0:600`);
   });
 
+  it('refuses ord-unbound inscriptions: unrecognized even field', () => {
+    const insc = mkInscription({ input: 0 });
+    insc.unboundByEvenField = true;
+    expect(() => genesisSatpoint(reveal.tx, insc, values)).toThrow(CustodyUnsupportedError);
+    expect(() => genesisSatpoint(reveal.tx, insc, values)).toThrow(/unbound at reveal/);
+    // a pointer does not rescue an unbound inscription (ord ignores location
+    // arithmetic entirely for unbound)
+    insc.pointer = 100n;
+    expect(() => genesisSatpoint(reveal.tx, insc, values)).toThrow(CustodyUnsupportedError);
+  });
+
+  it('refuses ord-unbound inscriptions: zero-value envelope input', () => {
+    const fundZero = buildTx([{ txid: T0, vout: 3 }], [0n]);
+    // envelope input 1 spends a zero-value output; outputs still cover the
+    // default position (600 < 700), so only the unbound rule can refuse this
+    const r = buildTx(
+      [
+        { txid: fund1.tx.txid, vout: 0 },
+        { txid: fundZero.tx.txid, vout: 0 },
+      ],
+      [700n],
+    );
+    expect(() =>
+      genesisSatpoint(r.tx, mkInscription({ input: 1 }), [600n, 0n]),
+    ).toThrow(/unbound at reveal/);
+    // sanity: same shape with a funded envelope input lands normally
+    const ok = genesisSatpoint(r.tx, mkInscription({ input: 1 }), [600n, 50n]);
+    expect(formatSatpoint(ok)).toBe(`${r.tx.txid}:0:600`);
+  });
+
   it('computes inscription 0 genesis from the real reveal', () => {
     const revealTx = parseTx(hexToBytes(revealHex));
     const insc = mkInscription({ input: 0 });

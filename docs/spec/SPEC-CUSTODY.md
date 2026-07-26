@@ -30,8 +30,13 @@ pointer (tag 2):
 - a pointer strictly less than the total output sats instead indexes the
   output sat space directly; a pointer at or past that total MUST be ignored;
 - zero-value outputs occupy no sat space;
+- an inscription whose envelope input has zero value, or whose envelope
+  carries an unrecognized even field, is UNBOUND: ord assigns it to the
+  all-zeros unbound outpoint, not to any output, regardless of pointer or
+  position. v1 MUST refuse (`CustodyUnsupportedError`);
 - a position at or past the total output sats means the inscription bound to
-  fee sats; v1 MUST refuse (`CustodyUnsupportedError`), not guess.
+  fee sats (ord routes it through the block's coinbase); v1 MUST refuse
+  (`CustodyUnsupportedError`), not guess.
 
 Input values are needed for positions, and inputs do not carry values.
 Verifiers MUST obtain them from the referenced previous transactions and MUST
@@ -96,8 +101,11 @@ caller's own node), never as part of the proof. A custody proof is therefore
 
 ## Deferred (v1 boundaries)
 
-- Sats through fees (reveal-unbound inscriptions, fee-spillover hops,
-  coinbase traversal): requires block-level fee accounting; refused loudly.
+- Sats through fees (fee-bound reveals, fee-spillover hops, coinbase
+  traversal): requires block-level fee accounting; refused loudly.
+- Unbound inscriptions (zero-value envelope input, unrecognized even field):
+  ord's unbound outpoint is a bookkeeping location, not a chain location;
+  refused loudly.
 - Backward sat identity (tracing to a coinbase for rare-sat claims): same
   machinery run in reverse; unimplemented.
 - Inscription numbers: global aggregates with no path structure; out of scope
