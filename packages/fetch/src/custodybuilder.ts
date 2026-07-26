@@ -25,6 +25,7 @@ import {
   provenInputValues,
   formatSatpoint,
   verifyCustodyBundle,
+  CustodyUnsupportedError,
   type CustodyBundleJson,
   type CustodyHopJson,
   type Satpoint,
@@ -221,6 +222,9 @@ export async function fetchCustody(
       source = backend;
       break;
     } catch (e) {
+      // a v1-domain refusal is a property of the path, not of the backend:
+      // every backend would report the same, so surface it as-is
+      if (e instanceof CustodyUnsupportedError) throw e;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }

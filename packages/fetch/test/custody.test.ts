@@ -8,6 +8,7 @@ import {
   type ParsedTx,
 } from '@ordspv/core';
 import { fetchCustody, CustodyError } from '../src/index.js';
+import { CustodyUnsupportedError } from '@ordspv/core';
 import type { FetchFn } from '../src/backends.js';
 import {
   buildBlock,
@@ -177,6 +178,30 @@ describe('fetchCustody', () => {
     await expect(fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes) })).rejects.toThrow(
       /BUILD_FAILED|does not/,
     );
+  });
+
+  it('surfaces a fee-spillover path as CustodyUnsupportedError, not backend failover', async () => {
+    const { commit, reveal, block, id } = inscriptionSetup();
+    // the confirmed spend burns everything to fees (single zero-value output),
+    // so the tracked sat leaves v1's domain: a deterministic refusal that must
+    // not be retried against, or masked by, other backends
+    const spend = legacySpend(reveal.txid, 0, [0n]);
+    const blockB = buildBlock([spend]);
+    const routes = {
+      ...routesForBlock(block, 100, 120),
+      ...routesForBlock(blockB, 105, 120),
+    };
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 105, block_hash: blockB.blockHash },
+    };
+
+    const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes) });
+    await expect(p).rejects.toThrow(CustodyUnsupportedError);
+    await expect(p).rejects.toThrow(/does not track sats through fees/);
   });
 
   it('stops at an unconfirmed spend and reports it as pending', async () => {
