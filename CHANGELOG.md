@@ -3,6 +3,52 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-26
+
+Custody proofs: verifiable satpoint history for an inscription, from its
+reveal to its current location, on the same fail-closed trust model as
+content verification.
+
+### Added
+
+- **`@ordspv/core`: custody bundle verification.** `verifyCustodyBundle`
+  recomputes an inscription's satpoint path from chain data alone: the
+  genesis satpoint from the reveal (pointer aware, matching ord's assignment
+  rules) plus one ordinal transfer step per spending transaction. Each hop is
+  merkle-proven into a PoW-checked header with the txCount depth hardening
+  from SPEC-VERIFICATION. Input values are proven by the previous
+  transactions the spending inputs name, and the claimed final satpoint is
+  recomputed and checked. Paths that cross fees or a coinbase raise
+  `CustodyUnsupportedError`, as do inscriptions ord treats as unbound
+  (zero-value envelope input or unrecognized even field).
+- **`@ordspv/fetch`: custody path building.** `buildCustodyBundle` walks
+  confirmed outspends from the reveal; the backend acts as a pathfinder and
+  nothing it asserts is trusted. `fetchCustody` builds with failover,
+  verifies the bundle, anchors every hop header through the existing
+  header-trust machinery with the building backend excluded from attesting,
+  and reports tip liveness as per-source outspend observations.
+- **`@ordspv/cli`: `ord-resolve custody <inscription-id> [--json]`** prints
+  the proven satpoint with hop count and per-source tip state. A pending
+  unconfirmed spend of the tip is surfaced when present.
+- **SPEC-CUSTODY** specifies the bundle format and the verification rules; a
+  deferred section states the v1 boundaries.
+
+### Fixed
+
+- **The 64-byte transaction rejection tests the stripped serialization** in
+  proof and custody verification. The txid-tree leaf preimage is the
+  stripped encoding, so the raw-length check missed segwit-wrapped
+  64-byte-stripped transactions (CVE-2017-12842 hardening).
+- **`CustodyUnsupportedError` passes through backend failover** in
+  `fetchCustody` unchanged. It previously surfaced as a generic build
+  failure.
+- **Custody walks complete at exactly `maxHops` transfers.** The cap error
+  fires only when a further confirmed spend exists past the cap.
+
+### Changed
+
+- All five packages move to 0.3.0; inter-package pins updated to match.
+
 ## [0.2.1] - 2026-07-14
 
 Operational hardening in the gateway proxy and header-anchoring layers. The

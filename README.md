@@ -41,6 +41,21 @@ Levels **L0** (trusted gateway), **L1** (`#integrity=` sha256 pin, checkable wit
 zero Bitcoin infrastructure), L2, and L3 are formalized in the specs. The L2
 inscriber-level caveat is characterized precisely, tested, and surfaced as assurances.
 
+## Custody proofs
+
+Content verification answers what an inscription's bytes are. `ord-resolve
+custody <id>` answers where the inscribed sat is. The custody bundle walks the
+satpoint from the reveal through each confirmed spend: every hop transaction
+is merkle-proven into a PoW-checked header, and the ordinal transfer
+arithmetic is recomputed locally from input values proven by the previous
+transactions the spending inputs name. Backends only find the path; a lying
+backend can withhold a path and cannot fabricate one. v1 refuses fee and
+coinbase paths and inscriptions ord treats as unbound; these refusals throw
+`CustodyUnsupportedError`. The final outpoint's unspent status is reported as
+per-source observations, since no inclusion proof can express a negative. The
+bundle format and verification rules are in
+[docs/spec/SPEC-CUSTODY.md](docs/spec/SPEC-CUSTODY.md).
+
 ## Packages
 
 | package | what |
@@ -48,14 +63,14 @@ inscriber-level caveat is characterized precisely, tested, and surfaced as assur
 | `@ordspv/core` | zero-IO primitives: tx/header/block parsing, merkle and witness-commitment proofs, BIP-341 checks, ord-exact envelope parser, proof-bundle verifier, CBOR |
 | `@ordspv/fetch` | `ordFetch()` / `OrdResolver`: URI parsing, esplora/ord backends with failover, proof building, header trust (checkpoints, M-of-N, header sync), delegation, integrity pins |
 | `@ordspv/gateway` | reference HTTP gateway: ord-parity `/content` and `/r/*`, `/ord/v1/proof` bundles, verify-before-serve mode |
-| `@ordspv/cli` | `ord-resolve <uri>`, `proof`, `verify`, `parse` |
+| `@ordspv/cli` | `ord-resolve <uri>`, `proof`, `verify`, `custody`, `parse` |
 | `@ordspv/proof-sidecar` | proof bundles straight from a Bitcoin Core node (txindex), for L2/L3 without hosting esplora |
 
 ## Quick start
 
 ```bash
 npm install
-npm test                                  # 261 tests, incl. real mainnet vectors, offline
+npm test                                  # 294 tests, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json
@@ -63,6 +78,9 @@ npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2a
 # emit an offline-verifiable proof bundle:
 npx tsx packages/cli/src/main.ts proof 6fb976…2799i0 --level L2 > bundle.json
 npx tsx packages/cli/src/main.ts verify bundle.json
+
+# prove where the inscribed sat is now (live network):
+npx tsx packages/cli/src/main.ts custody 6fb976…2799i0 --json
 
 # run a verifying gateway:
 GATEWAY_MODE=verify npx tsx packages/gateway/src/index.ts
@@ -100,6 +118,9 @@ const res = await ordFetch('ord:<id>/content');   // verified at L2 by default
   (extends the upstream draft, doesn't fork it)
 - [docs/spec/SPEC-VERIFICATION.md](docs/spec/SPEC-VERIFICATION.md): levels L0–L3,
   proof bundle format, merkle hardening, header anchoring
+- [docs/spec/SPEC-CUSTODY.md](docs/spec/SPEC-CUSTODY.md): verifiable satpoint
+  custody paths (bundle format, transfer arithmetic, verification rules, v1
+  boundaries)
 - [docs/spec/SPEC-GATEWAY.md](docs/spec/SPEC-GATEWAY.md): HTTP surface, personalities,
   attestation, recursion tiers
 - [docs/CROSS-CHAIN.md](docs/CROSS-CHAIN.md): how EVM tokens should embed `ord:` URIs
