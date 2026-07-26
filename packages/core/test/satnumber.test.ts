@@ -11,6 +11,7 @@ import {
   coinbaseSatAt,
   bip34Height,
   verifySatGenealogy,
+  serializeFull,
   CustodyUnsupportedError,
   TOTAL_SATS,
   LAST_SAT,
@@ -84,6 +85,27 @@ function buildTx(
 
 function buildCoinbase(outputs: OutSpec[], scriptSig?: Uint8Array): { hex: string; tx: ParsedTx } {
   return buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig }], outputs);
+}
+
+/** segwit tx with a witness stack per input, so a reveal can have several */
+function buildSegwitTx(
+  inputs: { txid: string; vout: number; witness?: Uint8Array[] }[],
+  outputs: OutSpec[],
+): { hex: string; tx: ParsedTx } {
+  const raw = serializeFull({
+    version: 2,
+    inputs: inputs.map((i) => ({
+      prevTxidLE: hexToBytes(i.txid).reverse(),
+      prevTxid: i.txid,
+      vout: i.vout,
+      scriptSig: new Uint8Array(0),
+      sequence: 0xfffffffd,
+      witness: i.witness ?? [],
+    })),
+    outputs: outputs.map((o) => ({ value: o.value, scriptPubKey: o.spk ?? new Uint8Array([0x51]) })),
+    locktime: 0,
+  });
+  return { hex: bytesToHex(raw), tx: parseTx(raw) };
 }
 
 /** easiest-PoW header over a single-tx block */
@@ -311,5 +333,46 @@ describe('verifySatGenealogy', () => {
     };
     expect(() => verifySatGenealogy(b)).toThrow(CustodyUnsupportedError);
     expect(() => verifySatGenealogy(b)).toThrow(/fee sats in block 1000/);
+  });
+
+  it('accepts prev txs past the envelope input when a pointer needs them', () => {
+    // pointer 1500 indexes output space, which the SECOND input funds; the
+    // envelope is on input 0, so proving inputs 0..0 is not enough to locate it
+    const pointerScript = envelopeScript(
+      { fields: [[1, 'text/plain'], [2, new Uint8Array([0xdc, 0x05])]], body: ['sat'] },
+      { checksigPrefix: true },
+    );
+    const ptrTap = taprootCommit(pointerScript);
+    const cb = buildCoinbase([{ value: 3_000_000_000n }]);
+    const fA = buildTx([{ txid: cb.tx.txid, vout: 0 }], [{ value: 1000n }, { value: 2000n }]);
+    const reveal2 = buildSegwitTx(
+      [
+        {
+          txid: fA.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), pointerScript, ptrTap.controlBlock],
+        },
+        { txid: fA.tx.txid, vout: 1 },
+      ],
+      [{ value: 2500n }],
+    );
+    const b: SatGenealogyBundleJson = {
+      version: 1,
+      inscriptionId: `${reveal2.tx.txid}i0`,
+      reveal: anchoredHop(reveal2.tx.txidLE, reveal2.hex, 2000, [fA.hex, fA.hex]),
+      funding: [{ tx: { hex: fA.hex }, prevTxs: [cb.hex] }],
+      coinbase: anchoredHop(cb.tx.txidLE, cb.hex, 1000, []),
+      // 1500 -> input 1 at offset 500 -> fA:1 -> abs 1500 in fA -> cb:0 at 1500
+      claimedSat: (firstSatOfBlock(1000) + 1500n).toString(),
+    };
+
+    const res = verifySatGenealogy(b);
+    expect(res.revealPosition).toBe(1500n);
+    expect(res.sat).toBe(firstSatOfBlock(1000) + 1500n);
+    expect(res.depth).toBe(1);
+
+    // and a bundle that stops at the envelope input cannot locate the sat
+    const short = { ...b, reveal: { ...b.reveal, prevTxs: [fA.hex] } };
+    expect(() => verifySatGenealogy(short)).toThrow(/more are needed/);
   });
 });

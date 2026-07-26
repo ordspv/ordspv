@@ -119,7 +119,8 @@ export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: numb
   return values;
 }
 
-function isCoinbaseTx(tx: ParsedTx): boolean {
+/** A coinbase spends a single null outpoint; no funding transaction exists. */
+export function isCoinbaseTx(tx: ParsedTx): boolean {
   return (
     tx.inputs.length === 1 &&
     tx.inputs[0].vout === 0xffffffff &&

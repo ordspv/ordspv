@@ -25,6 +25,7 @@ import { parseInscriptionId } from './inscriptionId.js';
 import { hexToBytes } from './bytes.js';
 import {
   CustodyUnsupportedError,
+  isCoinbaseTx,
   provenInputValues,
   verifyAnchoredHop,
   type CustodyHopJson,
@@ -115,14 +116,6 @@ export function satName(sat: bigint): string {
 // ---------------------------------------------------------------------------
 // Backward arithmetic
 // ---------------------------------------------------------------------------
-
-function isCoinbaseTx(tx: ParsedTx): boolean {
-  return (
-    tx.inputs.length === 1 &&
-    tx.inputs[0].vout === 0xffffffff &&
-    tx.inputs[0].prevTxidLE.every((b) => b === 0)
-  );
-}
 
 /** Absolute output-space position of (vout, offset) in a transaction. */
 export function outputSpacePosition(tx: ParsedTx, vout: number, offset: bigint): bigint {
@@ -281,7 +274,16 @@ export function verifySatGenealogy(
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
   }
   const k = inscription.input;
-  const revealValues = provenInputValues(reveal, bundle.reveal.prevTxs, k);
+  // prevTxs must cover at least inputs 0..k so the envelope input's value is
+  // proven; a pointer can push the start position into a LATER input, so any
+  // additional prev txs the bundle supplies are used too
+  const revealUpTo = Math.min(bundle.reveal.prevTxs.length, reveal.inputs.length) - 1;
+  if (revealUpTo < k) {
+    throw new Error(
+      `reveal needs prev txs for inputs 0..${k}, got ${bundle.reveal.prevTxs.length}`,
+    );
+  }
+  const revealValues = provenInputValues(reveal, bundle.reveal.prevTxs, revealUpTo);
   if (inscription.unboundByEvenField || revealValues[k] === 0n) {
     throw new CustodyUnsupportedError(
       'inscription is unbound at reveal (zero-value envelope input or unrecognized even field); it has no sat identity to trace',
