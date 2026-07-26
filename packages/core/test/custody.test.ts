@@ -1,0 +1,365 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  parseTx,
+  parseSatpoint,
+  formatSatpoint,
+  genesisSatpoint,
+  transferSatpoint,
+  provenInputValues,
+  verifyCustodyBundle,
+  CustodyUnsupportedError,
+  type CustodyBundleJson,
+  type Inscription,
+  type ParsedTx,
+  hexToBytes,
+  bytesToHex,
+  sha256d,
+  internalToDisplay,
+} from '../src/index.js';
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
+const revealHex = readFileSync(join(FIXTURES, 'reveal.hex'), 'utf8').trim();
+const commitHex = readFileSync(join(FIXTURES, 'commit.hex'), 'utf8').trim();
+const headerHex = readFileSync(join(FIXTURES, 'header-767430.hex'), 'utf8').trim();
+const merkleProof = JSON.parse(readFileSync(join(FIXTURES, 'merkle-proof.json'), 'utf8')) as {
+  block_height: number;
+  merkle: string[];
+  pos: number;
+};
+const expected = JSON.parse(readFileSync(join(FIXTURES, 'expected.json'), 'utf8')) as {
+  revealTxid: string;
+  blockHash: string;
+  blockHeight: number;
+};
+const INSC0_TXCOUNT = 2332; // block 767430; consistent with the 12-node branch depth
+
+// ---------------------------------------------------------------------------
+// hand-built legacy transactions (values are all FIFO arithmetic needs)
+// ---------------------------------------------------------------------------
+
+function u32le(n: number): Uint8Array {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, n, true);
+  return b;
+}
+function u64le(n: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, n, true);
+  return b;
+}
+function varint(n: number): Uint8Array {
+  if (n > 0xfc) throw new Error('test varint only supports small counts');
+  return new Uint8Array([n]);
+}
+function cat(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+/** Build a legacy (no-witness) transaction from outpoints and output values. */
+function buildTx(
+  inputs: { txid: string; vout: number }[],
+  outputValues: bigint[],
+): { hex: string; tx: ParsedTx } {
+  const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
+  for (const inp of inputs) {
+    const txidLE = hexToBytes(inp.txid).reverse();
+    parts.push(txidLE, u32le(inp.vout), varint(1), new Uint8Array([0x51]), u32le(0xffffffff));
+  }
+  parts.push(varint(outputValues.length));
+  for (const v of outputValues) {
+    parts.push(u64le(v), varint(1), new Uint8Array([0x51]));
+  }
+  parts.push(u32le(0));
+  const raw = cat(...parts);
+  const hex = bytesToHex(raw);
+  return { hex, tx: parseTx(raw) };
+}
+
+function mkInscription(partial: Partial<Inscription>): Inscription {
+  return {
+    index: 0,
+    input: 0,
+    parents: [],
+    flags: {
+      incompleteField: false,
+      duplicateField: false,
+      unrecognizedEvenField: false,
+      pushnum: false,
+      stutter: false,
+    } as Inscription['flags'],
+    ...partial,
+  } as Inscription;
+}
+
+const T0 = '11'.repeat(32);
+const T1 = '22'.repeat(32);
+const T2 = '33'.repeat(32);
+
+// ---------------------------------------------------------------------------
+// FIFO arithmetic
+// ---------------------------------------------------------------------------
+
+describe('transferSatpoint FIFO arithmetic', () => {
+  // funding txs give the input values
+  const fundA = buildTx([{ txid: T0, vout: 0 }], [1000n]);
+  const fundB = buildTx([{ txid: T0, vout: 1 }], [2000n]);
+  // spend: inputs [A(1000), B(2000)] -> outputs [1500, 1400], fee 100
+  const spend = buildTx(
+    [
+      { txid: fundA.tx.txid, vout: 0 },
+      { txid: fundB.tx.txid, vout: 0 },
+    ],
+    [1500n, 1400n],
+  );
+  const values = provenInputValues(spend.tx, [fundA.hex, fundB.hex], 1);
+
+  it('proves input values from prev txs (self-certifying)', () => {
+    expect(values).toEqual([1000n, 2000n]);
+  });
+
+  it('rejects prev tx that does not hash to the named txid', () => {
+    expect(() => provenInputValues(spend.tx, [fundB.hex, fundA.hex], 1)).toThrow(/hashes to/);
+  });
+
+  it('keeps a sat inside the first output', () => {
+    const sp = transferSatpoint(spend.tx, values, { txid: fundA.tx.txid, vout: 0, offset: 999n });
+    expect(formatSatpoint(sp)).toBe(`${spend.tx.txid}:0:999`);
+  });
+
+  it('crosses the output boundary exactly', () => {
+    // abs position of B offset 0 = 1000 -> output 0 has 1500, so offset 1000 in output 0
+    const sp0 = transferSatpoint(spend.tx, values, { txid: fundB.tx.txid, vout: 0, offset: 0n });
+    expect(formatSatpoint(sp0)).toBe(`${spend.tx.txid}:0:1000`);
+    // abs 1500 is the first sat of output 1
+    const sp1 = transferSatpoint(spend.tx, values, { txid: fundB.tx.txid, vout: 0, offset: 500n });
+    expect(formatSatpoint(sp1)).toBe(`${spend.tx.txid}:1:0`);
+  });
+
+  it('follows FIFO across inputs', () => {
+    // B offset 700 -> abs 1700 -> output 1 offset 200
+    const sp = transferSatpoint(spend.tx, values, { txid: fundB.tx.txid, vout: 0, offset: 700n });
+    expect(formatSatpoint(sp)).toBe(`${spend.tx.txid}:1:200`);
+  });
+
+  it('refuses fee spillover with CustodyUnsupportedError', () => {
+    // B offset 1950 -> abs 2950 >= 2900 total output sats
+    expect(() =>
+      transferSatpoint(spend.tx, values, { txid: fundB.tx.txid, vout: 0, offset: 1950n }, 800000),
+    ).toThrow(CustodyUnsupportedError);
+  });
+
+  it('skips zero-value outputs', () => {
+    const z = buildTx([{ txid: fundA.tx.txid, vout: 0 }], [0n, 500n]);
+    const sp = transferSatpoint(z.tx, [1000n], { txid: fundA.tx.txid, vout: 0, offset: 0n });
+    expect(sp.vout).toBe(1);
+    expect(sp.offset).toBe(0n);
+  });
+
+  it('rejects a tx that does not spend the tracked satpoint', () => {
+    expect(() =>
+      transferSatpoint(spend.tx, values, { txid: T2, vout: 0, offset: 0n }),
+    ).toThrow(/does not spend/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// genesis satpoint
+// ---------------------------------------------------------------------------
+
+describe('genesisSatpoint', () => {
+  const fund1 = buildTx([{ txid: T0, vout: 0 }], [600n]);
+  const fund2 = buildTx([{ txid: T0, vout: 1 }], [400n]);
+  // reveal-shaped legacy tx: inputs [600, 400] -> outputs [500, 450], fee 50
+  const reveal = buildTx(
+    [
+      { txid: fund1.tx.txid, vout: 0 },
+      { txid: fund2.tx.txid, vout: 0 },
+    ],
+    [500n, 450n],
+  );
+  const values = [600n, 400n];
+
+  it('defaults to the first sat of the envelope input, mapped through outputs', () => {
+    // input 1 starts at abs 600 -> output 1 offset 100
+    const sp = genesisSatpoint(reveal.tx, mkInscription({ input: 1 }), values);
+    expect(formatSatpoint(sp)).toBe(`${reveal.tx.txid}:1:100`);
+  });
+
+  it('a valid pointer indexes the output sat space directly', () => {
+    const sp = genesisSatpoint(reveal.tx, mkInscription({ input: 0, pointer: 700n }), values);
+    expect(formatSatpoint(sp)).toBe(`${reveal.tx.txid}:1:200`);
+  });
+
+  it('ignores a pointer at or past total output sats', () => {
+    const sp = genesisSatpoint(reveal.tx, mkInscription({ input: 0, pointer: 950n }), values);
+    expect(formatSatpoint(sp)).toBe(`${reveal.tx.txid}:0:0`);
+  });
+
+  it('refuses fee-bound (unbound) inscriptions', () => {
+    // single 900-sat output; input 1 starts at abs 600+... build: outputs [900], inputs [600,400]
+    const r = buildTx(
+      [
+        { txid: fund1.tx.txid, vout: 0 },
+        { txid: fund2.tx.txid, vout: 0 },
+      ],
+      [900n],
+    );
+    // envelope on input 1: abs 600 < 900 -> fine. Use offset past outputs: input 1 with fund2=400
+    // total inputs 1000, outputs 900. envelope on a third input would start at 1000.
+    const fund3 = buildTx([{ txid: T0, vout: 2 }], [300n]);
+    const r2 = buildTx(
+      [
+        { txid: fund1.tx.txid, vout: 0 },
+        { txid: fund2.tx.txid, vout: 0 },
+        { txid: fund3.tx.txid, vout: 0 },
+      ],
+      [900n],
+    );
+    expect(() =>
+      genesisSatpoint(r2.tx, mkInscription({ input: 2 }), [600n, 400n, 300n]),
+    ).toThrow(CustodyUnsupportedError);
+    // and the two-input case lands normally
+    const ok = genesisSatpoint(r.tx, mkInscription({ input: 1 }), [600n, 400n]);
+    expect(formatSatpoint(ok)).toBe(`${r.tx.txid}:0:600`);
+  });
+
+  it('computes inscription 0 genesis from the real reveal', () => {
+    const revealTx = parseTx(hexToBytes(revealHex));
+    const insc = mkInscription({ input: 0 });
+    const values0 = provenInputValues(revealTx, [commitHex], 0);
+    const sp = genesisSatpoint(revealTx, insc, values0);
+    expect(sp.txid).toBe(expected.revealTxid);
+    expect(sp.vout).toBe(0);
+    expect(sp.offset).toBe(0n);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// custody bundles end to end
+// ---------------------------------------------------------------------------
+
+/** Build an easiest-PoW (regtest-bits) header containing exactly one tx. */
+function mineSingleTxBlock(txidLE: Uint8Array, prevHashLE: Uint8Array): { headerHex: string; hash: string } {
+  const bits = 0x207fffff;
+  for (let nonce = 0; nonce < 100000; nonce++) {
+    const header = cat(u32le(2), prevHashLE, txidLE, u32le(1700000000), u32le(bits), u32le(nonce));
+    const hashLE = sha256d(header);
+    // target for 0x207fffff is enormous; require top byte < 0x7f to pass quickly
+    if (hashLE[31] === 0) {
+      return { headerHex: bytesToHex(header), hash: internalToDisplay(hashLE) };
+    }
+  }
+  throw new Error('failed to mine test header');
+}
+
+describe('verifyCustodyBundle', () => {
+  const revealTx = parseTx(hexToBytes(revealHex));
+
+  function singleHopBundle(): CustodyBundleJson {
+    return {
+      version: 1,
+      inscriptionId: `${expected.revealTxid}i0`,
+      hops: [
+        {
+          block: {
+            height: expected.blockHeight,
+            hash: expected.blockHash,
+            header: headerHex,
+            txCount: INSC0_TXCOUNT,
+          },
+          tx: { hex: revealHex, pos: merkleProof.pos, txidBranch: merkleProof.merkle },
+          prevTxs: [commitHex],
+        },
+      ],
+      finalSatpoint: `${expected.revealTxid}:0:0`,
+    };
+  }
+
+  it('verifies a real single-hop (reveal-only) bundle against mainnet data', () => {
+    const res = verifyCustodyBundle(singleHopBundle());
+    expect(res.satpoint).toEqual(parseSatpoint(`${expected.revealTxid}:0:0`));
+    expect(res.genesis).toEqual(res.satpoint);
+    expect(res.hops).toBe(1);
+    expect(res.height).toBe(expected.blockHeight);
+  });
+
+  it('rejects a wrong claimed final satpoint', () => {
+    const b = singleHopBundle();
+    b.finalSatpoint = `${expected.revealTxid}:0:1`;
+    expect(() => verifyCustodyBundle(b)).toThrow(/path folds to/);
+  });
+
+  it('rejects a tampered txCount (branch depth hardening)', () => {
+    const b = singleHopBundle();
+    b.hops[0].block.txCount = 5000;
+    expect(() => verifyCustodyBundle(b)).toThrow(/tree height/);
+  });
+
+  it('verifies a two-hop path through a mined test block', () => {
+    // hop 1 spends the reveal's output 0 (value read from the real tx)
+    const outValue = revealTx.outputs[0].value;
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    bundle.hops.push({
+      block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+      prevTxs: [revealHex],
+    });
+    bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
+    const res = verifyCustodyBundle(bundle);
+    expect(res.hops).toBe(2);
+    expect(res.satpoint.txid).toBe(spend.tx.txid);
+    expect(res.path).toHaveLength(2);
+  });
+
+  it('rejects hops that go backwards in chain order', () => {
+    const outValue = revealTx.outputs[0].value;
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    bundle.hops.push({
+      block: { height: expected.blockHeight - 1, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+      prevTxs: [revealHex],
+    });
+    bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/chain order/);
+  });
+
+  it('surfaces fee-spillover paths as CustodyUnsupportedError', () => {
+    const outValue = revealTx.outputs[0].value;
+    // spend sends everything but the tracked sat range to outputs: output smaller than needed
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [0n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    bundle.hops.push({
+      block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+      prevTxs: [revealHex],
+    });
+    bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(bundle)).toThrow(CustodyUnsupportedError);
+    expect(outValue > 0n).toBe(true);
+  });
+
+  it('respects trustHeader rejection', () => {
+    expect(() =>
+      verifyCustodyBundle(singleHopBundle(), {
+        trustHeader: () => {
+          throw new Error('anchor says no');
+        },
+      }),
+    ).toThrow(/anchor says no/);
+  });
+});

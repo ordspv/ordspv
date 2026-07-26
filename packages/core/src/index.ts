@@ -11,3 +11,4 @@ export * from './envelope.js';
 export * from './proof.js';
 export * from './cbor.js';
 export * from './block.js';
+export * from './custody.js';

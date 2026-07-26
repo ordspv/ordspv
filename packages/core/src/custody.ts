@@ -1,0 +1,391 @@
+/**
+ * Custody proofs: verify WHERE an inscription's sat is from chain data alone.
+ *
+ * An inscription's location is a satpoint (txid:vout:offset). Its custody
+ * history is a finite path through the transaction graph: the reveal binds it
+ * to a genesis satpoint, and each later transaction that spends the tracked
+ * outpoint moves it by ordinal first-in-first-out arithmetic. Every step of
+ * that path is locally checkable:
+ *
+ * - each hop transaction is SPV-proven into a header (txid tree, hardened
+ *   txCount, PoW), with chain anchoring delegated to the caller exactly as in
+ *   proof.ts (`trustHeader`);
+ * - input values, which FIFO arithmetic needs, are proven by including the
+ *   previous transactions themselves: a prev tx's bytes hash to the txid the
+ *   spending input names, so values are self-certifying and need no extra
+ *   inclusion proofs;
+ * - the arithmetic (input concatenation, output slicing, pointer handling)
+ *   is recomputed here, never trusted from the server.
+ *
+ * The role an indexer plays is reduced to FINDING the path (e.g. via esplora
+ * outspend lookups); nothing it says is trusted. What custody proofs cannot
+ * express is a negative: "this outpoint is still unspent" is not provable by
+ * inclusion, so tip liveness stays a resolver-layer concern (multi-source
+ * outspend checks, or the caller's own node).
+ *
+ * v1 explicitly refuses paths that leave the output sat space: a sat that
+ * lands in fees flows through the block's coinbase, which requires the whole
+ * block's fee picture to track. Those throw CustodyUnsupportedError with the
+ * height at which it happened, so callers can distinguish "wrong" from
+ * "beyond v1".
+ */
+
+import { ParsedTx, parseTx } from './tx.js';
+import { Inscription, inscriptionsFromTx } from './envelope.js';
+import { parseInscriptionId } from './inscriptionId.js';
+import { parseHeader, checkProofOfWork, BlockHeader } from './header.js';
+import { verifyMerkleBranch, treeHeight } from './merkle.js';
+import { hexToBytes, bytesEqual, displayToInternal } from './bytes.js';
+
+/** A location in the sat space of a confirmed transaction's outputs. */
+export interface Satpoint {
+  /** display-order txid */
+  txid: string;
+  vout: number;
+  /** sat offset within the output, 0-based */
+  offset: bigint;
+}
+
+export function formatSatpoint(sp: Satpoint): string {
+  return `${sp.txid}:${sp.vout}:${sp.offset}`;
+}
+
+export function parseSatpoint(s: string): Satpoint {
+  const m = /^([0-9a-fA-F]{64}):(\d+):(\d+)$/.exec(s);
+  if (!m) throw new Error(`invalid satpoint: ${s}`);
+  return { txid: m[1].toLowerCase(), vout: Number(m[2]), offset: BigInt(m[3]) };
+}
+
+/** A custody path step that v1 cannot follow (sat left the output sat space). */
+export class CustodyUnsupportedError extends Error {
+  constructor(
+    message: string,
+    /** block height at which the unsupported step happened, when known */
+    public readonly height?: number,
+  ) {
+    super(message);
+    this.name = 'CustodyUnsupportedError';
+  }
+}
+
+function totalOutputSats(tx: ParsedTx): bigint {
+  let total = 0n;
+  for (const out of tx.outputs) total += out.value;
+  return total;
+}
+
+/**
+ * Map an absolute position in a transaction's output sat space to a satpoint.
+ * Zero-value outputs occupy no sat space and are skipped naturally.
+ * Returns undefined when the position lies beyond the outputs (in the fee).
+ */
+function mapToOutputs(tx: ParsedTx, position: bigint): Satpoint | undefined {
+  if (position < 0n) throw new Error('negative sat position');
+  let remaining = position;
+  for (let vout = 0; vout < tx.outputs.length; vout++) {
+    const value = tx.outputs[vout].value;
+    if (remaining < value) return { txid: tx.txid, vout, offset: remaining };
+    remaining -= value;
+  }
+  return undefined;
+}
+
+/**
+ * Values of a transaction's inputs 0..upTo (inclusive), proven by the previous
+ * transactions themselves: prevTxs[i] must hash to the txid named by input i.
+ * prevTxs entries beyond upTo are ignored (they cannot affect the position).
+ */
+export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: number): bigint[] {
+  if (upTo >= tx.inputs.length) throw new Error(`input index ${upTo} out of range`);
+  if (prevTxsHex.length < upTo + 1) {
+    throw new Error(`need prev txs for inputs 0..${upTo}, got ${prevTxsHex.length}`);
+  }
+  const values: bigint[] = [];
+  for (let i = 0; i <= upTo; i++) {
+    let prev: ParsedTx;
+    try {
+      prev = parseTx(hexToBytes(prevTxsHex[i].trim()));
+    } catch (e) {
+      throw new Error(`prev tx ${i}: cannot parse: ${(e as Error).message}`);
+    }
+    const input = tx.inputs[i];
+    if (prev.txid !== input.prevTxid) {
+      throw new Error(`prev tx ${i} hashes to ${prev.txid}, input spends ${input.prevTxid}`);
+    }
+    const spent = prev.outputs[input.vout];
+    if (!spent) throw new Error(`prev tx ${i} has no output ${input.vout}`);
+    values.push(spent.value);
+  }
+  return values;
+}
+
+function isCoinbaseTx(tx: ParsedTx): boolean {
+  return (
+    tx.inputs.length === 1 &&
+    tx.inputs[0].vout === 0xffffffff &&
+    tx.inputs[0].prevTxidLE.every((b) => b === 0)
+  );
+}
+
+/**
+ * Genesis satpoint of an inscription in its reveal transaction.
+ *
+ * Default: the first sat of the envelope's input, i.e. the absolute input
+ * position sum(inputValues[0..input-1]), mapped through the outputs. A valid
+ * pointer (tag 2) instead indexes the OUTPUT sat space directly; a pointer at
+ * or past the total output sats is ignored per the handbook.
+ *
+ * inputValues must cover inputs 0..inscription.input (use provenInputValues).
+ */
+export function genesisSatpoint(
+  reveal: ParsedTx,
+  inscription: Inscription,
+  inputValues: bigint[],
+  height?: number,
+): Satpoint {
+  if (isCoinbaseTx(reveal)) throw new Error('coinbase transactions cannot carry inscriptions');
+  if (inscription.input >= reveal.inputs.length) {
+    throw new Error(`envelope input ${inscription.input} out of range`);
+  }
+  if (inputValues.length < inscription.input + 1) {
+    throw new Error(`need input values for inputs 0..${inscription.input}`);
+  }
+  const totalOut = totalOutputSats(reveal);
+  if (inscription.pointer !== undefined && inscription.pointer < totalOut) {
+    const sp = mapToOutputs(reveal, inscription.pointer);
+    /* pointer < totalOut always lands in an output */
+    if (!sp) throw new Error('unreachable: valid pointer left output space');
+    return sp;
+  }
+  let position = 0n;
+  for (let i = 0; i < inscription.input; i++) position += inputValues[i];
+  const sp = mapToOutputs(reveal, position);
+  if (!sp) {
+    throw new CustodyUnsupportedError(
+      'inscription is bound to fee sats at reveal (unbound inscription); custody v1 does not track sats through fees',
+      height,
+    );
+  }
+  return sp;
+}
+
+/**
+ * Follow the tracked satpoint through one spending transaction.
+ * inputValues must cover inputs 0..j where j is the input spending `from`
+ * (use provenInputValues). The caller must have checked `from.offset` against
+ * the spent output's value (verifyCustodyBundle does).
+ */
+export function transferSatpoint(
+  tx: ParsedTx,
+  inputValues: bigint[],
+  from: Satpoint,
+  height?: number,
+): Satpoint {
+  const j = tx.inputs.findIndex((inp) => inp.prevTxid === from.txid && inp.vout === from.vout);
+  if (j === -1) {
+    throw new Error(`transaction ${tx.txid} does not spend ${from.txid}:${from.vout}`);
+  }
+  if (inputValues.length < j + 1) throw new Error(`need input values for inputs 0..${j}`);
+  let position = from.offset;
+  for (let i = 0; i < j; i++) position += inputValues[i];
+  const sp = mapToOutputs(tx, position);
+  if (!sp) {
+    throw new CustodyUnsupportedError(
+      `sat enters fees in ${tx.txid}; custody v1 does not track sats through fees`,
+      height,
+    );
+  }
+  return sp;
+}
+
+// ---------------------------------------------------------------------------
+// Custody bundles
+// ---------------------------------------------------------------------------
+
+export interface CustodyBlockJson {
+  height: number;
+  /** display-order hash the server claims; recomputed and checked */
+  hash: string;
+  /** 160 hex chars */
+  header: string;
+  /** total number of transactions in the block (required: CVE-2017-12842 hardening) */
+  txCount: number;
+}
+
+export interface CustodyHopJson {
+  block: CustodyBlockJson;
+  tx: {
+    hex: string;
+    /** 0-based position in the block's tx list */
+    pos: number;
+    /** txid-tree merkle branch, display-order hex, bottom-up */
+    txidBranch: string[];
+  };
+  /**
+   * Raw hex of the transactions referenced by this tx's inputs, aligned by
+   * input index. Entries are required for inputs 0..k, where k is the
+   * envelope input (hop 0) or the input spending the tracked satpoint
+   * (later hops); later entries may be omitted or empty.
+   */
+  prevTxs: string[];
+}
+
+export interface CustodyBundleJson {
+  version: 1;
+  inscriptionId: string;
+  /** hop 0 is the reveal transaction; each later hop spends the tracked satpoint */
+  hops: CustodyHopJson[];
+  /** claimed final satpoint (txid:vout:offset); recomputed and checked */
+  finalSatpoint: string;
+}
+
+export interface CustodyVerifyOptions {
+  /** Anchor each hop's header to a trusted view of the chain; throw to reject. */
+  trustHeader?: (header: BlockHeader, height: number) => void;
+}
+
+export interface VerifiedCustody {
+  inscriptionId: string;
+  /** where the sat sits after the last proven hop */
+  satpoint: Satpoint;
+  genesis: Satpoint;
+  /** satpoint after each hop, genesis first */
+  path: Satpoint[];
+  /** height of the last proven hop */
+  height: number;
+  hops: number;
+}
+
+function parseHopTx(hex: string, label: string): ParsedTx {
+  let tx: ParsedTx;
+  try {
+    tx = parseTx(hexToBytes(hex.trim()));
+  } catch (e) {
+    throw new Error(`${label}: cannot parse transaction: ${(e as Error).message}`);
+  }
+  if (tx.raw.length === 64) {
+    throw new Error(`${label}: 64-byte transactions are rejected (leaf/node ambiguity)`);
+  }
+  return tx;
+}
+
+function verifyHopInclusion(hop: CustodyHopJson, tx: ParsedTx, label: string, opts: CustodyVerifyOptions): void {
+  const header = parseHeader(hexToBytes(hop.block.header));
+  if (header.hash !== hop.block.hash.toLowerCase()) {
+    throw new Error(`${label}: header hashes to ${header.hash}, bundle claims ${hop.block.hash}`);
+  }
+  if (!checkProofOfWork(header)) throw new Error(`${label}: header fails proof of work`);
+  if (!Number.isInteger(hop.block.txCount) || hop.block.txCount < 1) {
+    throw new Error(`${label}: missing valid txCount`);
+  }
+  opts.trustHeader?.(header, hop.block.height);
+
+  const branch = hop.tx.txidBranch.map(displayToInternal);
+  const expected = treeHeight(hop.block.txCount);
+  if (branch.length !== expected) {
+    throw new Error(`${label}: txid branch depth ${branch.length} != tree height ${expected}`);
+  }
+  const { root } = verifyMerkleBranch(tx.txidLE, branch, hop.tx.pos, hop.block.txCount);
+  if (!bytesEqual(root, header.merkleRootLE)) {
+    throw new Error(`${label}: txid merkle proof does not match header merkle root`);
+  }
+}
+
+/**
+ * Verify a custody bundle. Throws with a precise reason on any failure;
+ * throws CustodyUnsupportedError when the true path leaves v1's domain.
+ */
+export function verifyCustodyBundle(
+  bundle: CustodyBundleJson,
+  opts: CustodyVerifyOptions = {},
+): VerifiedCustody {
+  if (bundle.version !== 1) {
+    throw new Error(`unsupported custody bundle version ${(bundle as { version: unknown }).version}`);
+  }
+  const id = parseInscriptionId(bundle.inscriptionId);
+  if (!Array.isArray(bundle.hops) || bundle.hops.length === 0) {
+    throw new Error('custody bundle has no hops');
+  }
+
+  // ---- hop 0: reveal, genesis satpoint ----
+  const revealHop = bundle.hops[0];
+  const reveal = parseHopTx(revealHop.tx.hex, 'hop 0 (reveal)');
+  if (reveal.txid !== id.txid) {
+    throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
+  }
+  verifyHopInclusion(revealHop, reveal, 'hop 0 (reveal)', opts);
+
+  const allInscriptions = inscriptionsFromTx(reveal);
+  const inscription: Inscription | undefined = allInscriptions.find((i) => i.index === id.index);
+  if (!inscription) {
+    throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
+  }
+  const revealValues = provenInputValues(reveal, revealHop.prevTxs, inscription.input);
+  const genesis = genesisSatpoint(reveal, inscription, revealValues, revealHop.block.height);
+
+  // ---- later hops ----
+  const path: Satpoint[] = [genesis];
+  let current = genesis;
+  let prevHeight = revealHop.block.height;
+  let prevPos = revealHop.tx.pos;
+  const seenTxids = new Set([reveal.txid]);
+
+  for (let h = 1; h < bundle.hops.length; h++) {
+    const hop = bundle.hops[h];
+    const label = `hop ${h}`;
+    const tx = parseHopTx(hop.tx.hex, label);
+    if (seenTxids.has(tx.txid)) throw new Error(`${label}: duplicate transaction ${tx.txid}`);
+    seenTxids.add(tx.txid);
+    if (isCoinbaseTx(tx)) {
+      throw new CustodyUnsupportedError(
+        `${label}: custody path passes through a coinbase; v1 does not track sats through fees`,
+        hop.block.height,
+      );
+    }
+
+    if (
+      hop.block.height < prevHeight ||
+      (hop.block.height === prevHeight && hop.tx.pos <= prevPos)
+    ) {
+      throw new Error(`${label}: does not come after hop ${h - 1} in chain order`);
+    }
+
+    verifyHopInclusion(hop, tx, label, opts);
+
+    const j = tx.inputs.findIndex((inp) => inp.prevTxid === current.txid && inp.vout === current.vout);
+    if (j === -1) {
+      throw new Error(`${label}: transaction does not spend tracked satpoint ${formatSatpoint(current)}`);
+    }
+    const values = provenInputValues(tx, hop.prevTxs, j);
+    if (current.offset >= values[j]) {
+      throw new Error(
+        `${label}: tracked offset ${current.offset} outside spent output value ${values[j]}`,
+      );
+    }
+    current = transferSatpoint(tx, values, current, hop.block.height);
+    path.push(current);
+    prevHeight = hop.block.height;
+    prevPos = hop.tx.pos;
+  }
+
+  // ---- claimed final satpoint: recompute-and-check ----
+  const claimed = parseSatpoint(bundle.finalSatpoint);
+  if (
+    claimed.txid !== current.txid ||
+    claimed.vout !== current.vout ||
+    claimed.offset !== current.offset
+  ) {
+    throw new Error(
+      `bundle claims final satpoint ${bundle.finalSatpoint}, path folds to ${formatSatpoint(current)}`,
+    );
+  }
+
+  return {
+    inscriptionId: bundle.inscriptionId.toLowerCase(),
+    satpoint: current,
+    genesis,
+    path,
+    height: prevHeight,
+    hops: bundle.hops.length,
+  };
+}
