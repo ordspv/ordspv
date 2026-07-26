@@ -128,6 +128,15 @@ anchoring alone, since an attester's hash-at-height vote binds the pair.
 }
 ```
 
+An empty `funding` list is specified and implemented, and it is close to
+unreachable on mainnet: a reveal spends a taproot commit output, so reaching it
+takes a miner paying a coinbase output straight to an inscription commit
+address. A scan of 3,001 blocks (830000 to 833000) found no taproot coinbase
+output at all, and 135 uncommon-sat inscriptions bottomed out at depth 2. The
+branch therefore carries unit coverage rather than a mainnet vector, as does a
+pointer that lands past its own envelope input, which 3,232 multi-input reveals
+across 206 blocks did not produce.
+
 Verifiers MUST, for the reveal and the coinbase: recompute the header hash,
 check proof of work, require a valid `txCount` and a branch depth equal to
 `treeHeight(txCount)` (CVE-2017-12842 hardening, as in SPEC-VERIFICATION), and

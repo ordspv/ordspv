@@ -11,7 +11,7 @@ docs/RESEARCH.md for the full technical rationale.*
   paths (SPEC-CUSTODY.md), sat identity (SPEC-SAT.md), and a cross-chain
   embedding guide (docs/CROSS-CHAIN.md). All of it is grounded in the cited research
   synthesis (docs/RESEARCH.md).
-- Working code, 337 tests, all offline-runnable. `@ordspv/core` has the consensus
+- Working code, 365 tests, all offline-runnable. `@ordspv/core` has the consensus
   primitives, the ord-exact envelope parser, and L2/L3 proof verification.
   `@ordspv/fetch` is the verified resolver: failover backends, checkpoint and M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling.
@@ -33,7 +33,7 @@ docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network)
 
-1. `npm install && npm test && npx tsc --noEmit`: expect 337 green.
+1. `npm install && npm test && npx tsc --noEmit`: expect 365 green.
 2. `npx tsx scripts/fetch-fixtures.ts`: byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
    green 2026-07-11, before and after the envelope-parser rewrite.)*
@@ -55,13 +55,26 @@ docs/RESEARCH.md for the full technical rationale.*
    delegate, body sha256 incl. tag-9 encodings, metadata hex, pre-Jubilee curse
    charm) over a wider corpus incl. a 666-envelope batch and a multi-input reveal.
    142 checks green on 2026-07-11, zero mismatches.
-5. **Not yet run: sat identity against a live oracle.** `ord-resolve sat <id>`
-   should agree with ordinals.com's `sat`, `name`, and `rarity` fields for a
-   spread of inscriptions (one funded straight from a coinbase, one behind a deep
-   funding chain, one with a pointer, one on a rare sat). The derived prediction
-   for inscription 0 is sat 1252201400444387, name `ezcubunuovm`. Also worth
-   running the gallery decoder against a real gallery inscription in both
-   encodings.
+5. ~~Sat identity against a live oracle~~ **DONE 2026-07-26.** `ord-resolve sat`
+   agrees with ordinals.com. Inscription 0 came out at sat 1252201400444387,
+   name `ezcubunuovm`, mined in block 290880, 190 funding steps, which is the
+   number derived before the run. A 42-inscription sweep gave 38 agreements, 0
+   disagreements, 1 correct `CustodyUnsupportedError` refusal on a fee-tail
+   ancestry, and 3 backend skips. Four real galleries decoded in both encodings
+   with `skipped` 0 and member lists identical to ordinals.com.
+
+   Two branches carry unit coverage only, for structural reasons rather than
+   unfinished work, so they are not on this checklist:
+   - **Empty `funding`** (a reveal spending a coinbase output directly). A
+     reveal spends a taproot commit output, so this needs a miner paying a
+     coinbase output straight to an inscription commit address. 3,001 blocks
+     scanned across 830000 to 833000 held zero taproot coinbase outputs, and
+     135 uncommon-sat inscriptions bottomed out at depth 2, with 93 of them
+     exactly 2 and none at 0 or 1.
+   - **A pointer landing past its own envelope input.** Not found on chain
+     after 206 blocks and 3,232 multi-input reveals, including a 102-input
+     reveal whose 100 envelopes all carry pointers, none of which landed past
+     its own input.
 
 ## Known deltas vs ord to reconcile (small, flagged in code)
 

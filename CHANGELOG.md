@@ -62,6 +62,29 @@ already binds.
 - **SPEC-CUSTODY** specifies the custody bundle format and the verification
   rules; a deferred section states the v1 boundaries. **SPEC-SAT** does the
   same for sat identity, and **SPEC-VERIFICATION §7** covers galleries.
+- **`@ordspv/fetch`: `DEFAULT_ANCHOR_SOURCES` and the `anchorSources` option**
+  on the resolver, custody, sat identity and the gateway, with
+  `--anchor-source url[,url]` on the CLI and `ANCHOR_SOURCES` on the gateway.
+  Attesting a header needs one cheap endpoint, `/block-height/<n>`, while
+  serving proofs needs the whole esplora surface, so the two lists have
+  different membership requirements. The default holds five operator-diverse
+  bases, each checked against block 767430 for three consecutive tries.
+  `HeaderTrustOptions.proofSources` takes a set of serving base URLs for
+  builds spread across several backends; `proofSource` still takes one.
+- **`@ordspv/fetch`: bounded retry inside every esplora request.** HTTP 429,
+  HTTP 503 and thrown network errors are retried up to 4 attempts with
+  exponential backoff from 250 ms under full jitter, capped at 8 s, honoring
+  `Retry-After` when it asks for 30 s or less. Other non-2xx statuses and
+  byte-cap violations are not retried, since repeating them changes nothing.
+  Configurable through `BackendLimits.retry`, with an injectable `sleep` on
+  the backend constructor so tests never wait on a real backoff.
+- **`@ordspv/fetch`: `PooledEsploraBackend`.** N backends behind one
+  backend-shaped surface, rotating the starting member per request and moving
+  a failed request to the next member. `fetchSatIdentity` now builds through
+  a pool, so a rate limit at step 400 of a genealogy walk costs one request
+  rather than 400 steps of work. The pool records which members served bytes,
+  and all of them are excluded from header attesting.
+- **`@ordspv/cli`: `--max-steps N`** on `sat`, threaded to the builder.
 
 ### Fixed
 
@@ -74,9 +97,41 @@ already binds.
   failure.
 - **Custody walks complete at exactly `maxHops` transfers.** The cap error
   fires only when a further confirmed spend exists past the cap.
+- **`ord-resolve verify` reads all three bundle shapes.** It cast every file
+  to a proof bundle, so the genealogy bundle its own `sat --bundle` writes
+  died as `Cannot read properties of undefined (reading 'header')`. It now
+  routes on top-level keys, since `version` is 1 in all three, and an
+  unrecognized file is reported with the keys it actually has.
+- **The genealogy builder's step cap is raised to 4,096 and is no longer
+  fixed.** 512 refused real mainnet inscriptions;
+  `9d0bebfa4a41f65a73a2a964e191479dc6c68251c4c2b2bef5268fa5b6ff7fe2i0` needs
+  803 steps. The cap now raises through `--max-steps` and stays under the
+  verifier-side cap of 10,000 that SPEC-SAT sets.
+- **Hitting the step cap reports the cap.** It surfaced as
+  `all backends failed`, naming the wrong cause after re-walking the whole
+  ancestry on every backend to reach the same deterministic answer. It is now
+  `SatStepLimitError`, a `SatBuildError` so existing catch sites still work,
+  and `fetchSatIdentity` rethrows it without trying another backend.
 
 ### Changed
 
+- **Behavior change: a backend that serves a bundle no longer counts as an
+  independent attester for its own header.** `makeHeaderTrust` credited the
+  proof-building backend with one independent source, so the two-backend
+  default anchored non-checkpoint heights on a single outside vote, which
+  contradicts SPEC-CUSTODY, SPEC-SAT and SPEC-VERIFICATION §4.
+  `independentSources` is now the count of agreeing attesters that served
+  nothing, the default `minAgreement` of 2 therefore means two outside
+  sources, and the new `HeaderTrustReport.builderIsSource` carries the
+  excluded fact. A caller running two backends where one builds the bundle
+  will start failing to anchor at non-checkpoint heights until a third source
+  is configured; the built-in `DEFAULT_ANCHOR_SOURCES` covers the default
+  configuration, and `--anchor-source` covers custom ones. Heights under a
+  compiled checkpoint are unaffected.
+- **Mid-walk failover is asymmetric for now.** `fetchSatIdentity` builds
+  through a pool and keeps its progress across a member failure. `resolver.ts`
+  and `custodybuilder.ts` still use per-backend failover, where a failure
+  restarts the build on the next backend.
 - All five packages move to 0.3.0; inter-package pins updated to match.
 
 ## [0.2.1] - 2026-07-14
