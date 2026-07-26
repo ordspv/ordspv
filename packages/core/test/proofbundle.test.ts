@@ -109,6 +109,53 @@ describe('L3 proof bundles (synthetic blocks)', () => {
     expect(() => verifyProofBundle(bundle)).toThrow(/branch depth|tree height/);
   });
 
+  it('rejects reveals whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
+    const cat = (...parts: Uint8Array[]): Uint8Array => {
+      const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+      let o = 0;
+      for (const p of parts) {
+        out.set(p, o);
+        o += p.length;
+      }
+      return out;
+    };
+    const u32 = (n: number): Uint8Array => {
+      const b = new Uint8Array(4);
+      new DataView(b.buffer).setUint32(0, n, true);
+      return b;
+    };
+    // stripped: version(4) inCount(1) outpoint(36) scriptSigLen(1)=0 seq(4)
+    //           outCount(1) value(8) spkLen(1) spk(4) locktime(4) = 64 bytes
+    const stripped = cat(
+      u32(2),
+      new Uint8Array([1]),
+      new Uint8Array(36),
+      new Uint8Array([0]),
+      u32(0xffffffff),
+      new Uint8Array([1]),
+      new Uint8Array(8),
+      new Uint8Array([4, 0x51, 0x51, 0x51, 0x51]),
+      u32(0),
+    );
+    expect(stripped.length).toBe(64);
+    // segwit-wrap it with a one-item witness stack: the raw length grows past
+    // 64 while the txid preimage stays exactly 64
+    const raw = cat(
+      stripped.slice(0, 4),
+      new Uint8Array([0x00, 0x01]),
+      stripped.slice(4, 60),
+      new Uint8Array([1, 1, 0x00]),
+      stripped.slice(60),
+    );
+    const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
+    const block = buildBlock([reveal]);
+    const bundle = l3Bundle(block, 1, `${reveal.txid}i0`);
+    bundle.reveal.hex = bytesToHex(raw);
+    expect(() => verifyProofBundle(bundle)).toThrow(/64-byte/);
+    bundle.reveal.hex = bytesToHex(stripped);
+    expect(() => verifyProofBundle(bundle)).toThrow(/64-byte/);
+  });
+
   it('invokes the header trust hook', () => {
     const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
     const block = buildBlock([reveal]);

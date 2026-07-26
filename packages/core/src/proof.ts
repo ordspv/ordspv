@@ -103,7 +103,11 @@ function parseHexTx(hex: string, label: string): ParsedTx {
   } catch (e) {
     throw new Error(`${label}: cannot parse transaction: ${(e as Error).message}`);
   }
-  if (tx.raw.length === 64) throw new Error(`${label}: 64-byte transactions are rejected (leaf/node ambiguity)`);
+  // the txid-tree leaf preimage is the STRIPPED serialization, so the
+  // leaf/node ambiguity class is stripped==64, witness or not
+  if (tx.strippedRaw.length === 64) {
+    throw new Error(`${label}: 64-byte transactions are rejected (leaf/node ambiguity)`);
+  }
   return tx;
 }
 
