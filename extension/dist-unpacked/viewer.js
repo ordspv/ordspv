@@ -607,7 +607,7 @@
 
   // packages/core/src/tx.ts
   function parseTx(raw, opts = {}) {
-    const r = new ByteReader(raw);
+    const r = new ByteReader(raw, opts.offset ?? 0);
     const start = r.pos;
     const version = r.readI32LE();
     let hasWitness = false;
@@ -2947,7 +2947,8 @@
   }
   function parseInscriptionIdValue(value) {
     if (value.length < 32 || value.length > 36) return void 0;
-    if (value.length > 32 && value[value.length - 1] === 0) return void 0;
+    const indexLen = value.length - 32;
+    if (indexLen !== 0 && indexLen !== 4 && value[value.length - 1] === 0) return void 0;
     const txidLE = value.slice(0, 32);
     let index = 0;
     for (let i = value.length - 1; i >= 32; i--) {
@@ -3052,7 +3053,9 @@
     } catch (e) {
       throw new Error(`${label}: cannot parse transaction: ${e.message}`);
     }
-    if (tx.raw.length === 64) throw new Error(`${label}: 64-byte transactions are rejected (leaf/node ambiguity)`);
+    if (tx.strippedRaw.length === 64) {
+      throw new Error(`${label}: 64-byte transactions are rejected (leaf/node ambiguity)`);
+    }
     return tx;
   }
   function verifyProofBundle(bundle, opts = {}) {
@@ -3331,20 +3334,46 @@
   }
 
   // packages/core/src/block.ts
+  var MAX_BLOCK_BYTES = 4e6;
+  var MIN_TX_BYTES = 51;
   function parseBlock(raw) {
     if (raw.length < 81) throw new Error("block too short");
+    if (raw.length > MAX_BLOCK_BYTES) {
+      throw new Error(`block size ${raw.length} exceeds consensus maximum ${MAX_BLOCK_BYTES}`);
+    }
     const header = parseHeader(raw.slice(0, 80));
     const r = new ByteReader(raw, 80);
     const count = r.readVarIntNum();
+    if (count * MIN_TX_BYTES > r.remaining) {
+      throw new Error(`block claims ${count} txs but only ${r.remaining} bytes remain`);
+    }
     const txs = [];
     for (let i = 0; i < count; i++) {
-      const tx = parseTx(raw.slice(r.pos), { allowTrailing: true });
+      const tx = parseTx(raw, { allowTrailing: true, offset: r.pos });
       txs.push(tx);
       r.pos += tx.size;
     }
     if (r.remaining !== 0) throw new Error(`block has ${r.remaining} trailing bytes`);
     return { header, txs };
   }
+
+  // packages/core/src/satnumber.ts
+  var EPOCH_BLOCKS = 21e4;
+  var INITIAL_SUBSIDY = 5000000000n;
+  var FINAL_EPOCH = 33;
+  function firstSatOfBlock(height) {
+    if (!Number.isInteger(height) || height < 0) throw new Error(`invalid height ${height}`);
+    let start = 0n;
+    for (let epoch = 0; epoch < FINAL_EPOCH; epoch++) {
+      const epochStart = epoch * EPOCH_BLOCKS;
+      if (height <= epochStart) break;
+      const blocks = Math.min(height - epochStart, EPOCH_BLOCKS);
+      start += BigInt(blocks) * (INITIAL_SUBSIDY >> BigInt(epoch));
+    }
+    return start;
+  }
+  var TOTAL_SATS = firstSatOfBlock(FINAL_EPOCH * EPOCH_BLOCKS);
+  var LAST_SAT = TOTAL_SATS - 1n;
 
   // packages/fetch/src/uri.ts
   var B64_RE = /^[A-Za-z0-9+/_-]{43}=?$/;
@@ -3397,92 +3426,251 @@
     return { id, idString, path, integrity, canonical };
   }
 
+  // packages/fetch/src/http.ts
+  var DEFAULT_HTTP_TIMEOUT_MS = 2e4;
+  var ResponseCapExceededError = class extends Error {
+  };
+  async function fetchCapped(url, options) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+    const fetchFn = options.fetchFn ?? ((u, i) => fetch(u, i));
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      const deadline = new Promise((_, reject) => {
+        controller.signal.addEventListener(
+          "abort",
+          () => {
+            if (timedOut) reject(new Error(`${url}: timed out after ${timeoutMs}ms`));
+          },
+          { once: true }
+        );
+      });
+      const work = (async () => {
+        const res = await fetchFn(url, { signal: controller.signal, headers: options.headers });
+        const bytes = await readBodyCapped(res, options.maxBytes, url, controller);
+        return { status: res.status, ok: res.ok, headers: res.headers, bytes };
+      })();
+      return await Promise.race([work, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function readBodyCapped(res, maxBytes, context, controller) {
+    const declared = Number(res.headers.get("content-length") ?? NaN);
+    if (!Number.isNaN(declared) && declared > maxBytes) {
+      controller?.abort();
+      throw new ResponseCapExceededError(
+        `${context}: declared content-length ${declared} exceeds cap of ${maxBytes} bytes`
+      );
+    }
+    if (!res.body) {
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length > maxBytes) {
+        throw new ResponseCapExceededError(`${context}: response exceeded cap of ${maxBytes} bytes`);
+      }
+      return bytes;
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      if (received > maxBytes) {
+        await reader.cancel().catch(() => {
+        });
+        controller?.abort();
+        throw new ResponseCapExceededError(`${context}: response exceeded cap of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(received);
+    let off = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, off);
+      off += chunk.length;
+    }
+    return out;
+  }
+
   // packages/fetch/src/backends.ts
-  async function ok(res, url) {
+  var DEFAULT_BACKEND_LIMITS = {
+    timeoutMs: DEFAULT_HTTP_TIMEOUT_MS,
+    smallMaxBytes: 64 * 1024,
+    headerMaxBytes: 16 * 1024,
+    txMaxBytes: 9 * 1024 * 1024,
+    blockMaxBytes: 41e5,
+    contentMaxBytes: 9 * 1024 * 1024,
+    retry: { maxAttempts: 4, baseDelayMs: 250, maxDelayMs: 8e3 }
+  };
+  function resolveLimits(init = {}) {
+    return {
+      ...DEFAULT_BACKEND_LIMITS,
+      ...init,
+      retry: { ...DEFAULT_BACKEND_LIMITS.retry, ...init.retry }
+    };
+  }
+  var RETRYABLE_STATUS = /* @__PURE__ */ new Set([429, 503]);
+  var MAX_RETRY_AFTER_MS = 3e4;
+  var realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function parseRetryAfter(value, now = Date.now()) {
+    if (!value) return void 0;
+    const trimmed = value.trim();
+    if (trimmed === "") return void 0;
+    const seconds = Number(trimmed);
+    const ms = Number.isFinite(seconds) ? seconds * 1e3 : Date.parse(trimmed) - now;
+    if (!Number.isFinite(ms) || ms < 0 || ms > MAX_RETRY_AFTER_MS) return void 0;
+    return ms;
+  }
+  function okCapped(res, url) {
     if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
     return res;
   }
+  var utf83 = new TextDecoder();
   var EsploraBackend = class {
-    constructor(baseUrl, fetchFn = (u, i) => fetch(u, i)) {
+    constructor(baseUrl, fetchFn = (u, i) => fetch(u, i), limits = {}, sleep = realSleep) {
       this.baseUrl = baseUrl;
       this.fetchFn = fetchFn;
+      this.sleep = sleep;
       this.baseUrl = baseUrl.replace(/\/+$/, "");
+      this.limits = resolveLimits(limits);
     }
     baseUrl;
     fetchFn;
-    async text(path) {
-      const url = `${this.baseUrl}${path}`;
-      return (await ok(await this.fetchFn(url), url)).text();
+    sleep;
+    limits;
+    /** full jitter over the exponential window, or the server's own Retry-After */
+    backoffMs(attempt, retryAfterMs) {
+      if (retryAfterMs !== void 0) return retryAfterMs;
+      const { baseDelayMs, maxDelayMs } = this.limits.retry;
+      return Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
     }
-    async json(path) {
+    /**
+     * One bounded request, retried on rate limits, 503s and network errors.
+     * Every attempt calls fetchCapped afresh, so each gets its own deadline and
+     * its own AbortController; a retry loop wrapped around a single fetchCapped
+     * would inherit the first attempt's already-fired abort.
+     */
+    async get(path, maxBytes) {
       const url = `${this.baseUrl}${path}`;
-      return (await ok(await this.fetchFn(url), url)).json();
+      const { maxAttempts } = this.limits.retry;
+      for (let attempt = 1; ; attempt++) {
+        const last = attempt >= maxAttempts;
+        let res;
+        let failure;
+        try {
+          res = await fetchCapped(url, {
+            fetchFn: this.fetchFn,
+            timeoutMs: this.limits.timeoutMs,
+            maxBytes
+          });
+        } catch (e) {
+          failure = e;
+        }
+        let retryAfterMs;
+        if (res !== void 0) {
+          if (res.ok || last || !RETRYABLE_STATUS.has(res.status)) return okCapped(res, url);
+          retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+        } else if (last || failure instanceof ResponseCapExceededError) {
+          throw failure;
+        }
+        await this.sleep(this.backoffMs(attempt, retryAfterMs));
+      }
+    }
+    async text(path, maxBytes) {
+      return utf83.decode((await this.get(path, maxBytes)).bytes);
+    }
+    async json(path, maxBytes) {
+      return JSON.parse(await this.text(path, maxBytes));
     }
     getTxHex(txid) {
-      return this.text(`/tx/${txid}/hex`);
+      return this.text(`/tx/${txid}/hex`, this.limits.txMaxBytes);
     }
     getTxStatus(txid) {
-      return this.json(`/tx/${txid}/status`);
+      return this.json(`/tx/${txid}/status`, this.limits.smallMaxBytes);
     }
     getMerkleProof(txid) {
-      return this.json(`/tx/${txid}/merkle-proof`);
+      return this.json(`/tx/${txid}/merkle-proof`, this.limits.smallMaxBytes);
     }
     getHeaderHex(blockHash) {
-      return this.text(`/block/${blockHash}/header`);
+      return this.text(`/block/${blockHash}/header`, this.limits.headerMaxBytes);
     }
     getBlockInfo(blockHash) {
-      return this.json(`/block/${blockHash}`);
+      return this.json(`/block/${blockHash}`, this.limits.smallMaxBytes);
     }
     getBlockHashAtHeight(height) {
-      return this.text(`/block-height/${height}`);
+      return this.text(`/block-height/${height}`, this.limits.smallMaxBytes);
     }
     getTipHeight() {
-      return this.text("/blocks/tip/height");
+      return this.text("/blocks/tip/height", this.limits.smallMaxBytes);
+    }
+    getOutspend(txid, vout) {
+      return this.json(`/tx/${txid}/outspend/${vout}`, this.limits.smallMaxBytes);
     }
     async getBlockRaw(blockHash) {
-      const url = `${this.baseUrl}/block/${blockHash}/raw`;
-      const res = await ok(await this.fetchFn(url), url);
-      return new Uint8Array(await res.arrayBuffer());
+      return (await this.get(`/block/${blockHash}/raw`, this.limits.blockMaxBytes)).bytes;
     }
     /** txid of the transaction at index `pos` in the block (esplora /txid endpoint) */
     getTxidAtBlockIndex(blockHash, pos) {
-      return this.text(`/block/${blockHash}/txid/${pos}`);
+      return this.text(`/block/${blockHash}/txid/${pos}`, this.limits.smallMaxBytes);
     }
   };
   var OrdBackend = class {
-    constructor(baseUrl, fetchFn = (u, i) => fetch(u, i)) {
+    constructor(baseUrl, fetchFn = (u, i) => fetch(u, i), limits = {}) {
       this.baseUrl = baseUrl;
       this.fetchFn = fetchFn;
       this.baseUrl = baseUrl.replace(/\/+$/, "");
+      this.limits = resolveLimits(limits);
     }
     baseUrl;
     fetchFn;
-    url(path) {
-      return `${this.baseUrl}${path}`;
+    limits;
+    async get(path, maxBytes, headers) {
+      const url = `${this.baseUrl}${path}`;
+      const res = await fetchCapped(url, {
+        fetchFn: this.fetchFn,
+        timeoutMs: this.limits.timeoutMs,
+        maxBytes,
+        headers
+      });
+      return okCapped(res, url);
+    }
+    /** buffered, bounded Response (headers preserved for content-type/encoding) */
+    toResponse(res) {
+      return new Response(res.bytes.slice(), { status: res.status, headers: res.headers });
     }
     /** raw content response (delegation applied by the server) */
     async content(id, acceptEncoding = "br, gzip, identity") {
-      const url = this.url(`/content/${id}`);
-      return ok(await this.fetchFn(url, { headers: { "accept-encoding": acceptEncoding } }), url);
+      const res = await this.get(`/content/${id}`, this.limits.contentMaxBytes, {
+        "accept-encoding": acceptEncoding
+      });
+      return this.toResponse(res);
     }
     /** original content, no delegate substitution */
     async undelegatedContent(id, acceptEncoding = "br, gzip, identity") {
-      const url = this.url(`/r/undelegated-content/${id}`);
-      return ok(await this.fetchFn(url, { headers: { "accept-encoding": acceptEncoding } }), url);
+      const res = await this.get(`/r/undelegated-content/${id}`, this.limits.contentMaxBytes, {
+        "accept-encoding": acceptEncoding
+      });
+      return this.toResponse(res);
     }
     async inscriptionInfo(id) {
-      const url = this.url(`/r/inscription/${id}`);
-      return (await ok(await this.fetchFn(url), url)).json();
+      const res = await this.get(`/r/inscription/${id}`, this.limits.smallMaxBytes);
+      return JSON.parse(utf83.decode(res.bytes));
     }
     /** hex-encoded CBOR metadata (ord serves it as a JSON string) */
     async metadataHex(id) {
-      const url = this.url(`/r/metadata/${id}`);
-      return (await ok(await this.fetchFn(url), url)).json();
+      const res = await this.get(`/r/metadata/${id}`, this.limits.contentMaxBytes);
+      return JSON.parse(utf83.decode(res.bytes));
     }
     /** hex-encoded raw transaction (ord serves it as a JSON string) */
     async txHex(txid) {
-      const url = this.url(`/r/tx/${txid}`);
-      return (await ok(await this.fetchFn(url), url)).json();
+      const res = await this.get(`/r/tx/${txid}`, this.limits.txMaxBytes);
+      return JSON.parse(utf83.decode(res.bytes));
     }
   };
 
@@ -3561,7 +3749,16 @@
   function makeHeaderTrust(options = {}) {
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
     const esploras = options.esploras ?? [];
+    const powLimitBits = options.powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
+    const serving = new Set(options.proofSources ?? []);
+    if (options.proofSource !== void 0) serving.add(options.proofSource);
+    const builderIsSource = serving.size > 0;
     return async function checkHeader(header, height) {
+      if (powLimitBits !== null && bitsToTarget(header.bits) > bitsToTarget(powLimitBits)) {
+        throw new HeaderTrustError(
+          `header ${header.hash} target (bits 0x${header.bits.toString(16)}) is easier than the proof-of-work limit 0x${powLimitBits.toString(16)}; set powLimitBits for non-mainnet chains`
+        );
+      }
       const checkpoint = checkpoints.get(height);
       if (checkpoint !== void 0) {
         if (checkpoint !== header.hash) {
@@ -3569,54 +3766,98 @@
             `header ${header.hash} at height ${height} contradicts checkpoint ${checkpoint}`
           );
         }
-        return { checkpointHit: true, sourcesQueried: 0, sourcesAgreed: 0 };
+        return {
+          checkpointHit: true,
+          sourcesQueried: 0,
+          sourcesAgreed: 0,
+          independentSources: 0,
+          builderIsSource,
+          anchored: true
+        };
       }
-      if (esploras.length === 0) {
+      const attesters = esploras.filter((e) => !serving.has(e.baseUrl));
+      const required = options.minAgreement ?? 2;
+      const hashResults = await Promise.allSettled(
+        attesters.map(async (e) => (await e.getBlockHashAtHeight(height)).trim().toLowerCase())
+      );
+      const agreed = hashResults.filter(
+        (r) => r.status === "fulfilled" && r.value === header.hash
+      );
+      const independentSources = agreed.length;
+      if (independentSources < required) {
         throw new HeaderTrustError(
-          `no checkpoint for height ${height} and no header sources configured`
+          `height ${height} not independently anchored: ${independentSources} independent source(s) support header ${header.hash} (need ${required}; ${agreed.length}/${attesters.length} attesters agreed` + (builderIsSource ? `, ${serving.size} serving backend(s) excluded from the vote` : "") + `). Pass --anchor-source with at least ${required} endpoints that did not serve the bundle, a covering checkpoint, or a headerSyncTrust anchor.`
         );
       }
-      const results = await Promise.allSettled(
-        esploras.map(async (e) => ({
-          hash: (await e.getBlockHashAtHeight(height)).trim().toLowerCase(),
-          tip: Number((await e.getTipHeight()).trim())
-        }))
-      );
-      const successes = results.filter(
-        (r) => r.status === "fulfilled"
-      );
-      const agreed = successes.filter((r) => r.value.hash === header.hash);
-      const minAgreement = options.minAgreement ?? Math.max(1, Math.min(2, esploras.length));
-      if (agreed.length < minAgreement) {
-        throw new HeaderTrustError(
-          `only ${agreed.length}/${esploras.length} header sources agree on height ${height} (need ${minAgreement}); header ${header.hash}`
+      let tipHeight;
+      if (options.minConfirmations) {
+        const tipResults = await Promise.allSettled(
+          attesters.map(async (e) => Number((await e.getTipHeight()).trim()))
         );
-      }
-      const tips = successes.map((r) => r.value.tip).sort((a, b) => a - b);
-      const tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : void 0;
-      if (options.minConfirmations && tipHeight !== void 0) {
-        const confs = tipHeight - height + 1;
-        if (confs < options.minConfirmations) {
-          throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
+        const tips = tipResults.filter((r) => r.status === "fulfilled").map((r) => r.value).sort((a, b) => a - b);
+        tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : void 0;
+        if (tipHeight !== void 0) {
+          const confs = tipHeight - height + 1;
+          if (confs < options.minConfirmations) {
+            throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
+          }
         }
       }
       return {
         checkpointHit: false,
-        sourcesQueried: esploras.length,
+        sourcesQueried: attesters.length,
         sourcesAgreed: agreed.length,
+        independentSources,
+        builderIsSource,
+        anchored: true,
         tipHeight
       };
     };
   }
 
   // packages/fetch/src/decompress.browser.ts
-  var webDecompressor = async (encoding, data) => {
-    if (typeof DecompressionStream === "undefined") return void 0;
-    if (encoding !== "gzip" && encoding !== "deflate") return void 0;
-    const stream = new Blob([data.slice()]).stream().pipeThrough(new DecompressionStream(encoding));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  };
-  var defaultDecompressor = webDecompressor;
+  var DEFAULT_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
+  function boundedWebDecompressor(maxOutputBytes = DEFAULT_MAX_DECOMPRESSED_BYTES) {
+    return async (encoding, data) => {
+      if (typeof DecompressionStream === "undefined") return void 0;
+      if (encoding !== "gzip" && encoding !== "deflate") return void 0;
+      try {
+        const stream = new Blob([data.slice()]).stream().pipeThrough(new DecompressionStream(encoding));
+        const reader = stream.getReader();
+        const chunks = [];
+        let total = 0;
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.length;
+          if (total > maxOutputBytes) {
+            await reader.cancel().catch(() => {
+            });
+            return void 0;
+          }
+          chunks.push(value);
+        }
+        const out = new Uint8Array(total);
+        let off = 0;
+        for (const chunk of chunks) {
+          out.set(chunk, off);
+          off += chunk.length;
+        }
+        return out;
+      } catch {
+        return void 0;
+      }
+    };
+  }
+  function boundedNodeDecompressor(_maxOutputBytes = DEFAULT_MAX_DECOMPRESSED_BYTES) {
+    return async () => void 0;
+  }
+  function boundedDecompressor(maxOutputBytes = DEFAULT_MAX_DECOMPRESSED_BYTES) {
+    return boundedWebDecompressor(maxOutputBytes);
+  }
+  var webDecompressor = boundedWebDecompressor();
+  var nodeDecompressor = boundedNodeDecompressor();
+  var defaultDecompressor = boundedWebDecompressor();
 
   // packages/fetch/src/resolver.ts
   var OrdResolveError = class extends Error {
@@ -3629,19 +3870,33 @@
   };
   var DEFAULT_ESPLORA = ["https://mempool.space/api", "https://blockstream.info/api"];
   var DEFAULT_ORD_GATEWAYS = ["https://ordinals.com"];
+  var DEFAULT_ANCHOR_SOURCES = [
+    "https://mempool.space/api",
+    "https://blockstream.info/api",
+    "https://bitcoin.lu.ke/api",
+    "https://mempool.emzy.de/api",
+    "https://mempool.bitaroo.net/api"
+  ];
   var OrdResolver = class {
     esploras;
+    anchors;
     ordServers;
     options;
     decompressor;
     constructor(options = {}) {
       this.options = options;
       const fetchFn = options.fetchFn;
-      this.esploras = (options.esplora ?? DEFAULT_ESPLORA).map((u) => new EsploraBackend(u, fetchFn));
-      this.ordServers = (options.ordGateways ?? DEFAULT_ORD_GATEWAYS).map(
-        (u) => new OrdBackend(u, fetchFn)
+      const limits = options.limits ?? {};
+      this.esploras = (options.esplora ?? DEFAULT_ESPLORA).map(
+        (u) => new EsploraBackend(u, fetchFn, limits)
       );
-      this.decompressor = options.decompressor ?? defaultDecompressor;
+      this.anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
+        (u) => new EsploraBackend(u, fetchFn, limits)
+      );
+      this.ordServers = (options.ordGateways ?? DEFAULT_ORD_GATEWAYS).map(
+        (u) => new OrdBackend(u, fetchFn, limits)
+      );
+      this.decompressor = options.decompressor ?? (options.maxDecompressedBytes !== void 0 ? boundedDecompressor(options.maxDecompressedBytes) : defaultDecompressor);
     }
     /** Resolve an ord URI to verified bytes. */
     async resolve(uri, overrides = {}) {
@@ -3665,7 +3920,7 @@
       const errors = [];
       for (const e of this.esploras) {
         try {
-          return await fn(e);
+          return { value: await fn(e), source: e };
         } catch (err) {
           errors.push(`${e.baseUrl}: ${err.message}`);
         }
@@ -3675,7 +3930,9 @@ ${errors.join("\n")}`);
     }
     async verifyInscription(idString, level) {
       const parsed = parseOrdUri(idString);
-      const bundle = await this.withEsplora((e) => buildProofBundle(e, parsed.id, level));
+      const { value: bundle, source } = await this.withEsplora(
+        (e) => buildProofBundle(e, parsed.id, level)
+      );
       let verified;
       try {
         verified = verifyProofBundle(bundle);
@@ -3683,10 +3940,13 @@ ${errors.join("\n")}`);
         throw new OrdResolveError("VERIFY_FAILED", e.message);
       }
       const trust = this.options.trustHeader ?? makeHeaderTrust({
-        esploras: this.esploras,
+        esploras: this.anchors,
         minAgreement: this.options.minHeaderAgreement,
         minConfirmations: this.options.minConfirmations,
-        checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS
+        checkpoints: this.options.checkpoints ?? MAINNET_CHECKPOINTS,
+        // the backend that built the proof cannot also attest to its header
+        proofSource: source.baseUrl,
+        powLimitBits: this.options.powLimitBits
       });
       let headerTrust;
       try {
@@ -3697,7 +3957,7 @@ ${errors.join("\n")}`);
       return { verified, headerTrust };
     }
     async resolveVerified(parsed, level) {
-      const { verified, headerTrust } = await this.verifyInscription(parsed.idString, level);
+      let { verified, headerTrust } = await this.verifyInscription(parsed.idString, level);
       const inscription = verified.inscription;
       if (parsed.path === "metadata") {
         if (!inscription.metadata) throw new OrdResolveError("NO_CONTENT", "inscription has no metadata");
@@ -3720,6 +3980,7 @@ ${errors.join("\n")}`);
         const delegate = await this.verifyInscription(inscription.delegate, level);
         source = delegate.verified.inscription;
         sourceVerified = delegate.verified;
+        headerTrust = delegate.headerTrust;
         viaDelegate = inscription.delegate;
       }
       if (!source.body) {
