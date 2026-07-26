@@ -40,13 +40,20 @@ import {
 } from './headertrust.js';
 import { DEFAULT_ESPLORA } from './resolver.js';
 
-export interface CustodyBackend {
+/**
+ * What it takes to anchor a transaction into a PoW-checked header. Shared with
+ * the sat genealogy builder, which needs anchoring but no outspend pathfinding.
+ */
+export interface AnchorBackend {
   readonly baseUrl: string;
   getTxHex(txid: string): Promise<string>;
   getTxStatus(txid: string): Promise<{ confirmed: boolean; block_height?: number; block_hash?: string }>;
   getMerkleProof(txid: string): Promise<{ block_height: number; merkle: string[]; pos: number }>;
   getHeaderHex(blockHash: string): Promise<string>;
   getBlockInfo(blockHash: string): Promise<{ tx_count: number }>;
+}
+
+export interface CustodyBackend extends AnchorBackend {
   getOutspend(txid: string, vout: number): Promise<EsploraOutspend>;
 }
 
@@ -58,8 +65,13 @@ export interface BuildCustodyResult {
 
 export class CustodyBuildError extends Error {}
 
-async function assembleHop(
-  backend: CustodyBackend,
+/**
+ * Anchor a transaction: fetch its inclusion proof, header, and block tx count,
+ * plus the prev txs for inputs 0..prevTxsUpTo (pass -1 for none, as a coinbase
+ * needs). Nothing here is trusted; the bundle verifier re-proves all of it.
+ */
+export async function assembleAnchoredHop(
+  backend: AnchorBackend,
   tx: ParsedTx,
   hex: string,
   prevTxsUpTo: number,
@@ -109,7 +121,7 @@ export async function buildCustodyBundle(
     throw new CustodyBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);
   }
 
-  const revealHop = await assembleHop(backend, reveal, revealHex, inscription.input);
+  const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
   const hops: CustodyHopJson[] = [revealHop];
 
   // working (unverified) satpoint to know which outpoint to walk next
@@ -141,7 +153,7 @@ export async function buildCustodyBundle(
         `${outspend.txid} claimed to spend ${formatSatpoint(current)} but does not`,
       );
     }
-    const hop = await assembleHop(backend, tx, hex, j);
+    const hop = await assembleAnchoredHop(backend, tx, hex, j);
     hops.push(hop);
     current = transferSatpoint(
       tx,
