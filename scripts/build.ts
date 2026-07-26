@@ -168,13 +168,15 @@ function stage(): void {
     main: './dist/index.js',
     types: './dist/index.d.ts',
   });
+  // bin paths must be bare-relative: npm 11.11 drops "./"-prefixed bin
+  // entries at publish instead of normalizing them (exports keep "./")
   stagedManifest('cli', {
-    bin: { 'ord-resolve': './dist/main.js' },
+    bin: { 'ord-resolve': 'dist/main.js' },
     exports: { '.': './dist/main.js' },
     main: './dist/main.js',
   });
   stagedManifest('sidecar', {
-    bin: { 'ord-proof-sidecar': './dist/index.js' },
+    bin: { 'ord-proof-sidecar': 'dist/index.js' },
     exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } },
     main: './dist/index.js',
     types: './dist/index.d.ts',
