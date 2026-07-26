@@ -143,6 +143,10 @@ the whole of what they have to satisfy.
 Verifiers MUST reject a duplicate transaction anywhere in the genealogy, and
 MUST reject a coinbase appearing as a funding step rather than as the terminal
 element. A verifier-side step cap (default 10,000) bounds hostile bundles.
+Builders carry their own cap, since a walk spends a request per step against a
+live backend; the reference builder defaults to 4,096 and exposes it as
+`--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past 800
+funding steps, so a builder cap below four figures refuses real work.
 
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.

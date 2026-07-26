@@ -31,7 +31,7 @@ import {
  *   ord-resolve proof <id> [--level L2|L3]     emit a proof bundle
  *   ord-resolve verify <bundle.json>           verify a proof, custody or sat bundle offline
  *   ord-resolve custody <id>                   prove where the inscribed sat is
- *   ord-resolve sat <id>                       prove which sat it is
+ *   ord-resolve sat <id> [--max-steps N]       prove which sat it is
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
  * Options: --esplora url[,url]   --gateway url[,url]   --anchor-source url[,url]
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
         '  ord-resolve verify <bundle.json>            proof, custody or sat genealogy',
         '  ord-resolve custody <inscription-id> [--json]',
-        '  ord-resolve sat <inscription-id> [--json] [--bundle FILE]',
+        '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]  --anchor-source url[,url]',
       ].join('\n'),
@@ -163,9 +163,18 @@ async function main(): Promise<void> {
     const idArg = positional[1] ?? fail('sat: missing inscription id', 2);
     const parsed = parseOrdUri(idArg);
     try {
+      const maxStepsArg = str(flags.get('max-steps'));
+      let maxSteps: number | undefined;
+      if (maxStepsArg !== undefined) {
+        maxSteps = Number(maxStepsArg);
+        if (!Number.isInteger(maxSteps) || maxSteps < 1) {
+          fail('sat: --max-steps must be a positive integer', 2);
+        }
+      }
       const res = await fetchSatIdentity(`${parsed.id.txid}i${parsed.id.index}`, {
         esplora,
         anchorSources,
+        maxSteps,
       });
       const bundleOut = str(flags.get('bundle'));
       if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));

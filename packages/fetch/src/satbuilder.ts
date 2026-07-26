@@ -42,6 +42,17 @@ import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 
 export class SatBuildError extends Error {}
 
+/**
+ * The walk hit its step cap. Separate from SatBuildError (which it extends, so
+ * existing catch sites keep working) because the cap is deterministic and
+ * identical on every backend: rewalking the whole ancestry against a second
+ * one reaches the same step and costs another full walk.
+ */
+export class SatStepLimitError extends SatBuildError {}
+
+/** funding steps the builder will walk before giving up (SPEC-SAT) */
+export const DEFAULT_MAX_STEPS = 4096;
+
 export interface BuildSatGenealogyResult {
   bundle: SatGenealogyBundleJson;
 }
@@ -103,7 +114,7 @@ export async function buildSatGenealogyBundle(
   backend: AnchorBackend,
   options: { maxSteps?: number } = {},
 ): Promise<BuildSatGenealogyResult> {
-  const maxSteps = options.maxSteps ?? 512;
+  const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const id = parseInscriptionId(inscriptionId);
 
   const revealHex = (await backend.getTxHex(id.txid)).trim();
@@ -148,7 +159,10 @@ export async function buildSatGenealogyBundle(
 
   for (let step = 0; ; step++) {
     if (step > maxSteps) {
-      throw new SatBuildError(`genealogy exceeds ${maxSteps} funding steps`);
+      throw new SatStepLimitError(
+        `genealogy exceeds ${maxSteps} funding steps; raise the cap with --max-steps ` +
+          `(or the maxSteps option) if the ancestry really is this deep`,
+      );
     }
     const hex = (await backend.getTxHex(expectTxid)).trim();
     let tx: ParsedTx;
@@ -198,6 +212,7 @@ export interface FetchSatIdentityOptions {
   anchorSources?: string[];
   fetchFn?: FetchFn;
   limits?: Partial<BackendLimits>;
+  /** funding steps the walk will follow (default `DEFAULT_MAX_STEPS`) */
   maxSteps?: number;
   /** see HeaderTrustOptions; defaults mirror the resolver */
   minHeaderAgreement?: number;
@@ -250,6 +265,8 @@ export async function fetchSatIdentity(
     } catch (e) {
       // a v1-domain refusal is a property of the ancestry, not of the backend
       if (e instanceof CustodyUnsupportedError) throw e;
+      // the step cap is deterministic: every backend walks to the same step
+      if (e instanceof SatStepLimitError) throw e;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }

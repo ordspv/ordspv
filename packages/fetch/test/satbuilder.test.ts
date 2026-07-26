@@ -18,9 +18,11 @@ import {
 import { EsploraBackend, type FetchFn } from '../src/backends.js';
 import {
   buildSatGenealogyBundle,
+  DEFAULT_MAX_STEPS,
   fetchSatIdentity,
   SatBuildError,
   SatIdentityError,
+  SatStepLimitError,
 } from '../src/index.js';
 import { envelopeScript, taprootCommit } from '../../core/test/helpers.js';
 
@@ -37,6 +39,8 @@ const E = 'https://esplora.test';
 // from voting on its own headers
 const E2 = 'https://esplora2.test';
 const E3 = 'https://esplora3.test';
+// a second serving backend, for failover assertions
+const EB = 'https://esplorab.test';
 
 type Route = string | Uint8Array | object | (() => Promise<Response> | Response);
 
@@ -371,9 +375,60 @@ describe('fetchSatIdentity', () => {
     const ok = await fetchSatIdentity(id, { ...OPTS, maxSteps: 2, fetchFn: stubFetch(routes) });
     expect(ok.identity.depth).toBe(2);
 
+    // the cap is deterministic, so it surfaces as itself rather than as a
+    // per-backend failure list, and it names the flag that raises it
     const p = fetchSatIdentity(id, { ...OPTS, maxSteps: 1, fetchFn: stubFetch(routes) });
-    await expect(p).rejects.toThrow(SatIdentityError);
+    await expect(p).rejects.toThrow(SatStepLimitError);
     await expect(p).rejects.toThrow(/exceeds 1 funding steps/);
+    await expect(p).rejects.toThrow(/--max-steps/);
+    await expect(p).rejects.not.toThrow(SatIdentityError);
+  });
+
+  it('does not rewalk the ancestry on a second backend after hitting the cap', async () => {
+    // every backend walks to the same step, so a second full walk buys nothing
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
+    const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, f1]);
+    // a second serving backend with identical routes; count what it is asked
+    let secondCalls = 0;
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => {
+      if (url.startsWith(EB)) {
+        secondCalls++;
+        return base(url.replace(EB, E), init);
+      }
+      return base(url, init);
+    };
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      maxSteps: 1,
+      fetchFn,
+    });
+    await expect(p).rejects.toThrow(SatStepLimitError);
+    expect(secondCalls).toBe(0);
+  });
+
+  it('walks past the old 512-step ceiling on the raised default', async () => {
+    // 600 funding steps: refused before, built now without passing maxSteps
+    expect(DEFAULT_MAX_STEPS).toBeGreaterThan(600);
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const middle: Chained[] = [];
+    let prev = coinbase;
+    for (let i = 0; i < 600; i++) {
+      prev = buildTx([{ txid: prev.tx.txid, vout: 0 }], [{ value: SUBSIDY - BigInt(i + 1) }]);
+      middle.push(prev);
+    }
+    const commit = buildTx([{ txid: prev.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, ...middle]);
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
+    expect(res.identity.depth).toBe(601);
+    expect(res.identity.coinbaseHeight).toBe(CB_HEIGHT);
   });
 
   it('surfaces a fee-tail ancestry as CustodyUnsupportedError, not backend failover', async () => {
