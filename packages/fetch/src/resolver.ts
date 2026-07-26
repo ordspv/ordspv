@@ -9,7 +9,7 @@ import {
   type L2Assurances,
   type VerifiedInscription,
 } from '@ordspv/core';
-import { EsploraBackend, OrdBackend, type BackendLimits, type FetchFn } from './backends.js';
+import { EsploraBackend, OrdBackend, type BackendLimitsInit, type FetchFn } from './backends.js';
 import { boundedDecompressor, defaultDecompressor, type Decompressor } from './decompress.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { buildProofBundle } from './proofbuilder.js';
@@ -72,8 +72,8 @@ export interface ResolverOptions {
   decompressor?: Decompressor;
   /** cap on decoded (decompressed) body size when auto-decoding tag-9 encodings */
   maxDecompressedBytes?: number;
-  /** per-request deadline and per-endpoint response-size caps for all backends */
-  limits?: Partial<BackendLimits>;
+  /** per-request deadline, response-size caps and retry policy for all backends */
+  limits?: BackendLimitsInit;
 }
 
 export interface Verification {

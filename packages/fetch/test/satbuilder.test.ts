@@ -385,31 +385,37 @@ describe('fetchSatIdentity', () => {
   });
 
   it('does not rewalk the ancestry on a second backend after hitting the cap', async () => {
-    // every backend walks to the same step, so a second full walk buys nothing
+    // every backend walks to the same step, so a second full walk buys
+    // nothing: the request count with two backends pooled must match the
+    // request count with one
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
     const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
     const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
     const routes = chainRoutes(coinbase, reveal, [commit, f1]);
-    // a second serving backend with identical routes; count what it is asked
-    let secondCalls = 0;
-    const base = stubFetch(routes);
-    const fetchFn: FetchFn = (url, init) => {
-      if (url.startsWith(EB)) {
-        secondCalls++;
+    const id = `${reveal.tx.txid}i0`;
+
+    const counting = () => {
+      let calls = 0;
+      const base = stubFetch(routes);
+      const fetchFn: FetchFn = (url, init) => {
+        if (!url.startsWith(E2) && !url.startsWith(E3)) calls++;
         return base(url.replace(EB, E), init);
-      }
-      return base(url, init);
+      };
+      return { fetchFn, count: () => calls };
     };
 
-    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
-      ...OPTS,
-      esplora: [E, EB],
-      maxSteps: 1,
-      fetchFn,
-    });
-    await expect(p).rejects.toThrow(SatStepLimitError);
-    expect(secondCalls).toBe(0);
+    const one = counting();
+    await expect(
+      fetchSatIdentity(id, { ...OPTS, esplora: [E], maxSteps: 1, fetchFn: one.fetchFn }),
+    ).rejects.toThrow(SatStepLimitError);
+
+    const two = counting();
+    await expect(
+      fetchSatIdentity(id, { ...OPTS, esplora: [E, EB], maxSteps: 1, fetchFn: two.fetchFn }),
+    ).rejects.toThrow(SatStepLimitError);
+
+    expect(two.count()).toBe(one.count());
   });
 
   it('walks past the old 512-step ceiling on the raised default', async () => {
@@ -429,6 +435,59 @@ describe('fetchSatIdentity', () => {
     const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
     expect(res.identity.depth).toBe(601);
     expect(res.identity.coinbaseHeight).toBe(CB_HEIGHT);
+  });
+
+  it('keeps walk progress when a pool member fails mid-walk', async () => {
+    // the old shape restarted the whole walk on the next backend; the pool
+    // hands the failing REQUEST to the next member and carries on
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
+    const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, f1]);
+
+    // E rate-limits the deepest funding tx; EB serves everything E serves
+    const base = stubFetch(routes);
+    let refusals = 0;
+    const fetchFn: FetchFn = (url, init) => {
+      if (url === `${E}/tx/${f1.tx.txid}/hex`) {
+        refusals++;
+        return Promise.resolve(new Response('slow down', { status: 429 }));
+      }
+      return base(url.replace(EB, E), init);
+    };
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      // no waiting on a real backoff: rotation is what this asserts
+      limits: { retry: { maxAttempts: 1 } },
+      fetchFn,
+    });
+    expect(refusals).toBeGreaterThan(0);
+    expect(res.identity.depth).toBe(2);
+    expect(res.identity.coinbaseHeight).toBe(CB_HEIGHT);
+  });
+
+  it('bars every pool member that served bytes from attesting', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const base = stubFetch(routes);
+    // EB serves proofs AND is offered as an attester; it must be filtered out
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+    routes[`${EB}/block-height/${CB_HEIGHT}`] = routes[`${E}/block-height/${CB_HEIGHT}`];
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      anchorSources: [EB, E2, E3],
+      fetchFn,
+    });
+    expect(res.headerTrust.coinbase.sourcesQueried).toBe(2); // E2 and E3 only
+    expect(res.headerTrust.coinbase.independentSources).toBe(2);
+    expect(res.headerTrust.coinbase.builderIsSource).toBe(true);
   });
 
   it('surfaces a fee-tail ancestry as CustodyUnsupportedError, not backend failover', async () => {

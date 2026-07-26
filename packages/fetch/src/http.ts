@@ -17,6 +17,13 @@ export interface CappedResponse {
   bytes: Uint8Array;
 }
 
+/**
+ * The response was larger than the caller's cap. Its own class because a
+ * retry layer must not treat it as a hiccup: the same request would return the
+ * same oversized body, and the point of the cap is to stop reading it.
+ */
+export class ResponseCapExceededError extends Error {}
+
 export interface FetchCappedOptions {
   /** reject the whole request (connect + body) after this many ms */
   timeoutMs?: number;
@@ -79,12 +86,14 @@ export async function readBodyCapped(
   const declared = Number(res.headers.get('content-length') ?? NaN);
   if (!Number.isNaN(declared) && declared > maxBytes) {
     controller?.abort();
-    throw new Error(`${context}: declared content-length ${declared} exceeds cap of ${maxBytes} bytes`);
+    throw new ResponseCapExceededError(
+      `${context}: declared content-length ${declared} exceeds cap of ${maxBytes} bytes`,
+    );
   }
   if (!res.body) {
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length > maxBytes) {
-      throw new Error(`${context}: response exceeded cap of ${maxBytes} bytes`);
+      throw new ResponseCapExceededError(`${context}: response exceeded cap of ${maxBytes} bytes`);
     }
     return bytes;
   }
@@ -98,7 +107,7 @@ export async function readBodyCapped(
     if (received > maxBytes) {
       await reader.cancel().catch(() => {});
       controller?.abort();
-      throw new Error(`${context}: response exceeded cap of ${maxBytes} bytes`);
+      throw new ResponseCapExceededError(`${context}: response exceeded cap of ${maxBytes} bytes`);
     }
     chunks.push(value);
   }

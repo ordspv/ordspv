@@ -32,7 +32,12 @@ import {
   type VerifiedCustody,
   type ParsedTx,
 } from '@ordspv/core';
-import { EsploraBackend, type EsploraOutspend, type FetchFn, type BackendLimits } from './backends.js';
+import {
+  EsploraBackend,
+  type EsploraOutspend,
+  type FetchFn,
+  type BackendLimitsInit,
+} from './backends.js';
 import {
   makeHeaderTrust,
   MAINNET_CHECKPOINTS,
@@ -183,7 +188,7 @@ export interface FetchCustodyOptions {
   /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); see HeaderTrustOptions */
   anchorSources?: string[];
   fetchFn?: FetchFn;
-  limits?: Partial<BackendLimits>;
+  limits?: BackendLimitsInit;
   maxHops?: number;
   /** see HeaderTrustOptions; defaults mirror the resolver */
   minHeaderAgreement?: number;

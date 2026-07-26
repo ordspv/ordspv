@@ -35,7 +35,12 @@ import {
   type VerifiedSatIdentity,
   type ParsedTx,
 } from '@ordspv/core';
-import { EsploraBackend, type FetchFn, type BackendLimits } from './backends.js';
+import {
+  EsploraBackend,
+  PooledEsploraBackend,
+  type FetchFn,
+  type BackendLimitsInit,
+} from './backends.js';
 import { assembleAnchoredHop, type AnchorBackend } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
@@ -211,7 +216,7 @@ export interface FetchSatIdentityOptions {
   /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); see HeaderTrustOptions */
   anchorSources?: string[];
   fetchFn?: FetchFn;
-  limits?: Partial<BackendLimits>;
+  limits?: BackendLimitsInit;
   /** funding steps the walk will follow (default `DEFAULT_MAX_STEPS`) */
   maxSteps?: number;
   /** see HeaderTrustOptions; defaults mirror the resolver */
@@ -247,31 +252,27 @@ export async function fetchSatIdentity(
   inscriptionId: string,
   options: FetchSatIdentityOptions = {},
 ): Promise<FetchSatIdentityResult> {
-  const backends = (options.esplora ?? DEFAULT_ESPLORA).map(
-    (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
+  // one pool, one walk: a mid-walk failure rotates to another member and
+  // retries that request, instead of restarting thousands of steps from the
+  // reveal against the next backend
+  const pool = new PooledEsploraBackend(
+    (options.esplora ?? DEFAULT_ESPLORA).map(
+      (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
+    ),
   );
   const anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
     (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
   );
 
-  let built: BuildSatGenealogyResult | undefined;
-  let source: EsploraBackend | undefined;
-  const buildErrors: string[] = [];
-  for (const backend of backends) {
-    try {
-      built = await buildSatGenealogyBundle(inscriptionId, backend, { maxSteps: options.maxSteps });
-      source = backend;
-      break;
-    } catch (e) {
-      // a v1-domain refusal is a property of the ancestry, not of the backend
-      if (e instanceof CustodyUnsupportedError) throw e;
-      // the step cap is deterministic: every backend walks to the same step
-      if (e instanceof SatStepLimitError) throw e;
-      buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
-    }
-  }
-  if (!built || !source) {
-    throw new SatIdentityError('BUILD_FAILED', `all backends failed:\n${buildErrors.join('\n')}`);
+  let built: BuildSatGenealogyResult;
+  try {
+    built = await buildSatGenealogyBundle(inscriptionId, pool, { maxSteps: options.maxSteps });
+  } catch (e) {
+    // a v1-domain refusal is a property of the ancestry, not of the backend
+    if (e instanceof CustodyUnsupportedError) throw e;
+    // the step cap is deterministic: every backend walks to the same step
+    if (e instanceof SatStepLimitError) throw e;
+    throw new SatIdentityError('BUILD_FAILED', (e as Error).message);
   }
 
   let identity: VerifiedSatIdentity;
@@ -289,7 +290,8 @@ export async function fetchSatIdentity(
       minAgreement: options.minHeaderAgreement,
       minConfirmations: options.minConfirmations,
       checkpoints: options.checkpoints ?? MAINNET_CHECKPOINTS,
-      proofSource: source.baseUrl,
+      // every pool member that served bytes is barred from attesting
+      proofSources: pool.usedBaseUrls,
       powLimitBits: options.powLimitBits,
     });
 

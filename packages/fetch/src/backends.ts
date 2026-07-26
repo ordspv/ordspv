@@ -16,9 +16,24 @@
  * resolver fail over to the next one.
  */
 
-import { DEFAULT_HTTP_TIMEOUT_MS, fetchCapped, type CappedResponse } from './http.js';
+import {
+  DEFAULT_HTTP_TIMEOUT_MS,
+  fetchCapped,
+  ResponseCapExceededError,
+  type CappedResponse,
+} from './http.js';
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** Bounded retry for transient failures (rate limits, 503s, network errors). */
+export interface RetryLimits {
+  /** attempts per request INCLUDING the first (1 disables retry) */
+  maxAttempts: number;
+  /** exponential backoff base; the delay is jittered across [0, base*2^n] */
+  baseDelayMs: number;
+  /** backoff ceiling before jitter */
+  maxDelayMs: number;
+}
 
 /** Per-request deadline and per-endpoint response-size caps. */
 export interface BackendLimits {
@@ -34,7 +49,13 @@ export interface BackendLimits {
   blockMaxBytes: number;
   /** inscription content / metadata bodies */
   contentMaxBytes: number;
+  retry: RetryLimits;
 }
+
+/** BackendLimits as callers pass it: every field optional, retry included. */
+export type BackendLimitsInit = Partial<Omit<BackendLimits, 'retry'>> & {
+  retry?: Partial<RetryLimits>;
+};
 
 export const DEFAULT_BACKEND_LIMITS: BackendLimits = {
   timeoutMs: DEFAULT_HTTP_TIMEOUT_MS,
@@ -43,7 +64,36 @@ export const DEFAULT_BACKEND_LIMITS: BackendLimits = {
   txMaxBytes: 9 * 1024 * 1024,
   blockMaxBytes: 4_100_000,
   contentMaxBytes: 9 * 1024 * 1024,
+  retry: { maxAttempts: 4, baseDelayMs: 250, maxDelayMs: 8_000 },
 };
+
+/** Fill a partial limits object, merging the nested retry group. */
+export function resolveLimits(init: BackendLimitsInit = {}): BackendLimits {
+  return {
+    ...DEFAULT_BACKEND_LIMITS,
+    ...init,
+    retry: { ...DEFAULT_BACKEND_LIMITS.retry, ...init.retry },
+  };
+}
+
+/** Statuses worth trying again: the server said "later", not "no". */
+const RETRYABLE_STATUS = new Set([429, 503]);
+
+/** Retry-After is honored up to this; beyond it the header is ignored. */
+const MAX_RETRY_AFTER_MS = 30_000;
+
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Retry-After as milliseconds: delta-seconds or an HTTP-date. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === '') return undefined;
+  const seconds = Number(trimmed);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(trimmed) - now;
+  if (!Number.isFinite(ms) || ms < 0 || ms > MAX_RETRY_AFTER_MS) return undefined;
+  return ms;
+}
 
 export interface EsploraMerkleProof {
   block_height: number;
@@ -87,20 +137,54 @@ export class EsploraBackend {
   constructor(
     public readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (u, i) => fetch(u, i),
-    limits: Partial<BackendLimits> = {},
+    limits: BackendLimitsInit = {},
+    private readonly sleep: (ms: number) => Promise<void> = realSleep,
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.limits = { ...DEFAULT_BACKEND_LIMITS, ...limits };
+    this.limits = resolveLimits(limits);
   }
 
+  /** full jitter over the exponential window, or the server's own Retry-After */
+  private backoffMs(attempt: number, retryAfterMs?: number): number {
+    if (retryAfterMs !== undefined) return retryAfterMs;
+    const { baseDelayMs, maxDelayMs } = this.limits.retry;
+    return Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+  }
+
+  /**
+   * One bounded request, retried on rate limits, 503s and network errors.
+   * Every attempt calls fetchCapped afresh, so each gets its own deadline and
+   * its own AbortController; a retry loop wrapped around a single fetchCapped
+   * would inherit the first attempt's already-fired abort.
+   */
   private async get(path: string, maxBytes: number): Promise<CappedResponse> {
     const url = `${this.baseUrl}${path}`;
-    const res = await fetchCapped(url, {
-      fetchFn: this.fetchFn,
-      timeoutMs: this.limits.timeoutMs,
-      maxBytes,
-    });
-    return okCapped(res, url);
+    const { maxAttempts } = this.limits.retry;
+    for (let attempt = 1; ; attempt++) {
+      const last = attempt >= maxAttempts;
+      let res: CappedResponse | undefined;
+      let failure: unknown;
+      try {
+        res = await fetchCapped(url, {
+          fetchFn: this.fetchFn,
+          timeoutMs: this.limits.timeoutMs,
+          maxBytes,
+        });
+      } catch (e) {
+        failure = e;
+      }
+      let retryAfterMs: number | undefined;
+      if (res !== undefined) {
+        // okCapped throws for any non-2xx not worth trying again; that throw
+        // must escape the loop rather than land in the catch above
+        if (res.ok || last || !RETRYABLE_STATUS.has(res.status)) return okCapped(res, url);
+        retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+      } else if (last || failure instanceof ResponseCapExceededError) {
+        // an oversized body is a property of the response, not a hiccup
+        throw failure;
+      }
+      await this.sleep(this.backoffMs(attempt, retryAfterMs));
+    }
   }
 
   private async text(path: string, maxBytes: number): Promise<string> {
@@ -153,6 +237,90 @@ export class EsploraBackend {
   }
 }
 
+/**
+ * N esplora backends behind one backend-shaped surface, rotating per request.
+ *
+ * The genealogy walk spends thousands of requests on one build, so a failure
+ * partway through used to discard everything walked so far: fetchSatIdentity
+ * looped over backends and restarted the walk from the reveal. Here a failing
+ * request rotates to the next member and retries THAT REQUEST, so the walk
+ * keeps its progress and only the request is repeated. A request fails when
+ * every member has failed it.
+ *
+ * The starting member rotates per request so load spreads instead of always
+ * landing on member 0, and `usedBaseUrls` records every member that actually
+ * served bytes, which is what header anchoring must exclude from its vote.
+ */
+export class PooledEsploraBackend {
+  readonly baseUrl: string;
+  /** every member that served bytes for this pool's requests */
+  readonly usedBaseUrls = new Set<string>();
+  private cursor = 0;
+
+  constructor(readonly members: EsploraBackend[]) {
+    if (members.length === 0) throw new Error('PooledEsploraBackend needs at least one backend');
+    this.baseUrl = `pool(${members.map((m) => m.baseUrl).join(', ')})`;
+  }
+
+  private async run<T>(label: string, call: (m: EsploraBackend) => Promise<T>): Promise<T> {
+    const n = this.members.length;
+    const start = this.cursor;
+    this.cursor = (this.cursor + 1) % n;
+    const errors: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const member = this.members[(start + i) % n];
+      try {
+        const value = await call(member);
+        this.usedBaseUrls.add(member.baseUrl);
+        return value;
+      } catch (e) {
+        errors.push(`${member.baseUrl}: ${(e as Error).message}`);
+      }
+    }
+    throw new Error(`all ${n} pooled backend(s) failed for ${label}:\n${errors.join('\n')}`);
+  }
+
+  getTxHex(txid: string): Promise<string> {
+    return this.run(`tx ${txid}`, (m) => m.getTxHex(txid));
+  }
+
+  getTxStatus(txid: string): Promise<EsploraTxStatus> {
+    return this.run(`status ${txid}`, (m) => m.getTxStatus(txid));
+  }
+
+  getMerkleProof(txid: string): Promise<EsploraMerkleProof> {
+    return this.run(`merkle-proof ${txid}`, (m) => m.getMerkleProof(txid));
+  }
+
+  getHeaderHex(blockHash: string): Promise<string> {
+    return this.run(`header ${blockHash}`, (m) => m.getHeaderHex(blockHash));
+  }
+
+  getBlockInfo(blockHash: string): Promise<EsploraBlockInfo> {
+    return this.run(`block ${blockHash}`, (m) => m.getBlockInfo(blockHash));
+  }
+
+  getBlockHashAtHeight(height: number): Promise<string> {
+    return this.run(`block-height ${height}`, (m) => m.getBlockHashAtHeight(height));
+  }
+
+  getTipHeight(): Promise<string> {
+    return this.run('tip height', (m) => m.getTipHeight());
+  }
+
+  getOutspend(txid: string, vout: number): Promise<EsploraOutspend> {
+    return this.run(`outspend ${txid}:${vout}`, (m) => m.getOutspend(txid, vout));
+  }
+
+  getBlockRaw(blockHash: string): Promise<Uint8Array> {
+    return this.run(`raw block ${blockHash}`, (m) => m.getBlockRaw(blockHash));
+  }
+
+  getTxidAtBlockIndex(blockHash: string, pos: number): Promise<string> {
+    return this.run(`txid ${blockHash}#${pos}`, (m) => m.getTxidAtBlockIndex(blockHash, pos));
+  }
+}
+
 export interface OrdInscriptionInfo {
   charms: string[];
   content_type: string | null;
@@ -176,10 +344,10 @@ export class OrdBackend {
   constructor(
     public readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (u, i) => fetch(u, i),
-    limits: Partial<BackendLimits> = {},
+    limits: BackendLimitsInit = {},
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.limits = { ...DEFAULT_BACKEND_LIMITS, ...limits };
+    this.limits = resolveLimits(limits);
   }
 
   private async get(
