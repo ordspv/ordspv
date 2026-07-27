@@ -36,6 +36,12 @@ import { parseInscriptionId } from './inscriptionId.js';
 import { parseHeader, checkProofOfWork, BlockHeader } from './header.js';
 import { verifyMerkleBranch, treeHeight } from './merkle.js';
 import { hexToBytes, bytesEqual, displayToInternal } from './bytes.js';
+import {
+  extractTapscript,
+  isP2TR,
+  parseControlBlock,
+  verifyScriptPathCommitment,
+} from './taproot.js';
 
 /** A location in the sat space of a confirmed transaction's outputs. */
 export interface Satpoint {
@@ -117,6 +123,98 @@ export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: numb
     values.push(spent.value);
   }
   return values;
+}
+
+/** What the envelope binding established about the reveal's taptree. */
+export interface EnvelopeBinding {
+  /** control block merkle path depth; 0 means the taptree provably has a single leaf */
+  controlBlockDepth: number;
+  /** the taptree provably contains only the observed tapscript (depth 0) */
+  singleLeafTree: boolean;
+}
+
+/**
+ * Bind the envelope to txid-committed data.
+ *
+ * A reveal's txid does not commit to its witness (BIP-141), and the envelope
+ * lives in the witness. Anchoring the reveal by txid therefore says nothing
+ * about the pointer, the envelope's input, or the envelope bytes: a server can
+ * rewrite all of them, keep the txid, and hand over a bundle whose inclusion
+ * proofs still fold correctly.
+ *
+ * What the txid DOES commit to is each input's outpoint, and a bundle's prev
+ * txs are pinned by those outpoints. The envelope input's prevout therefore
+ * yields a trustworthy P2TR scriptPubKey, and BIP-341 requires the witness
+ * tapscript to be committed by it. Checking that commitment is what makes the
+ * envelope trustworthy, and it is the same check the L2 content path runs.
+ *
+ * The residual is the L2 residual: a multi-leaf taptree lets a witness present
+ * any leaf its author committed, so this proves the commit output's author
+ * committed the observed tapscript. `singleLeafTree` reports when the taptree
+ * provably held nothing else.
+ */
+export function verifyEnvelopeBinding(
+  reveal: ParsedTx,
+  inscription: Inscription,
+  prevTxsHex: string[],
+  label = 'reveal',
+): EnvelopeBinding {
+  const input = reveal.inputs[inscription.input];
+  if (!input) {
+    throw new Error(`${label}: envelope input ${inscription.input} out of range`);
+  }
+  const tapscript = extractTapscript(input.witness);
+  if (!tapscript) {
+    throw new Error(
+      `${label}: envelope input ${inscription.input} is a key-path spend with no tapscript; ` +
+        `an envelope is a script-path commitment, so it cannot be carried there`,
+    );
+  }
+  const prevHex = prevTxsHex[inscription.input];
+  if (prevHex === undefined || prevHex.trim() === '') {
+    throw new Error(
+      `${label}: no prev tx for envelope input ${inscription.input}, so its commitment cannot be checked`,
+    );
+  }
+  let prev: ParsedTx;
+  try {
+    prev = parseTx(hexToBytes(prevHex.trim()));
+  } catch (e) {
+    throw new Error(
+      `${label}: prev tx for envelope input ${inscription.input}: cannot parse: ${(e as Error).message}`,
+    );
+  }
+  if (prev.txid !== input.prevTxid) {
+    throw new Error(
+      `${label}: prev tx for envelope input ${inscription.input} hashes to ${prev.txid}, ` +
+        `input spends ${input.prevTxid}`,
+    );
+  }
+  const spent = prev.outputs[input.vout];
+  if (!spent) {
+    throw new Error(
+      `${label}: prev tx for envelope input ${inscription.input} has no output ${input.vout}`,
+    );
+  }
+  if (!isP2TR(spent.scriptPubKey)) {
+    throw new Error(
+      `${label}: envelope input ${inscription.input} spends a non-P2TR output; ` +
+        `an envelope is committed in a taproot script path, so no envelope can be bound here`,
+    );
+  }
+  try {
+    verifyScriptPathCommitment({
+      script: tapscript.script,
+      controlBlock: tapscript.controlBlock,
+      scriptPubKey: spent.scriptPubKey,
+    });
+  } catch (e) {
+    throw new Error(
+      `${label}: envelope input ${inscription.input} taproot commitment: ${(e as Error).message}`,
+    );
+  }
+  const controlBlockDepth = parseControlBlock(tapscript.controlBlock).path.length;
+  return { controlBlockDepth, singleLeafTree: controlBlockDepth === 0 };
 }
 
 /** A coinbase spends a single null outpoint; no funding transaction exists. */
@@ -269,6 +367,10 @@ export interface VerifiedCustody {
   /** height of the last proven hop */
   height: number;
   hops: number;
+  /** control block merkle path depth of the envelope's taproot commitment */
+  controlBlockDepth: number;
+  /** the reveal's taptree provably contains only the observed tapscript */
+  singleLeafTree: boolean;
 }
 
 function parseHopTx(hex: string, label: string): ParsedTx {
@@ -337,6 +439,9 @@ export function verifyCustodyBundle(
   if (!inscription) {
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
   }
+  // the txid anchor above does not cover the witness the envelope came out of;
+  // bind it before the pointer or the envelope input index is used for anything
+  const binding = verifyEnvelopeBinding(reveal, inscription, revealHop.prevTxs, 'hop 0 (reveal)');
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, inscription.input);
   const genesis = genesisSatpoint(reveal, inscription, revealValues, revealHop.block.height);
 
@@ -404,5 +509,7 @@ export function verifyCustodyBundle(
     path,
     height: prevHeight,
     hops: bundle.hops.length,
+    controlBlockDepth: binding.controlBlockDepth,
+    singleLeafTree: binding.singleLeafTree,
   };
 }

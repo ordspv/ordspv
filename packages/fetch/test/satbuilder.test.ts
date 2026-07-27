@@ -213,8 +213,11 @@ const SCRIPT = envelopeScript({ fields: [[1, 'text/plain']], body: ['sat'] }, { 
 const TAP = taprootCommit(SCRIPT);
 const WITNESS = [new Uint8Array(64).fill(7), SCRIPT, TAP.controlBlock];
 
-/** envelope script carrying a pointer (tag 2, trimmed little-endian) */
-function pointerWitness(pointer: number): Uint8Array[] {
+/**
+ * Envelope script carrying a pointer (tag 2, trimmed little-endian), with the
+ * commit scriptPubKey the envelope input has to spend for the binding to hold.
+ */
+function pointerCommit(pointer: number): { witness: Uint8Array[]; scriptPubKey: Uint8Array } {
   const le: number[] = [];
   let p = pointer;
   while (p > 0) {
@@ -226,7 +229,10 @@ function pointerWitness(pointer: number): Uint8Array[] {
     { checksigPrefix: true },
   );
   const tap = taprootCommit(script);
-  return [new Uint8Array(64).fill(7), script, tap.controlBlock];
+  return {
+    witness: [new Uint8Array(64).fill(7), script, tap.controlBlock],
+    scriptPubKey: tap.scriptPubKey,
+  };
 }
 
 const CB_HEIGHT = 700_000;
@@ -325,12 +331,16 @@ describe('fetchSatIdentity', () => {
 
   it('follows a pointer that lands past the envelope input', async () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
-    const fA = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 1000n }, { value: 2000n }]);
+    const ptr = pointerCommit(1500);
+    const fA = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 1000n, spk: ptr.scriptPubKey }, { value: 2000n }],
+    );
     // envelope on input 0, pointer 1500 -> output space position 1500, which the
     // SECOND input funds; the reveal hop therefore needs prev txs past input 0
     const reveal = segwitTx(
       [
-        { txid: fA.tx.txid, vout: 0, witness: pointerWitness(1500) },
+        { txid: fA.tx.txid, vout: 0, witness: ptr.witness },
         { txid: fA.tx.txid, vout: 1 },
       ],
       [{ value: 2500n }],

@@ -10,6 +10,7 @@ import {
   transferSatpoint,
   provenInputValues,
   verifyCustodyBundle,
+  serializeFull,
   CustodyUnsupportedError,
   type CustodyBundleJson,
   type Inscription,
@@ -19,6 +20,7 @@ import {
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
+import { envelopeScript, taprootCommit } from './helpers.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
 const revealHex = readFileSync(join(FIXTURES, 'reveal.hex'), 'utf8').trim();
@@ -458,5 +460,57 @@ describe('verifyCustodyBundle', () => {
         },
       }),
     ).toThrow(/anchor says no/);
+  });
+
+  // -------------------------------------------------------------------------
+  // envelope binding: the txid anchor does not cover the witness
+  // -------------------------------------------------------------------------
+
+  /**
+   * Re-serialize a transaction with input 0's witness replaced. The stripped
+   * serialization is untouched, so the txid is untouched, so every inclusion
+   * proof in a bundle still folds. This is the forgery the binding stops.
+   */
+  function withForgedWitness(tx: ParsedTx, witness: Uint8Array[]): string {
+    return bytesToHex(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, i) => (i === 0 ? { ...inp, witness } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  it('reports single-leaf assurance for the real inscription 0 reveal', () => {
+    const res = verifyCustodyBundle(singleHopBundle());
+    expect(res.controlBlockDepth).toBe(0);
+    expect(res.singleLeafTree).toBe(true);
+  });
+
+  it('rejects a rewritten envelope witness that keeps the txid', () => {
+    // a pointer moves the genesis satpoint; the attacker keeps every byte the
+    // txid covers and rewrites only the witness the envelope came out of
+    const forgedScript = envelopeScript(
+      { fields: [[1, 'text/plain'], [2, new Uint8Array([0xdc, 0x05])]], body: ['forged'] },
+      { checksigPrefix: true },
+    );
+    const forgedTap = taprootCommit(forgedScript);
+    const forgedHex = withForgedWitness(revealTx, [
+      new Uint8Array(64).fill(7),
+      forgedScript,
+      forgedTap.controlBlock,
+    ]);
+
+    // the anchor is untouched: same txid, so the real merkle branch still folds
+    expect(parseTx(hexToBytes(forgedHex)).txid).toBe(revealTx.txid);
+    expect(parseTx(hexToBytes(forgedHex)).strippedRaw).toEqual(revealTx.strippedRaw);
+
+    const b = singleHopBundle();
+    b.hops[0].tx.hex = forgedHex;
+    expect(() => verifyCustodyBundle(b)).toThrow(/taproot commitment/);
+
+    // and the honest bundle it was derived from still verifies
+    expect(verifyCustodyBundle(singleHopBundle()).genesis.offset).toBe(0n);
   });
 });

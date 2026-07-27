@@ -11,6 +11,8 @@ import {
   coinbaseSatAt,
   bip34Height,
   verifySatGenealogy,
+  verifyEnvelopeBinding,
+  inscriptionsFromTx,
   serializeFull,
   CustodyUnsupportedError,
   TOTAL_SATS,
@@ -344,7 +346,12 @@ describe('verifySatGenealogy', () => {
     );
     const ptrTap = taprootCommit(pointerScript);
     const cb = buildCoinbase([{ value: 3_000_000_000n }]);
-    const fA = buildTx([{ txid: cb.tx.txid, vout: 0 }], [{ value: 1000n }, { value: 2000n }]);
+    // output 0 is the commit the envelope input spends, so it carries the
+    // taproot commitment the binding check proves the envelope against
+    const fA = buildTx(
+      [{ txid: cb.tx.txid, vout: 0 }],
+      [{ value: 1000n, spk: ptrTap.scriptPubKey }, { value: 2000n }],
+    );
     const reveal2 = buildSegwitTx(
       [
         {
@@ -374,5 +381,71 @@ describe('verifySatGenealogy', () => {
     // and a bundle that stops at the envelope input cannot locate the sat
     const short = { ...b, reveal: { ...b.reveal, prevTxs: [fA.hex] } };
     expect(() => verifySatGenealogy(short)).toThrow(/more are needed/);
+  });
+
+  // -------------------------------------------------------------------------
+  // envelope binding: the txid anchor does not cover the witness
+  // -------------------------------------------------------------------------
+
+  /** Re-serialize with input 0's witness replaced; stripped bytes, and so the
+   *  txid, are unchanged. */
+  function withWitness(tx: ParsedTx, witness: Uint8Array[]): ParsedTx {
+    return parseTx(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, i) => (i === 0 ? { ...inp, witness } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  it('reports the taptree assurance alongside the sat', () => {
+    const res = verifySatGenealogy(bundle());
+    expect(res.controlBlockDepth).toBe(0);
+    expect(res.singleLeafTree).toBe(true);
+  });
+
+  it('rejects a rewritten envelope witness that keeps the txid', () => {
+    // the forgery: same stripped bytes, same txid, same anchored header, a
+    // pointer that names a different sat
+    const forgedScript = envelopeScript(
+      { fields: [[1, 'text/plain'], [2, new Uint8Array([0xe8, 0x03])]], body: ['forged'] },
+      { checksigPrefix: true },
+    );
+    const forged = withWitness(reveal, [
+      new Uint8Array(64).fill(7),
+      forgedScript,
+      taprootCommit(forgedScript).controlBlock,
+    ]);
+    expect(forged.txid).toBe(reveal.txid);
+
+    const b = bundle();
+    b.reveal.tx.hex = bytesToHex(forged.raw);
+    expect(() => verifySatGenealogy(b)).toThrow(/taproot commitment/);
+    // the honest bundle it came from still folds to its sat
+    expect(verifySatGenealogy(bundle()).sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
+  });
+
+  it('refuses an envelope input that spends a non-P2TR output', () => {
+    // same envelope and control block, but the output it claims to be
+    // committed by is a bare OP_1, which commits to nothing
+    const bareCommit = buildTx([{ txid: funding.tx.txid, vout: 0 }], [{ value: 10_000n }]);
+    const bareReveal = revealTx([{ script, controlBlock: tap.controlBlock }], {
+      prevTxidLE: bareCommit.tx.txidLE,
+      vout: 0,
+    });
+    const b = bundle();
+    b.inscriptionId = `${bareReveal.txid}i0`;
+    b.reveal = anchoredHop(bareReveal.txidLE, bytesToHex(bareReveal.raw), 2000, [bareCommit.hex]);
+    expect(() => verifySatGenealogy(b)).toThrow(/non-P2TR/);
+  });
+
+  it('refuses a key-path envelope input', () => {
+    // envelopes are only ever located on inputs that HAVE a tapscript, so a
+    // bundle cannot reach this branch; it guards callers of the helper
+    const insc = inscriptionsFromTx(reveal).find((i) => i.index === 0)!;
+    const keyPath = withWitness(reveal, [new Uint8Array(64).fill(7)]);
+    expect(() => verifyEnvelopeBinding(keyPath, insc, [commit.hex])).toThrow(/key-path/);
   });
 });

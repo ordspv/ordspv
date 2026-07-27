@@ -42,6 +42,17 @@ interface Args {
   flags: Map<string, string | boolean>;
 }
 
+/**
+ * How firmly the envelope is bound to the commit output. A single-leaf taptree
+ * proves nothing else was committed; a deeper one leaves the author able to
+ * present another leaf they committed, which is the L2 residual.
+ */
+function envelopeNote(r: { controlBlockDepth: number; singleLeafTree: boolean }): string {
+  return r.singleLeafTree
+    ? 'bound to the commit output, single-leaf taptree'
+    : `bound to the commit output, taptree depth ${r.controlBlockDepth} (the author committed other leaves)`;
+}
+
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
   const flags = new Map<string, string | boolean>();
@@ -139,6 +150,8 @@ async function main(): Promise<void> {
               hops: res.custody.hops,
               height: res.custody.height,
               path: res.custody.path,
+              controlBlockDepth: res.custody.controlBlockDepth,
+              singleLeafTree: res.custody.singleLeafTree,
               tip: res.tip,
               pendingSpendTxid: res.pendingSpendTxid,
             },
@@ -150,6 +163,7 @@ async function main(): Promise<void> {
         const sp = res.custody.satpoint;
         console.log(`inscription ${res.custody.inscriptionId}`);
         console.log(`satpoint    ${sp.txid}:${sp.vout}:${sp.offset} (proven through ${res.custody.hops} hop${res.custody.hops === 1 ? '' : 's'}, last at height ${res.custody.height})`);
+        console.log(`envelope    ${envelopeNote(res.custody)}`);
         for (const t of res.tip) console.log(`tip         ${t.source}: ${t.state}${t.detail ? ` (${t.detail})` : ''}`);
         if (res.pendingSpendTxid) console.log(`pending     unconfirmed spend ${res.pendingSpendTxid}`);
       }
@@ -190,6 +204,8 @@ async function main(): Promise<void> {
               coinbaseHeight: identity.coinbaseHeight,
               depth: identity.depth,
               revealPosition: identity.revealPosition,
+              controlBlockDepth: identity.controlBlockDepth,
+              singleLeafTree: identity.singleLeafTree,
               headerTrust: res.headerTrust,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
@@ -202,6 +218,7 @@ async function main(): Promise<void> {
         console.log(
           `mined       block ${identity.coinbaseHeight}, traced through ${identity.depth} funding tx${identity.depth === 1 ? '' : 's'}`,
         );
+        console.log(`envelope    ${envelopeNote(identity)}`);
         if (bundleOut) console.log(`bundle      ${bundleOut}`);
       }
       return;
@@ -236,6 +253,8 @@ async function main(): Promise<void> {
               coinbaseHeight: result.coinbaseHeight,
               depth: result.depth,
               revealPosition: result.revealPosition.toString(),
+              controlBlockDepth: result.controlBlockDepth,
+              singleLeafTree: result.singleLeafTree,
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
@@ -258,6 +277,8 @@ async function main(): Promise<void> {
               satpoint: formatSatpoint(result.satpoint),
               hops: result.hops,
               height: result.height,
+              controlBlockDepth: result.controlBlockDepth,
+              singleLeafTree: result.singleLeafTree,
               note: anchorNote,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),

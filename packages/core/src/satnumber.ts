@@ -28,6 +28,7 @@ import {
   isCoinbaseTx,
   provenInputValues,
   verifyAnchoredHop,
+  verifyEnvelopeBinding,
   type CustodyHopJson,
   type CustodyVerifyOptions,
   type Satpoint,
@@ -224,6 +225,10 @@ export interface VerifiedSatIdentity {
   depth: number;
   /** where the sat entered the reveal (input space projected to outputs may differ) */
   revealPosition: bigint;
+  /** control block merkle path depth of the envelope's taproot commitment */
+  controlBlockDepth: number;
+  /** the reveal's taptree provably contains only the observed tapscript */
+  singleLeafTree: boolean;
 }
 
 export interface GenealogyVerifyOptions extends CustodyVerifyOptions {
@@ -274,6 +279,10 @@ export function verifySatGenealogy(
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
   }
   const k = inscription.input;
+  // the reveal is anchored by txid, which does not cover the witness carrying
+  // this envelope; bind it to the commit output before its pointer or its
+  // input index is used to derive a position
+  const binding = verifyEnvelopeBinding(reveal, inscription, bundle.reveal.prevTxs);
   // prevTxs must cover at least inputs 0..k so the envelope input's value is
   // proven; a pointer can push the start position into a LATER input, so any
   // additional prev txs the bundle supplies are used too
@@ -375,5 +384,7 @@ export function verifySatGenealogy(
     coinbaseHeight: height,
     depth: bundle.funding.length,
     revealPosition,
+    controlBlockDepth: binding.controlBlockDepth,
+    singleLeafTree: binding.singleLeafTree,
   };
 }
