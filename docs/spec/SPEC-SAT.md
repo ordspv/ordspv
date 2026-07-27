@@ -24,8 +24,10 @@ all. Each one's bytes are pinned by the txid its successor's input names, and
 that successor's bytes are pinned the same way, back to a transaction that is
 anchored. Only two elements anchor to headers:
 
-- the **reveal**, so the envelope is pinned to a block, exactly as custody hop
-  0 is;
+- the **reveal**, so the transaction carrying the envelope is pinned to a
+  block, exactly as custody hop 0 is. Pinning the transaction is not by itself
+  pinning the envelope, because a txid does not commit to a witness; the
+  envelope binding section below is what covers the envelope;
 - the **terminal coinbase**, because its height is what numbers the sat.
 
 ## Sat numbering
@@ -71,6 +73,30 @@ reach the start position. Verifiers MUST use every prev tx supplied.
 Unbound inscriptions (zero-value envelope input, or an unrecognized even field
 in the envelope) have no chain location and therefore no sat to name. v1 MUST
 refuse (`CustodyUnsupportedError`).
+
+## Envelope binding
+
+The start position above is derived from the envelope's input index and its
+pointer, both of which live in the reveal's witness, and a txid does not commit
+to a witness (BIP-141). A server that rewrites the pointer moves the start
+position and therefore names a different sat, while the reveal's txid, its
+inclusion proof and the whole ancestry behind it stay valid.
+
+The outpoints the reveal's inputs name are txid-committed, and this bundle
+already carries the previous transactions those outpoints name. The envelope
+input's prevout therefore supplies a trustworthy scriptPubKey to check the
+witness against.
+
+Verifiers MUST perform the envelope binding of SPEC-CUSTODY at the reveal
+before deriving a start position: extract the envelope input's tapscript,
+rejecting a key-path spend; take the named prevout's scriptPubKey from the
+corresponding previous transaction, rejecting a scriptPubKey that is not P2TR;
+and verify the BIP-341 script-path commitment, rejecting the bundle when it
+does not hold. Verifiers SHOULD report the control block depth and
+`singleLeafTree`, with the multi-leaf residual SPEC-CUSTODY states.
+
+Funding steps and the coinbase need no such check. Their arithmetic reads
+output values and outpoints, which the stripped serialization covers.
 
 ## Backward step
 
@@ -147,7 +173,8 @@ from an interior node (CVE-2017-12842 again). Funding steps SHOULD be rejected
 on the same rule, cheaply, to keep the chain positions uniform. Previous
 transactions need no such check: none of them is folded into a tree, and each
 is pinned by the txid the input spending it names, so hashing to that txid is
-the whole of what they have to satisfy.
+the whole of what they have to satisfy. Verifiers MUST additionally bind the
+reveal's envelope as the envelope binding section requires.
 
 Verifiers MUST reject a duplicate transaction anywhere in the genealogy, and
 MUST reject a coinbase appearing as a funding step rather than as the terminal

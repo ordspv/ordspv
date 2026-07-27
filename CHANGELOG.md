@@ -88,6 +88,35 @@ already binds.
 
 ### Fixed
 
+- **Custody and sat identity verification bind the envelope to the taproot
+  commitment.** Both anchored the reveal by its txid and then read the
+  pointer and the envelope's input index out of the reveal's witness, which
+  BIP-141 excludes from the txid. A server could rewrite those fields, keep
+  every byte the txid hashes, and produce a bundle that verified offline
+  while naming a different sat or a different genesis satpoint. Both
+  verifiers now check the BIP-341 script-path commitment of the envelope
+  input against the scriptPubKey of the prevout that input names, taken from
+  the previous transaction the bundle already carries and pinned by the
+  txid-committed outpoint. A key-path spend and a non-P2TR prevout are
+  refused by name. `controlBlockDepth` and `singleLeafTree` join
+  `VerifiedCustody` and `VerifiedSatIdentity` with the same multi-leaf
+  residual the L2 content path carries. The bundle formats are unchanged and
+  bundles written by earlier 0.3.0 development builds verify unchanged. Found
+  in review before any release carried this code.
+- **A compressed gallery is refused rather than reported as absent.**
+  `inscriptionGallery` returned the ordinary non-gallery value when
+  properties declared a `property_encoding` and the caller had not decoded
+  them, which is byte for byte the answer for an inscription with no
+  properties, so a caller could not tell a gallery it had failed to
+  decompress from an inscription that declares none. It throws
+  `GalleryEncodingError` now, naming the encoding.
+- **Attester identity is compared in canonical form.** The exclusion of
+  backends that served a bundle compared base URLs as raw strings, so a
+  case variant of a serving endpoint passed as an independent attester and
+  voted for the header it had just served. `normalizeBaseUrl` lowercases
+  scheme and host, drops a default port and strips trailing slashes;
+  attesters are also deduplicated on that form, so one endpoint listed
+  several times counts once toward the threshold.
 - **The 64-byte transaction rejection tests the stripped serialization** in
   proof and custody verification. The txid-tree leaf preimage is the
   stripped encoding, so the raw-length check missed segwit-wrapped

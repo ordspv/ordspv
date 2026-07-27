@@ -44,6 +44,40 @@ check each previous transaction's bytes hash to the txid the input names.
 This makes values self-certifying; previous transactions need no inclusion
 proofs of their own. Only inputs `0..k` are relevant.
 
+## Envelope binding
+
+Everything above reads the envelope out of the reveal's witness, and a txid
+does not commit to a witness (BIP-141). Anchoring the reveal by txid therefore
+establishes nothing about the pointer, the envelope's input, or the envelope
+bytes: a server can rewrite any of them, leave every byte the txid hashes
+untouched, and produce a bundle whose inclusion proofs still fold.
+
+What a txid does commit to is each input's outpoint, and the previous
+transactions above are already pinned by those outpoints. The envelope input's
+prevout therefore carries a trustworthy scriptPubKey, and BIP-341 requires the
+witness tapscript to be committed by it.
+
+Verifiers MUST, before using anything read from the envelope:
+
+- take the envelope input's witness and extract its tapscript. A verifier MUST
+  reject a key-path spend at the envelope input, since a key-path spend
+  commits to no script and cannot carry an envelope;
+- take the scriptPubKey of the output named by that input from the
+  corresponding previous transaction. A verifier MUST reject a scriptPubKey
+  that is not P2TR, since an envelope is committed in a taproot script path;
+- verify the BIP-341 script-path commitment of that tapscript against that
+  scriptPubKey, and MUST reject the bundle when it does not hold.
+
+Verifiers SHOULD report the control block's merkle path depth and whether it is
+zero (`singleLeafTree`). The residual is the residual of SPEC-VERIFICATION
+level 2: a multi-leaf taptree lets a witness present any leaf its author
+committed, so the binding proves the commit output's author committed the
+observed tapscript. With `singleLeafTree` true it proves no other tapscript was
+committed at all.
+
+Later hops need no such check. Their arithmetic reads outpoints, output values
+and txids, all of which the stripped serialization covers.
+
 ## Transfer
 
 For a transaction spending the tracked satpoint at input `j`:
@@ -81,7 +115,8 @@ check proof of work, require a valid `txCount` and a branch depth equal to
 fold the txid branch to the header's merkle root, and reject 64-byte
 transactions. Hops MUST be in strict chain order: increasing height, or equal
 height with strictly increasing position. Hop transactions MUST be distinct,
-and hops after the reveal MUST NOT be coinbases.
+and hops after the reveal MUST NOT be coinbases. At hop 0 verifiers MUST also
+bind the envelope as the envelope binding section requires.
 
 `finalSatpoint` is a claim; verifiers MUST recompute the path and reject on
 mismatch.

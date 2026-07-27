@@ -143,6 +143,12 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   attesting needs only `/block-height/<n>`, the attesting list is configured separately
   from the proof backends (`DEFAULT_ANCHOR_SOURCES`, `--anchor-source`), and an endpoint
   named in both lists is filtered out of the vote for the bundles it served.
+  Endpoints are compared in a canonical form (scheme and host lowercased, a
+  default port dropped, trailing slashes stripped), so a spelling variant of a
+  serving endpoint cannot pass as an outside attester, and one endpoint listed
+  twice counts once. Implementations MUST NOT infer more than that: two
+  hostnames operated by one party remain two entries, so callers are
+  responsible for the operator diversity this bullet asks for.
 - **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):
   a locally validated header chain. Electrum `blockchain.block.headers` batches are
   validated per header (linkage, PoW, exact pow.cpp retarget arithmetic,
@@ -209,7 +215,11 @@ list can tell whether it has one.
 
 Properties may declare a `property_encoding` (tag 19). Decompression is subject
 to the same bomb limits as content (SPEC-GATEWAY), and a gallery reader given
-still-compressed bytes MUST refuse rather than report an empty gallery.
+still-compressed bytes MUST refuse rather than report an empty gallery. The
+refusal MUST be distinguishable by the caller from the answer for an
+inscription that declares no gallery at all; the reference implementation
+throws `GalleryEncodingError`. Reporting absence would let a compressed gallery
+read as no gallery, which is the outcome this rule exists to prevent.
 
 Reference: `@ordspv/core` (`gallery.ts`).
 
