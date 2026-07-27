@@ -26,6 +26,10 @@
  * Properties may be compressed (property_encoding, tag 19). Decompression is
  * IO- and platform-dependent, so this zero-IO module does not do it: pass the
  * already-decoded bytes as `decodedProperties` when an encoding is declared.
+ * Reading a still-compressed gallery throws `GalleryEncodingError`, because
+ * reporting it as absent would be indistinguishable from an inscription that
+ * declares no gallery at all, and a caller cannot act on an answer it cannot
+ * tell apart from silence.
  */
 
 import { decodeCbor, type CborValue } from './cbor.js';
@@ -59,6 +63,21 @@ export interface GalleryInfo {
 }
 
 const NOT_A_GALLERY: GalleryInfo = { isGallery: false, items: [], skipped: 0 };
+
+/**
+ * The inscription's properties declare a compression encoding and were handed
+ * over still compressed. The member list is unreadable until the caller
+ * decompresses it, and saying "no gallery" would hide a real one.
+ */
+export class GalleryEncodingError extends Error {
+  constructor(public readonly encoding: string) {
+    super(
+      `properties declare property_encoding "${encoding}" and are still compressed; ` +
+        `decompress them and pass decodedProperties to read this gallery`,
+    );
+    this.name = 'GalleryEncodingError';
+  }
+}
 
 function isPlainMap(v: CborValue): v is { [key: string]: CborValue } {
   return typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Uint8Array);
@@ -139,19 +158,28 @@ export interface GalleryOptions {
   decodedProperties?: Uint8Array;
 }
 
-/** Read the gallery member list declared by a parsed inscription. */
+/**
+ * Read the gallery member list declared by a parsed inscription.
+ * Throws `GalleryEncodingError` when the properties are still compressed.
+ */
 export function inscriptionGallery(
   inscription: Pick<Inscription, 'properties' | 'propertyEncoding'>,
   options: GalleryOptions = {},
 ): GalleryInfo {
   const raw = options.decodedProperties ?? inscription.properties;
   if (!raw) return NOT_A_GALLERY;
-  // compressed bytes are not CBOR; refuse rather than report an empty gallery
-  if (!options.decodedProperties && inscription.propertyEncoding) return NOT_A_GALLERY;
+  // compressed bytes are not CBOR, and an inscription that declares none is
+  // the one answer this must never be confused with
+  if (!options.decodedProperties && inscription.propertyEncoding) {
+    throw new GalleryEncodingError(inscription.propertyEncoding);
+  }
   return parseGallery(raw);
 }
 
-/** Gallery member inscription ids declared by a parsed inscription. */
+/**
+ * Gallery member inscription ids declared by a parsed inscription.
+ * Throws `GalleryEncodingError` when the properties are still compressed.
+ */
 export function galleryItems(
   inscription: Pick<Inscription, 'properties' | 'propertyEncoding'>,
   options: GalleryOptions = {},

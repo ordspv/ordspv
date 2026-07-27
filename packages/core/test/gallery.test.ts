@@ -3,6 +3,7 @@ import {
   concatBytes,
   displayToInternal,
   galleryItems,
+  GalleryEncodingError,
   interpretEnvelope,
   inscriptionGallery,
   parseGallery,
@@ -260,14 +261,23 @@ describe('gallery: reading off a parsed inscription', () => {
   it('refuses compressed properties until the caller decodes them', () => {
     const props = cbMap([[0, cbArray([inlineItem(TXID_A)])]]);
     const compressed = withProperties(new Uint8Array([0x1b, 0x00, 0x00]), 'br');
-    expect(inscriptionGallery(compressed)).toEqual({
-      isGallery: false,
-      items: [],
-      skipped: 0,
-    });
+
+    // reporting "no gallery" here would be indistinguishable from an
+    // inscription that declares none, so it throws instead
+    expect(() => inscriptionGallery(compressed)).toThrow(GalleryEncodingError);
+    expect(() => inscriptionGallery(compressed)).toThrow(/property_encoding "br"/);
+    expect(() => galleryItems(compressed)).toThrow(GalleryEncodingError);
+
+    // and the decoded path reads the members
     expect(inscriptionGallery(compressed, { decodedProperties: props }).items).toEqual([
       `${TXID_A}i0`,
     ]);
+    expect(galleryItems(compressed, { decodedProperties: props })).toEqual([`${TXID_A}i0`]);
+  });
+
+  it('reports no gallery when an encoding is declared with no properties at all', () => {
+    // nothing to decompress, so nothing is being hidden
+    expect(inscriptionGallery(withProperties(undefined, 'br')).isGallery).toBe(false);
   });
 
   it('has no gallery for an inscription with no properties field', () => {
