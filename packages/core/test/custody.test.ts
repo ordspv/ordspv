@@ -463,6 +463,48 @@ describe('verifyCustodyBundle', () => {
   });
 
   // -------------------------------------------------------------------------
+  // anchoring rejections: the four checks every hop is bound by
+  // -------------------------------------------------------------------------
+
+  it('rejects a header that does not hash to the claimed block hash', () => {
+    const b = singleHopBundle();
+    b.hops[0].block.hash = `${'0'.repeat(63)}1`;
+    expect(() => verifyCustodyBundle(b)).toThrow(/header hashes to/);
+  });
+
+  it('rejects a header that fails its own proof of work', () => {
+    // rewrite nBits to an unreachably hard target, leaving the rest intact;
+    // the header still hashes to whatever it hashes to, so the claimed hash
+    // moves with it and the PoW check is what objects
+    const b = singleHopBundle();
+    const raw = hexToBytes(headerHex);
+    raw.set(hexToBytes('01000000').reverse(), 72); // bits = 0x00000001
+    b.hops[0].block.header = bytesToHex(raw);
+    b.hops[0].block.hash = internalToDisplay(sha256d(raw));
+    expect(() => verifyCustodyBundle(b)).toThrow(/fails proof of work/);
+  });
+
+  it('rejects a missing or nonsensical txCount', () => {
+    for (const bad of [undefined, 0, -1, 1.5]) {
+      const b = singleHopBundle();
+      b.hops[0].block.txCount = bad as number;
+      expect(() => verifyCustodyBundle(b)).toThrow(/missing valid txCount/);
+    }
+  });
+
+  it('rejects a txid branch that folds to the wrong merkle root', () => {
+    // flip a byte in the TOPMOST sibling: every lower level folds and
+    // self-pairs exactly as before, and the depth still matches the tree
+    // height, so the root comparison is the only check left to object
+    const b = singleHopBundle();
+    const top = merkleProof.merkle.length - 1;
+    const sibling = hexToBytes(merkleProof.merkle[top]);
+    sibling[0] ^= 0xff;
+    b.hops[0].tx.txidBranch = [...merkleProof.merkle.slice(0, top), bytesToHex(sibling)];
+    expect(() => verifyCustodyBundle(b)).toThrow(/does not match header merkle root/);
+  });
+
+  // -------------------------------------------------------------------------
   // envelope binding: the txid anchor does not cover the witness
   // -------------------------------------------------------------------------
 
