@@ -1,5 +1,5 @@
 import { bitsToTarget, MAINNET_CHAIN_PARAMS, type BlockHeader } from '@ordspv/core';
-import type { EsploraBackend } from './backends.js';
+import { normalizeBaseUrl, type EsploraBackend } from './backends.js';
 
 /**
  * Header trust anchoring. verifyProofBundle already checks the header's own
@@ -111,8 +111,10 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
   const esploras = options.esploras ?? [];
   const powLimitBits = options.powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
-  const serving = new Set<string>(options.proofSources ?? []);
-  if (options.proofSource !== undefined) serving.add(options.proofSource);
+  // compared in canonical form: a case variant of a serving endpoint is the
+  // same server, and must not pass as an outside attester
+  const serving = new Set<string>([...(options.proofSources ?? [])].map(normalizeBaseUrl));
+  if (options.proofSource !== undefined) serving.add(normalizeBaseUrl(options.proofSource));
   const builderIsSource = serving.size > 0;
 
   return async function checkHeader(header: BlockHeader, height: number): Promise<HeaderTrustReport> {
@@ -140,8 +142,15 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
       };
     }
 
-    // a backend that served the bundle cannot attest to its own header
-    const attesters = esploras.filter((e) => !serving.has(e.baseUrl));
+    // a backend that served the bundle cannot attest to its own header, and
+    // one endpoint listed twice is still one endpoint however it is spelled
+    const seen = new Set<string>();
+    const attesters = esploras.filter((e) => {
+      const base = normalizeBaseUrl(e.baseUrl);
+      if (serving.has(base) || seen.has(base)) return false;
+      seen.add(base);
+      return true;
+    });
     const required = options.minAgreement ?? 2;
 
     // Phase (a): hash-at-height only. Agreement must not depend on any other

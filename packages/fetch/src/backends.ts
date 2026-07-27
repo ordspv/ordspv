@@ -76,6 +76,37 @@ export function resolveLimits(init: BackendLimitsInit = {}): BackendLimits {
   };
 }
 
+/**
+ * Canonical form of a backend base URL, for comparing one endpoint to another.
+ *
+ * Header anchoring excludes the backends that served a bundle from the vote,
+ * and that exclusion is a set membership test. Host names are case-insensitive
+ * in DNS and HTTP, so two spellings that differ only in case address the same
+ * server; comparing raw strings let such a spelling pass as an independent
+ * attester and vote for the header it had just served. Scheme and host are
+ * lowercased, a default port is dropped, and trailing slashes go. The path
+ * keeps its case, since path components are case-sensitive.
+ *
+ * This is canonicalization for comparison and not a general URL cleaner. Two
+ * hostnames belonging to one operator stay two entries, because no string
+ * function can know they are related. Operator diversity remains the caller's
+ * responsibility.
+ */
+export function normalizeBaseUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '');
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  const scheme = parsed.protocol.toLowerCase();
+  const defaultPort =
+    (scheme === 'https:' && parsed.port === '443') || (scheme === 'http:' && parsed.port === '80');
+  const host = parsed.hostname.toLowerCase() + (parsed.port && !defaultPort ? `:${parsed.port}` : '');
+  return `${scheme}//${host}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`;
+}
+
 /** Statuses worth trying again: the server said "later", not "no". */
 const RETRYABLE_STATUS = new Set([429, 503]);
 
@@ -140,7 +171,7 @@ export class EsploraBackend {
     limits: BackendLimitsInit = {},
     private readonly sleep: (ms: number) => Promise<void> = realSleep,
   ) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.limits = resolveLimits(limits);
   }
 
@@ -346,7 +377,7 @@ export class OrdBackend {
     private readonly fetchFn: FetchFn = (u, i) => fetch(u, i),
     limits: BackendLimitsInit = {},
   ) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.limits = resolveLimits(limits);
   }
 

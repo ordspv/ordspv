@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_BACKEND_LIMITS,
   EsploraBackend,
+  normalizeBaseUrl,
   parseRetryAfter,
   PooledEsploraBackend,
   resolveLimits,
@@ -173,6 +174,43 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('-1', now)).toBeUndefined();
     expect(parseRetryAfter('31', now)).toBeUndefined();
     expect(parseRetryAfter('tomorrow', now)).toBeUndefined();
+  });
+});
+
+describe('normalizeBaseUrl', () => {
+  it('folds spellings that address the same endpoint', () => {
+    const canonical = 'https://mempool.space/api';
+    for (const variant of [
+      'https://mempool.space/api',
+      'https://Mempool.space/api',
+      'HTTPS://MEMPOOL.SPACE/api',
+      'https://mempool.space/api/',
+      'https://mempool.space/api///',
+      'https://mempool.space:443/api',
+      '  https://mempool.space/api  ',
+    ]) {
+      expect(normalizeBaseUrl(variant)).toBe(canonical);
+    }
+  });
+
+  it('keeps apart what is actually different', () => {
+    // path case is significant, and a non-default port is part of the address
+    expect(normalizeBaseUrl('https://h.test/API')).not.toBe(normalizeBaseUrl('https://h.test/api'));
+    expect(normalizeBaseUrl('https://h.test:8443/api')).not.toBe(normalizeBaseUrl('https://h.test/api'));
+    expect(normalizeBaseUrl('http://h.test/api')).not.toBe(normalizeBaseUrl('https://h.test/api'));
+    // two hostnames of one operator are still two entries; no string function
+    // can know they are related
+    expect(normalizeBaseUrl('https://a.test/api')).not.toBe(normalizeBaseUrl('https://b.test/api'));
+  });
+
+  it('passes through something that does not parse as a URL', () => {
+    expect(normalizeBaseUrl('not a url/')).toBe('not a url');
+  });
+
+  it('normalizes the base a backend reports', () => {
+    expect(new EsploraBackend('https://Mempool.space/api/', async () => new Response('')).baseUrl).toBe(
+      'https://mempool.space/api',
+    );
   });
 });
 

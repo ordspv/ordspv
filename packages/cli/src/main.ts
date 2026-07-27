@@ -18,6 +18,7 @@ import {
   DEFAULT_ESPLORA,
   fetchCustody,
   fetchSatIdentity,
+  normalizeBaseUrl,
   type VerificationMode,
 } from '@ordspv/fetch';
 
@@ -101,10 +102,14 @@ async function main(): Promise<void> {
     process.exit(positional.length === 0 ? 2 : 0);
   }
 
-  const esplora = str(flags.get('esplora'))?.split(',') ?? DEFAULT_ESPLORA;
+  // canonical form on the way in, so a case variant of a serving backend
+  // cannot be handed to anchoring as though it were a separate operator
+  const esplora = (str(flags.get('esplora'))?.split(',') ?? DEFAULT_ESPLORA).map(normalizeBaseUrl);
   const gateways = str(flags.get('gateway'))?.split(',');
   // header attesters; distinct from --esplora, which serves proofs
-  const anchorSources = str(flags.get('anchor-source'))?.split(',') ?? DEFAULT_ANCHOR_SOURCES;
+  const anchorSources = (
+    str(flags.get('anchor-source'))?.split(',') ?? DEFAULT_ANCHOR_SOURCES
+  ).map(normalizeBaseUrl);
 
   const [command] = positional;
 

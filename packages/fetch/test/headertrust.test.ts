@@ -115,6 +115,35 @@ describe('fail-closed header anchoring', () => {
     await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/2 serving backend\(s\) excluded/);
   });
 
+  it('excludes a serving backend spelled with different capitalization', async () => {
+    // host names are case-insensitive, so this is the same server; comparing
+    // raw strings let it vote for the header it had just served
+    const alias = esplora('https://Mempool.space/api', agreeRoutes('https://mempool.space/api', HEADER.hash));
+    const outsider = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
+    const trust = makeHeaderTrust({
+      esploras: [alias, outsider],
+      checkpoints: new Map(),
+      proofSources: new Set(['https://mempool.space/api']),
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(HeaderTrustError);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 independent source/);
+  });
+
+  it('counts one endpoint once however many times it is listed', async () => {
+    // the same attester under three spellings is one attester, so the default
+    // threshold of two is not met
+    const routes = agreeRoutes('https://h1.test/api', HEADER.hash);
+    const trust = makeHeaderTrust({
+      esploras: [
+        esplora('https://h1.test/api', routes),
+        esplora('https://H1.test/api/', routes),
+        esplora('https://h1.test:443/api', routes),
+      ],
+      checkpoints: new Map(),
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 independent source/);
+  });
+
   it('counts an agreeing attester whose tip endpoint fails (agreement is hash-only)', async () => {
     // the attester answers hash-at-height but its tip endpoint 404s; without
     // minConfirmations the tip must not be consulted at all, so the agreeing
