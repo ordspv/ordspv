@@ -3515,6 +3515,19 @@
       retry: { ...DEFAULT_BACKEND_LIMITS.retry, ...init.retry }
     };
   }
+  function normalizeBaseUrl(url) {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    let parsed;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      return trimmed;
+    }
+    const scheme = parsed.protocol.toLowerCase();
+    const defaultPort = scheme === "https:" && parsed.port === "443" || scheme === "http:" && parsed.port === "80";
+    const host = parsed.hostname.toLowerCase() + (parsed.port && !defaultPort ? `:${parsed.port}` : "");
+    return `${scheme}//${host}${parsed.pathname.replace(/\/+$/, "")}${parsed.search}`;
+  }
   var RETRYABLE_STATUS = /* @__PURE__ */ new Set([429, 503]);
   var MAX_RETRY_AFTER_MS = 3e4;
   var realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -3537,7 +3550,7 @@
       this.baseUrl = baseUrl;
       this.fetchFn = fetchFn;
       this.sleep = sleep;
-      this.baseUrl = baseUrl.replace(/\/+$/, "");
+      this.baseUrl = normalizeBaseUrl(baseUrl);
       this.limits = resolveLimits(limits);
     }
     baseUrl;
@@ -3624,7 +3637,7 @@
     constructor(baseUrl, fetchFn = (u, i) => fetch(u, i), limits = {}) {
       this.baseUrl = baseUrl;
       this.fetchFn = fetchFn;
-      this.baseUrl = baseUrl.replace(/\/+$/, "");
+      this.baseUrl = normalizeBaseUrl(baseUrl);
       this.limits = resolveLimits(limits);
     }
     baseUrl;
@@ -3750,8 +3763,8 @@
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
     const esploras = options.esploras ?? [];
     const powLimitBits = options.powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
-    const serving = new Set(options.proofSources ?? []);
-    if (options.proofSource !== void 0) serving.add(options.proofSource);
+    const serving = new Set([...options.proofSources ?? []].map(normalizeBaseUrl));
+    if (options.proofSource !== void 0) serving.add(normalizeBaseUrl(options.proofSource));
     const builderIsSource = serving.size > 0;
     return async function checkHeader(header, height) {
       if (powLimitBits !== null && bitsToTarget(header.bits) > bitsToTarget(powLimitBits)) {
@@ -3775,7 +3788,13 @@
           anchored: true
         };
       }
-      const attesters = esploras.filter((e) => !serving.has(e.baseUrl));
+      const seen = /* @__PURE__ */ new Set();
+      const attesters = esploras.filter((e) => {
+        const base = normalizeBaseUrl(e.baseUrl);
+        if (serving.has(base) || seen.has(base)) return false;
+        seen.add(base);
+        return true;
+      });
       const required = options.minAgreement ?? 2;
       const hashResults = await Promise.allSettled(
         attesters.map(async (e) => (await e.getBlockHashAtHeight(height)).trim().toLowerCase())
