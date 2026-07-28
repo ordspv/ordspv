@@ -270,8 +270,7 @@ already binds.
   verifier-side cap of 10,000 that SPEC-SAT sets.
 - **Hitting the step cap reports the cap.** It surfaced as
   `all backends failed`, naming the wrong cause. It is now
-  `SatStepLimitError`, a `SatBuildError` so existing catch sites still work,
-  and the message names `--max-steps`.
+  `SatStepLimitError` and the message names `--max-steps`.
 - **Security: a build-time domain refusal is one backend's word, and both
   wrappers now treat it that way.** The builders read the envelope out of the
   served reveal witness, which the txid does not commit to, and then made
@@ -287,18 +286,23 @@ already binds.
   tapscript never ran because the builder gave up first. `fetchCustody` and
   `fetchSatIdentity` now record `CustodyUnsupportedError` and
   `SatStepLimitError` raised during a build as that backend's cause and build
-  against the next one. When every configured backend reported the same class
-  the refusal is rethrown in that class, with its message extended to say that
-  every backend agreed and to name them, so a caller still discriminates on
-  the class it discriminated on before. Mixed failures report `BUILD_FAILED`
-  with every cause joined. The same class raised by `verifyCustodyBundle` or
+  against the next one. When every configured backend led an attempt that ended
+  in the same class the refusal is rethrown in that class, with its message
+  extended to say so and to name them, so a caller still discriminates on the
+  class it discriminated on before. That is what the loop establishes, and on
+  the sat side the attempt runs through a pool whose deciding bytes may have
+  come from another member. Mixed failures report `BUILD_FAILED` with every
+  cause joined. The same class raised by `verifyCustodyBundle` or
   `verifySatGenealogy` stays terminal and now passes through `fetchCustody`
   unwrapped as it already did through `fetchSatIdentity`, because a bundle a
   verifier refused had already bound its witness.
-  `EnvelopeIndexUnprovenError` and `WitnessSectionUnavailableError` keep their
-  immediate rethrow, since neither is derived from unbound witness data. On
-  the genealogy side each attempt leads with a different pool member and pays
-  for the whole walk again, which is the cost of the fix on deep ancestries.
+  `EnvelopeIndexUnprovenError` keeps its immediate rethrow, because it is
+  raised on the reveal's input count, which the txid commits. On the genealogy
+  side each attempt leads with a different pool member and pays for the whole
+  walk again, which is the cost of the fix on deep ancestries, so both wrappers
+  take an `onAttempt` callback that reports each attempt with the backend
+  leading it and the cause that ended the one before. The CLI writes one stderr
+  line per rotation, and the library emits nothing when no callback is given.
 - **`fetchSatIdentity` passes an unproven coinbase height through unwrapped.**
   `CoinbaseHeightUnprovenError` from `verifySatGenealogy` became
   `SatIdentityError('VERIFY_FAILED')`, which is the class conflation the
@@ -358,6 +362,53 @@ already binds.
   pool's record of used base URLs. `buildCustodyBundle` now returns
   `servedBaseUrls`, the walker plus whichever backend served the raw block,
   and `fetchCustody` passes all of them as `proofSources`.
+- **Security: a witness section the builder could not build is one backend's
+  word too.** `WitnessSectionUnavailableError` was exempted from failover on
+  the grounds that the class is not derived from unbound witness data. That
+  holds of the class and not of its trigger. The builder rejects a served block
+  when the block's hash or the reveal's position in it disagrees with the hop,
+  and both of those came from the walking backend's own `getTxStatus` and
+  `getMerkleProof`. A hostile backend naming a real but wrong block for the
+  reveal therefore made the raw block unusable at every backend, and both
+  wrappers gave up before an honest backend was asked to walk, which is a
+  denial of service any single configured backend could impose on a
+  multi-input reveal. Both build loops now record the class as that backend's
+  cause and move on, and it is rethrown in its own class once every configured
+  backend led an attempt that ended in it, which is the availability case the
+  class was always meant to report. The rule the specs now state is that a
+  builder MUST NOT treat a build-time refusal as terminal while another backend
+  is configured unless the refusal was derived from data the reveal txid
+  commits.
+- **The verifier's own step cap read as a forgery.** `verifySatGenealogy`
+  threw a plain `Error` when a bundle carried more funding steps than its cap,
+  so a genealogy built with a raised builder cap over a genuinely deep ancestry
+  verified to `bundle INVALID`. The bundle is well formed and the verifier
+  simply declined to read it, so the cap now throws `SatStepLimitError`, which
+  moves into `@ordspv/core` because the builder and the verifier refuse on the
+  same ground and a caller discriminating on the class has to see one class
+  from both. `@ordspv/fetch` re-exports it, which costs it its former
+  `SatBuildError` parentage. `ord-resolve verify` takes `--max-steps` so a
+  caller who built a deep bundle deliberately can read it back, and rejects the
+  flag on other bundle kinds. The default cap of 10,000 is unchanged.
+  `verifyCustodyBundle` still has no hop cap of its own; the asymmetry is known
+  and tolerable because each forged hop costs a header meeting the mainnet
+  proof-of-work floor, where a forged funding step costs nothing.
+- **A refusal keeps its exit code whichever command raised it.** The refusal
+  taxonomy existed on `ord-resolve verify` alone, so a path outside v1's domain
+  exited 4 when a bundle was read back and 1 when the same inscription was
+  resolved live, and neither `custody --json` nor `sat --json` emitted anything
+  at all on the error path. The class-to-code mapping is now one table read by
+  all three commands, with only the prefix and the remedy sentence varying, and
+  `SatStepLimitError` joins it at exit code 3. On `--json` every command prints
+  one JSON object carrying `ok: false`, the error class, the message and the
+  remedy, and exits on the same code, with the same shape for a failure the
+  table does not recognize.
+- **The reveal's own witness guard tested truth, not presence.** Both
+  verifiers read `revealHop.witness` for truth while the three guards beside
+  them read `!== undefined`, so a JSON `"witness": 0` at the reveal was
+  downgraded to the single-input rule rather than refused. Nothing unsound
+  followed, since the fallback rule is the sound one and a multi-input reveal
+  still refuses, and all five positions spell one rule one way now.
 - **Documentation correction: the proof-of-work floor's arithmetic.**
   SPEC-VERIFICATION said that with the floor in place a fabricated low-height
   header costs ~2^77 work, which overstated the floor by about 45 bits. The
