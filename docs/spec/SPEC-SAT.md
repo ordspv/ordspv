@@ -108,9 +108,9 @@ prove its numbering.
 At input `k` itself, in every case, the verifier MUST reject a key-path
 spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify
 the BIP-341 script-path commitment, rejecting the bundle when it does not
-hold. The verifier MUST accept a witness section only at the reveal; the
-terminal coinbase hop carrying one is refused. Builders SHOULD emit the
-section for multi-input reveals.
+hold. The verifier MUST accept a witness section only at the reveal, and MUST
+refuse a bundle carrying one on a funding step or on the terminal coinbase
+hop. Builders SHOULD emit the section for multi-input reveals.
 
 Verifiers SHOULD report the control block depth, `singleLeafTree` and
 `singleInputReveal`, with the residual SPEC-CUSTODY states: when

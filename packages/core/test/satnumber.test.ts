@@ -739,4 +739,51 @@ describe('wtxid-anchored reveals (genealogy)', () => {
     b.coinbase.witness = { coinbaseHex: '00', coinbaseTxidBranch: [], wtxidBranch: [] };
     expect(() => verifySatGenealogy(b)).toThrow(/witness section is only accepted at the reveal/);
   });
+
+  it('refuses a witness section on a funding step', () => {
+    // GenealogyStepJson declares no witness field, so only untrusted JSON can
+    // carry one; the spec's rule binds every element and not just the coinbase
+    const b = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+    (b.funding[0] as { witness?: unknown }).witness = {
+      coinbaseHex: '00',
+      coinbaseTxidBranch: [],
+      wtxidBranch: [],
+    };
+    expect(() => verifySatGenealogy(b)).toThrow(
+      /funding\[0\]: witness section is only accepted at the reveal/,
+    );
+  });
+
+  it('reports a malformed witness section by field, not as a TypeError', () => {
+    const base = () =>
+      wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+
+    const noHex = base();
+    (noHex.reveal.witness as { coinbaseHex: unknown }).coinbaseHex = undefined;
+    expect(() => verifySatGenealogy(noHex)).toThrow(
+      /witness section: coinbaseHex must be a non-empty hex string/,
+    );
+
+    const emptyHex = base();
+    emptyHex.reveal.witness!.coinbaseHex = '';
+    expect(() => verifySatGenealogy(emptyHex)).toThrow(/witness section: coinbaseHex/);
+
+    const notArray = base();
+    (notArray.reveal.witness as { wtxidBranch: unknown }).wtxidBranch = 'deadbeef';
+    expect(() => verifySatGenealogy(notArray)).toThrow(
+      /witness section: wtxidBranch must be an array of 32-byte hex strings/,
+    );
+
+    const shortNode = base();
+    shortNode.reveal.witness!.coinbaseTxidBranch = ['00'];
+    expect(() => verifySatGenealogy(shortNode)).toThrow(
+      /witness section: coinbaseTxidBranch\[0\] must be a 32-byte hex string/,
+    );
+
+    const nonString = base();
+    (nonString.reveal.witness!.wtxidBranch as unknown[])[0] = 7;
+    expect(() => verifySatGenealogy(nonString)).toThrow(
+      /witness section: wtxidBranch\[0\] must be a 32-byte hex string/,
+    );
+  });
 });

@@ -354,6 +354,11 @@ export function verifySatGenealogy(
   const seen = new Set<string>([reveal.txid]);
   for (let i = 0; i < bundle.funding.length; i++) {
     const label = `funding[${i}]`;
+    // GenealogyStepJson declares no witness field, but a bundle is untrusted
+    // JSON and the spec's rule binds every element, not just the coinbase
+    if ((bundle.funding[i] as { witness?: unknown }).witness !== undefined) {
+      throw new Error(`${label}: witness section is only accepted at the reveal`);
+    }
     const tx = parseHexTxChecked(bundle.funding[i].tx.hex, label);
     if (tx.txid !== expectTxid) {
       throw new Error(`${label}: hashes to ${tx.txid}, chain expects ${expectTxid}`);

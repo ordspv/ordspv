@@ -82,6 +82,32 @@ export interface WitnessSectionJson {
   wtxidBranch: string[];
 }
 
+const HEX32 = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * Shape-check a witness section before anything indexes or maps its fields.
+ * A bundle is untrusted JSON, so a missing or wrongly typed field would
+ * otherwise surface as a TypeError from deep inside the fold, which reads to
+ * a caller as an internal fault rather than a bad bundle.
+ */
+function checkWitnessSectionShape(witness: WitnessSectionJson): void {
+  const w = witness as unknown as Record<string, unknown>;
+  if (typeof w.coinbaseHex !== 'string' || !/^[0-9a-fA-F]+$/.test(w.coinbaseHex.trim())) {
+    throw new Error('witness section: coinbaseHex must be a non-empty hex string');
+  }
+  for (const field of ['coinbaseTxidBranch', 'wtxidBranch'] as const) {
+    const branch = w[field];
+    if (!Array.isArray(branch)) {
+      throw new Error(`witness section: ${field} must be an array of 32-byte hex strings`);
+    }
+    for (let i = 0; i < branch.length; i++) {
+      if (typeof branch[i] !== 'string' || !HEX32.test(branch[i] as string)) {
+        throw new Error(`witness section: ${field}[${i}] must be a 32-byte hex string`);
+      }
+    }
+  }
+}
+
 /**
  * Anchor a reveal's whole witness into the block's BIP-141 witness
  * commitment. The header is the caller's already-anchored header for the
@@ -103,6 +129,7 @@ export function verifyWitnessAnchoring(args: {
   pos: number;
 }): void {
   const { witness, header, txCount, reveal, pos } = args;
+  checkWitnessSectionShape(witness);
   const expectedHeight = treeHeight(txCount);
 
   // ---- coinbase inclusion (txid tree, position 0) ----
