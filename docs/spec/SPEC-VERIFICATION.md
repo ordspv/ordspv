@@ -54,18 +54,29 @@ transaction for the envelope's input. Checks (all MUST):
 **What L2 proves:** the served envelope bytes were committed inside the taptree of the
 output that the on-chain reveal at `id.txid` actually spent.
 
-**What L2 does not prove:** that the shown leaf was the leaf *executed* on-chain. An
-inscriber can pre-commit two envelope leaves and serve either (demonstrated in
-`proofbundle.test.ts`). Verifiers MUST surface the assurances:
+**What L2 does not prove:** that the shown leaf was the leaf *executed* on-chain, and,
+on a multi-input reveal, which envelope the id's index names. An inscriber can
+pre-commit two envelope leaves and serve either (demonstrated in
+`proofbundle.test.ts`). A gateway needs no inscriber cooperation for the second gap:
+L2 binds the envelope input's witness alone, so rewriting another input's witness
+renumbers the envelopes while every L2 check still passes. Verifiers MUST surface the
+assurances:
 
 - `controlBlockDepth = 0` ⇒ `singleLeafTree`: the tree provably contains only the shown
   script, which closes the substitution gap for standard single-leaf inscriptions;
 - `singleInputReveal`: input count is txid-committed, pinning envelope indexing given
   the shown script.
 
-Consumers SHOULD treat `L2 ∧ singleLeafTree` as final for third-party-gateway threat
-models, and escalate to L3 when the inscriber is in the threat model or the control
-block has depth > 0.
+Consumers SHOULD treat L2 as final for third-party-gateway threat models only when
+`singleLeafTree` and `singleInputReveal` are both true, and SHOULD escalate to L3
+when the reveal has more than one input, when the control block has depth > 0, or
+when the inscriber is in the threat model. L3 closes the numbering gap because the
+wtxid commitment covers every input's witness, so the index-to-envelope mapping is
+committed there.
+
+`VerifiedInscription.allInscriptions` lists envelopes parsed from every input, and L2
+binds no input other than the envelope's. A consumer MUST NOT treat that list or its
+length as proven at L2 unless `singleInputReveal` is true. At L3 the list is proven.
 
 ### L3: witness commitment
 Adds the BIP-141 coinbase witness commitment; equivalent to full-node treatment of the
@@ -144,9 +155,9 @@ their own height. Composable strategies (reference: `makeHeaderTrust`):
   from the proof backends (`DEFAULT_ANCHOR_SOURCES`, `--anchor-source`), and an endpoint
   named in both lists is filtered out of the vote for the bundles it served.
   Endpoints are compared in a canonical form (scheme and host lowercased, a
-  default port dropped, trailing slashes stripped), so a spelling variant of a
-  serving endpoint cannot pass as an outside attester, and one endpoint listed
-  twice counts once. Implementations MUST NOT infer more than that: two
+  single trailing dot on the host dropped, a default port dropped, trailing
+  slashes stripped), so a spelling variant of a serving endpoint cannot pass as
+  an outside attester, and one endpoint listed twice counts once. Implementations MUST NOT infer more than that: two
   hostnames operated by one party remain two entries, so callers are
   responsible for the operator diversity this bullet asks for.
 - **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):

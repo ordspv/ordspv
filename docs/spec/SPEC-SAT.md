@@ -26,8 +26,8 @@ anchored. Only two elements anchor to headers:
 
 - the **reveal**, so the transaction carrying the envelope is pinned to a
   block, exactly as custody hop 0 is. Pinning the transaction is not by itself
-  pinning the envelope, because a txid does not commit to a witness; the
-  envelope binding section below is what covers the envelope;
+  pinning the envelope or its index, because a txid does not commit to any
+  witness; the envelope binding section below is what covers both;
 - the **terminal coinbase**, because its height is what numbers the sat.
 
 ## Sat numbering
@@ -88,12 +88,19 @@ input's prevout therefore supplies a trustworthy scriptPubKey to check the
 witness against.
 
 Verifiers MUST perform the envelope binding of SPEC-CUSTODY at the reveal
-before deriving a start position: extract the envelope input's tapscript,
-rejecting a key-path spend; take the named prevout's scriptPubKey from the
-corresponding previous transaction, rejecting a scriptPubKey that is not P2TR;
-and verify the BIP-341 script-path commitment, rejecting the bundle when it
-does not hold. Verifiers SHOULD report the control block depth and
-`singleLeafTree`, with the multi-leaf residual SPEC-CUSTODY states.
+before deriving a start position, and that binding covers the envelope's index
+as well as its bytes: verifiers MUST bind every reveal input up to and
+including the envelope's input `k`, MUST require control block depth 0 on the
+inputs before `k`, and MUST refuse when an input before `k` cannot be bound,
+distinguishably from a forgery (`EnvelopeIndexUnprovenError` in the reference
+implementation). At input `k` itself the verifier MUST reject a key-path
+spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify
+the BIP-341 script-path commitment, rejecting the bundle when it does not
+hold. Verifiers SHOULD report the control block depth, `singleLeafTree` and
+`singleInputReveal`, with the residual SPEC-CUSTODY states: with
+`singleLeafTree` false, the author of the commit output can present a
+different committed leaf, which can change the envelope's content and its
+index together.
 
 Funding steps and the coinbase need no such check. Their arithmetic reads
 output values and outpoints, which the stripped serialization covers.
@@ -174,7 +181,7 @@ on the same rule, cheaply, to keep the chain positions uniform. Previous
 transactions need no such check: none of them is folded into a tree, and each
 is pinned by the txid the input spending it names, so hashing to that txid is
 the whole of what they have to satisfy. Verifiers MUST additionally bind the
-reveal's envelope as the envelope binding section requires.
+reveal's envelope and its index as the envelope binding section requires.
 
 Verifiers MUST reject a duplicate transaction anywhere in the genealogy, and
 MUST reject a coinbase appearing as a funding step rather than as the terminal

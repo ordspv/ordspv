@@ -57,23 +57,47 @@ transactions above are already pinned by those outpoints. The envelope input's
 prevout therefore carries a trustworthy scriptPubKey, and BIP-341 requires the
 witness tapscript to be committed by it.
 
-Verifiers MUST, before using anything read from the envelope:
+Binding the envelope input alone is not sufficient. The envelope's index is a
+running count over the envelopes found in every input before it, in input
+order, so the witness of each earlier input decides which envelope the
+inscription id names. An unchecked earlier input leaves the numbering
+rewritable even when the envelope's own input is bound.
 
-- take the envelope input's witness and extract its tapscript. A verifier MUST
-  reject a key-path spend at the envelope input, since a key-path spend
-  commits to no script and cannot carry an envelope;
-- take the scriptPubKey of the output named by that input from the
-  corresponding previous transaction. A verifier MUST reject a scriptPubKey
-  that is not P2TR, since an envelope is committed in a taproot script path;
-- verify the BIP-341 script-path commitment of that tapscript against that
-  scriptPubKey, and MUST reject the bundle when it does not hold.
+Verifiers MUST, before using anything read from any envelope, bind every
+reveal input up to and including the envelope's input `k`:
 
-Verifiers SHOULD report the control block's merkle path depth and whether it is
-zero (`singleLeafTree`). The residual is the residual of SPEC-VERIFICATION
-level 2: a multi-leaf taptree lets a witness present any leaf its author
-committed, so the binding proves the commit output's author committed the
-observed tapscript. With `singleLeafTree` true it proves no other tapscript was
-committed at all.
+- for each input `0..k`, the corresponding previous transaction MUST hash to
+  the txid the input names and MUST contain the named output;
+- at input `k`: take the input's witness and extract its tapscript. A verifier
+  MUST reject a key-path spend at the envelope input, since a key-path spend
+  commits to no script and cannot carry an envelope. A verifier MUST reject a
+  prevout scriptPubKey that is not P2TR, since an envelope is committed in a
+  taproot script path. A verifier MUST verify the BIP-341 script-path
+  commitment of the tapscript against that scriptPubKey and MUST reject the
+  bundle when it does not hold;
+- at each input before `k`: apply the same three checks, and additionally
+  require control block depth 0, since a deeper taptree would let its author
+  present a different committed leaf carrying a different envelope count. A
+  tapscript that fails its commitment against a P2TR prevout contradicts
+  txid-committed data, and the verifier MUST reject the bundle as forged or
+  corrupt. An input before `k` that cannot be bound at all, because it is a
+  key-path spend, spends a non-P2TR output, or binds only at a depth greater
+  than 0, can belong to an honest reveal whose numbering the bundle simply
+  cannot prove; the verifier MUST refuse it distinguishably from a forgery.
+  The reference implementation throws `EnvelopeIndexUnprovenError`.
+
+Inputs after `k` need no binding: envelopes they carry receive higher indices
+and cannot renumber the selected one.
+
+Verifiers SHOULD report the control block's merkle path depth at input `k`,
+whether it is zero (`singleLeafTree`), and whether the reveal has a single
+input (`singleInputReveal`). The residual is the residual of SPEC-VERIFICATION
+level 2, and it covers the envelope's index together with its content: a
+multi-leaf taptree at input `k` lets a witness present any leaf its author
+committed, and a different leaf can carry different envelope bytes and a
+different envelope count. The binding proves the commit output's author
+committed the observed tapscript and the numbering it implies. With
+`singleLeafTree` true it proves no other tapscript was committed at all.
 
 Later hops need no such check. Their arithmetic reads outpoints, output values
 and txids, all of which the stripped serialization covers.
@@ -116,7 +140,7 @@ fold the txid branch to the header's merkle root, and reject 64-byte
 transactions. Hops MUST be in strict chain order: increasing height, or equal
 height with strictly increasing position. Hop transactions MUST be distinct,
 and hops after the reveal MUST NOT be coinbases. At hop 0 verifiers MUST also
-bind the envelope as the envelope binding section requires.
+bind the envelope and its index as the envelope binding section requires.
 
 `finalSatpoint` is a claim; verifiers MUST recompute the path and reject on
 mismatch.

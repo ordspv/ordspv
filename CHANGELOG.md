@@ -103,6 +103,36 @@ already binds.
   residual the L2 content path carries. The bundle formats are unchanged and
   bundles written by earlier 0.3.0 development builds verify unchanged. Found
   in review before any release carried this code.
+- **Custody and sat identity verification bind every reveal input up to the
+  envelope's input, so the envelope's index is proven and not only its
+  content.** The binding above pinned the tapscript of the selected envelope's
+  input and left the selection itself unproven: an envelope's index is a
+  running count over every input's envelopes in input order, and the witnesses
+  of the earlier inputs stayed outside the txid. A bundle supplier could move
+  an envelope between inputs sharing a commit script, delete an earlier
+  envelope to renumber the survivor, or insert one to fabricate an index,
+  without breaking any commitment. Verifiers now bind inputs `0..k` at the
+  reveal, requiring each prefix input to be a script-path spend of a P2TR
+  prevout verifying at control block depth 0. A prefix commitment that fails
+  marks the bundle forged; a prefix input that cannot be bound at all throws
+  the new `EnvelopeIndexUnprovenError`, since such a reveal can be honest even
+  though the bundle cannot prove its numbering. Bundle formats are unchanged,
+  both builders already emit prev txs for inputs `0..k`, and bundles written
+  by earlier 0.3.0 development builds verify unchanged. Found in review before
+  any release carried this code.
+- **`VerifiedCustody` and `VerifiedSatIdentity` report `singleInputReveal`**,
+  as `L2Assurances` has since the field existed. The CLI prints it wherever it
+  prints `controlBlockDepth` and `singleLeafTree`: the `custody` and `sat`
+  commands in JSON and human form, and `verify` for both bundle kinds.
+- **L2 finality guidance accounts for multi-input reveals.**
+  SPEC-VERIFICATION told consumers to treat L2 with `singleLeafTree` as final
+  against third-party gateways. On a multi-input reveal that was wrong: L2
+  binds only the envelope input's witness, so a gateway can renumber the
+  envelopes without the inscriber's help. A 0.2.x reader on the content path
+  should treat L2 as final only with `singleLeafTree` and `singleInputReveal`
+  both true, and escalate to L3 when the reveal has more than one input,
+  because the wtxid commitment covers every input's witness and commits the
+  numbering. The content bundle format is unchanged.
 - **A compressed gallery is refused rather than reported as absent.**
   `inscriptionGallery` returned the ordinary non-gallery value when
   properties declared a `property_encoding` and the caller had not decoded
@@ -114,9 +144,10 @@ already binds.
   backends that served a bundle compared base URLs as raw strings, so a
   case variant of a serving endpoint passed as an independent attester and
   voted for the header it had just served. `normalizeBaseUrl` lowercases
-  scheme and host, drops a default port and strips trailing slashes;
-  attesters are also deduplicated on that form, so one endpoint listed
-  several times counts once toward the threshold.
+  scheme and host, folds a single trailing dot on the host, drops a default
+  port and strips trailing slashes; attesters are also deduplicated on that
+  form, so one endpoint listed several times counts once toward the
+  threshold.
 - **The 64-byte transaction rejection tests the stripped serialization** in
   proof and custody verification. The txid-tree leaf preimage is the
   stripped encoding, so the raw-length check missed segwit-wrapped
