@@ -103,41 +103,38 @@ already binds.
   residual the L2 content path carries. The bundle formats are unchanged and
   bundles written by earlier 0.3.0 development builds verify unchanged. Found
   in review before any release carried this code.
-- **Custody and sat identity verification bind every reveal input up to the
-  envelope's input, so the envelope's index is proven and not only its
-  content.** The binding above pinned the tapscript of the selected envelope's
-  input and left the selection itself unproven: an envelope's index is a
-  running count over every input's envelopes in input order, and the witnesses
-  of the earlier inputs stayed outside the txid. A bundle supplier could move
-  an envelope between inputs sharing a commit script, delete an earlier
-  envelope to renumber the survivor, or insert one to fabricate an index,
-  without breaking any commitment. Verifiers now bind inputs `0..k` at the
-  reveal, requiring each prefix input to be a script-path spend of a P2TR
-  prevout verifying at control block depth 0. A prefix commitment that fails
-  marks the bundle forged; a prefix input that cannot be bound at all throws
-  the new `EnvelopeIndexUnprovenError`, since such a reveal can be honest even
-  though the bundle cannot prove its numbering. Bundle formats are unchanged,
-  both builders already emit prev txs for inputs `0..k`, and bundles written
-  by earlier 0.3.0 development builds verify unchanged. Found in review before
-  any release carried this code.
-- **Multi-input reveals are proven by the block's witness commitment.** The
-  prefix rule refuses a reveal whose earlier inputs are key-path spends, and
-  ordinary wallets fund reveals exactly that way, so an honest live-validated
-  inscription was refused as unprovable. Custody and genealogy bundles now
-  accept an optional witness section at the reveal hop, the L3 content
-  bundle's exact shape, and the verifier proves the reveal's whole witness
-  through the coinbase's BIP-141 witness commitment: every input's witness is
-  pinned at once, so the envelope's index is proven with no multi-leaf
-  residual. The shared checks moved out of `verifyProofBundle` into
-  `verifyWitnessAnchoring`, called by all three verifiers. Results report how
-  the index was proven in a new `indexProof` field (`'wtxid'`,
-  `'single-input'`, `'prefix'`), printed by the CLI beside the other
-  assurance fields. A present section that fails is a hard error with no
-  fallback, a section anywhere except the reveal is refused, and a
-  multi-input reveal with neither a section nor a fully bound prefix is
-  refused as unproven, so the refusal path did not weaken. Builders emit the
-  section for multi-input reveals at the cost of one raw block request;
-  single-input bundles are byte-identical to before.
+- **Multi-input reveals are proven by the block's witness commitment, or
+  refused.** The binding above pinned the tapscript of the selected
+  envelope's input and left the selection itself unproven: an envelope's
+  index is a running count over every input's envelopes in input order, and
+  the witnesses of the earlier inputs stay outside the txid. A bundle
+  supplier could move an envelope between inputs sharing a commit script,
+  delete an earlier envelope to renumber the survivor, or insert one to
+  fabricate an index, without breaking any commitment. Development builds
+  answered this by binding every input before the envelope's at control
+  block depth 0. That rule was withdrawn before release, because depth 0
+  proves that the prevout's author committed the observed tapscript and not
+  that the tapscript was executed: a single-leaf P2TR output is spendable by
+  key path as well as by script path, the txid commits to neither the
+  witness nor the spend path chosen, and an input spent by key path reveals
+  no envelope at all, so the author of an earlier prevout could commit an
+  envelope leaf, spend by key path, and serve the script-path witness
+  afterwards. Custody and genealogy bundles instead accept an optional
+  witness section at the reveal hop, the L3 content bundle's exact shape,
+  and the verifier proves the reveal's whole witness through the coinbase's
+  BIP-141 witness commitment: every input's witness is pinned at once, so
+  the envelope's index and its bytes are proven with no residual. The shared
+  checks moved out of `verifyProofBundle` into `verifyWitnessAnchoring`,
+  called by all three verifiers. Results report how the index was proven in
+  a new `indexProof` field (`'wtxid'` or `'single-input'`), printed by the
+  CLI beside the other assurance fields. A present section that fails is a
+  hard error with no fallback, a section anywhere except the reveal is
+  refused, and a multi-input reveal with no section throws the new
+  `EnvelopeIndexUnprovenError`, naming the reveal's input count and the
+  envelope's input, since such a bundle can be honest and merely unable to
+  prove its numbering. Builders emit the section for multi-input reveals at
+  the cost of one raw block request; single-input bundles are byte-identical
+  to before. Found in review before any release carried this code.
 - **`EnvelopeIndexUnprovenError` passes through `fetchCustody` and
   `fetchSatIdentity`** the way `CustodyUnsupportedError` does, instead of
   arriving wrapped as `VERIFY_FAILED`. A bundle can be honest and still
@@ -146,15 +143,22 @@ already binds.
   as `L2Assurances` has since the field existed. The CLI prints it wherever it
   prints `controlBlockDepth` and `singleLeafTree`: the `custody` and `sat`
   commands in JSON and human form, and `verify` for both bundle kinds.
-- **L2 finality guidance accounts for multi-input reveals.**
+- **The L2 residual is stated as commitment rather than execution.**
   SPEC-VERIFICATION told consumers to treat L2 with `singleLeafTree` as final
-  against third-party gateways. On a multi-input reveal that was wrong: L2
-  binds only the envelope input's witness, so a gateway can renumber the
-  envelopes without the inscriber's help. A 0.2.x reader on the content path
-  should treat L2 as final only with `singleLeafTree` and `singleInputReveal`
-  both true, and escalate to L3 when the reveal has more than one input,
-  because the wtxid commitment covers every input's witness and commits the
-  numbering. The content bundle format is unchanged.
+  against third-party gateways, and described that flag as closing the
+  substitution gap. A 0.2.x reader on the content path should know the limit:
+  `singleLeafTree` proves the taptree committed only the observed tapscript,
+  and it does not prove that leaf was executed, because a single-leaf P2TR
+  output is spendable by key path too and the txid commits to neither the
+  witness nor the spend path chosen. The same holds for `singleInputReveal`,
+  which pins how many inputs could contribute an envelope and nothing about
+  the script that ran. Consumers should treat L2 as final only when the
+  inscriber is outside the threat model, and escalate to L3 whenever the
+  inscriber is inside it, since the BIP-141 commitment covers the exact
+  serialization and is what shows the witness the chain saw. On a multi-input
+  reveal a gateway can also renumber the envelopes without the inscriber's
+  help, which is a second reason to escalate. The content bundle format is
+  unchanged.
 - **A compressed gallery is refused rather than reported as absent.**
   `inscriptionGallery` returned the ordinary non-gallery value when
   properties declared a `property_encoding` and the caller had not decoded

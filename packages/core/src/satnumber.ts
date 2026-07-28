@@ -232,9 +232,9 @@ export interface VerifiedSatIdentity {
   revealPosition: bigint;
   /** control block merkle path depth of the envelope's taproot commitment */
   controlBlockDepth: number;
-  /** the reveal's taptree provably contains only the observed tapscript */
+  /** the reveal's taptree provably committed only the observed tapscript */
   singleLeafTree: boolean;
-  /** reveal tx has one input, pinning envelope indices given the shown script */
+  /** reveal tx has one input, so no other input can contribute an envelope */
   singleInputReveal: boolean;
   /** how the envelope's index was proven */
   indexProof: IndexProof;

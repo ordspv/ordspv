@@ -63,7 +63,7 @@ order, so the witness of each earlier input decides which envelope the
 inscription id names. An unchecked earlier input leaves the numbering
 rewritable even when the envelope's own input is bound.
 
-A bundle can prove the numbering in three ways. The verifier MUST record
+A bundle can prove the numbering in two ways. The verifier MUST record
 which one it used in the `indexProof` field of the verified result:
 
 - `wtxid`: the reveal hop carries a witness section (see the bundle format
@@ -79,14 +79,15 @@ which one it used in the `indexProof` field of the verified result:
   chain's witness. The verifier MUST NOT fall back past a present witness
   section that fails; such a bundle is forged or corrupt.
 - `single-input`: no witness section, and the reveal has one input. The
-  input count is txid-committed, so there is nothing to renumber.
-- `prefix`: no witness section, and the reveal has more than one input. The
-  verifier MUST bind every reveal input up to and including the envelope's
-  input as specified below, and MUST refuse the bundle when a preceding
-  input cannot be bound, distinguishably from a forgery
-  (`EnvelopeIndexUnprovenError` in the reference implementation). A
-  multi-input reveal with neither a witness section nor a fully bound prefix
-  is therefore always refused.
+  input count is txid-committed, so no other input can contribute an
+  envelope and there is nothing to renumber. This says nothing about whether
+  the observed tapscript was executed; that is the residual below.
+
+A reveal with more than one input and no witness section is refused. The
+verifier MUST refuse it distinguishably from a forgery
+(`EnvelopeIndexUnprovenError` in the reference implementation), since such a
+bundle can be perfectly honest and simply unable to prove its numbering, and
+the refusal MUST name the reveal's input count and the envelope's input.
 
 The verifier MUST accept a witness section only at the reveal. Later custody
 hops read nothing from witnesses, so the verifier MUST refuse a bundle whose
@@ -102,18 +103,16 @@ since an envelope is committed in a taproot script path; and the verifier
 MUST verify the BIP-341 script-path commitment of the tapscript against that
 scriptPubKey, rejecting the bundle when it does not hold.
 
-In the `prefix` case the verifier MUST additionally bind each input before
-`k`: the same prev-tx and commitment checks, plus control block depth 0,
-since a deeper taptree would let its author present a different committed
-leaf carrying a different envelope count. A tapscript that fails its
-commitment against a P2TR prevout contradicts txid-committed data, and the
-verifier MUST reject the bundle as forged or corrupt. An input before `k`
-that cannot be bound at all, because it is a key-path spend, spends a
-non-P2TR output, or binds only at a depth greater than 0, can belong to an
-honest reveal whose numbering the bundle simply cannot prove; the verifier
-MUST refuse it distinguishably from a forgery. Inputs after `k` need no
-binding: envelopes they carry receive higher indices and cannot renumber the
-selected one.
+Binding an input before `k` would not help, and an earlier revision of this
+spec required it in error. Control block depth 0 proves the prevout's author
+committed the observed tapscript. It does not prove that tapscript was
+executed, because a single-leaf P2TR output is spendable by key path as well
+as by script path and the txid commits to neither the witness nor the spend
+path chosen. An input the reveal spent by key path reveals no envelope, and
+a verifier holding only the served script-path witness cannot tell the two
+apart. Inputs after `k` need no binding for a different and sound reason:
+envelopes they carry receive higher indices and cannot renumber the selected
+one.
 
 Builders SHOULD emit the witness section for multi-input reveals; the
 reference builder does, at the cost of one raw block request, and emits no
@@ -122,14 +121,14 @@ section for single-input reveals, whose bundles are unchanged.
 Verifiers SHOULD report the control block's merkle path depth at input `k`,
 whether it is zero (`singleLeafTree`), and whether the reveal has a single
 input (`singleInputReveal`). When `indexProof` is `wtxid` the presented
-witness is the chain's witness and no multi-leaf residual remains. Otherwise
-the residual is the residual of SPEC-VERIFICATION level 2, and it covers the
-envelope's index together with its content: a multi-leaf taptree at input
-`k` lets a witness present any leaf its author committed, and a different
-leaf can carry different envelope bytes and a different envelope count. The
-binding proves the commit output's author committed the observed tapscript
-and the numbering it implies. With `singleLeafTree` true it proves no other
-tapscript was committed at all.
+witness is the chain's witness and no residual remains. Otherwise the
+residual is the residual of SPEC-VERIFICATION level 2: the binding proves
+what the commit output's author committed, and not what the reveal executed.
+With `singleLeafTree` true it proves no other tapscript was committed at
+all, which is still a statement about commitment; the same author could have
+spent the output by key path and served the tapscript afterwards. A
+consumer for whom the inscriber is inside the threat model SHOULD require
+`indexProof` `wtxid`.
 
 Later hops need no such check. Their arithmetic reads outpoints, output values
 and txids, all of which the stripped serialization covers.

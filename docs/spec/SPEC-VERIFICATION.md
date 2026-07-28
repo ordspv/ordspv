@@ -62,17 +62,22 @@ L2 binds the envelope input's witness alone, so rewriting another input's witnes
 renumbers the envelopes while every L2 check still passes. Verifiers MUST surface the
 assurances:
 
-- `controlBlockDepth = 0` ⇒ `singleLeafTree`: the tree provably contains only the shown
-  script, which closes the substitution gap for standard single-leaf inscriptions;
-- `singleInputReveal`: input count is txid-committed, pinning envelope indexing given
-  the shown script.
+- `controlBlockDepth = 0` ⇒ `singleLeafTree`: the taptree provably committed only the
+  observed tapscript. It does not prove that leaf was executed. A single-leaf P2TR
+  output is spendable by key path as well as by script path, and the txid commits to
+  neither the witness nor the spend path chosen, so the author of the commit output
+  can spend it by key path, which reveals no inscription at all, and serve a
+  script-path witness that binds at depth 0 afterwards;
+- `singleInputReveal`: input count is txid-committed, so no other input can contribute
+  an envelope, which pins envelope indexing given the shown script.
 
-Consumers SHOULD treat L2 as final for third-party-gateway threat models only when
-`singleLeafTree` and `singleInputReveal` are both true, and SHOULD escalate to L3
-when the reveal has more than one input, when the control block has depth > 0, or
-when the inscriber is in the threat model. L3 closes the numbering gap because the
-wtxid commitment covers every input's witness, so the index-to-envelope mapping is
-committed there.
+Consumers SHOULD treat L2 as final only when the inscriber is outside the threat
+model, and SHOULD escalate to L3 whenever the inscriber is inside it, whatever
+`singleLeafTree` and `singleInputReveal` say, since both are statements about what
+was committed rather than about what was executed. Consumers SHOULD also escalate to
+L3 when the reveal has more than one input or the control block has depth > 0. L3 is
+what proves the presented witness is the witness the chain saw, because the BIP-141
+commitment covers the exact serialization, which closes the numbering gap too.
 
 `VerifiedInscription.allInscriptions` lists envelopes parsed from every input, and L2
 binds no input other than the envelope's. A consumer MUST NOT treat that list or its

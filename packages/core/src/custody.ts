@@ -175,11 +175,11 @@ export type IndexProof = 'wtxid' | 'single-input';
 
 /** What the envelope binding established about the reveal's taptree. */
 export interface EnvelopeBinding {
-  /** control block merkle path depth; 0 means the taptree provably has a single leaf */
+  /** control block merkle path depth; 0 means the taptree provably committed a single leaf */
   controlBlockDepth: number;
-  /** the taptree provably contains only the observed tapscript (depth 0) */
+  /** the taptree provably committed only the observed tapscript (depth 0) */
   singleLeafTree: boolean;
-  /** reveal tx has one input, pinning envelope indices given the shown script */
+  /** reveal tx has one input, so no other input can contribute an envelope */
   singleInputReveal: boolean;
 }
 
@@ -433,9 +433,9 @@ export interface VerifiedCustody {
   hops: number;
   /** control block merkle path depth of the envelope's taproot commitment */
   controlBlockDepth: number;
-  /** the reveal's taptree provably contains only the observed tapscript */
+  /** the reveal's taptree provably committed only the observed tapscript */
   singleLeafTree: boolean;
-  /** reveal tx has one input, pinning envelope indices given the shown script */
+  /** reveal tx has one input, so no other input can contribute an envelope */
   singleInputReveal: boolean;
   /** how the envelope's index was proven */
   indexProof: IndexProof;

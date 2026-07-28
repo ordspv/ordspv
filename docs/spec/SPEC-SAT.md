@@ -88,21 +88,22 @@ input's prevout therefore supplies a trustworthy scriptPubKey to check the
 witness against.
 
 Verifiers MUST perform the envelope binding of SPEC-CUSTODY at the reveal
-before deriving a start position, including its three-way index rule, and
+before deriving a start position, including its two-way index rule, and
 MUST record the way the index was proven in `indexProof`:
 
 - a reveal hop carrying a witness section MUST be verified against the
   block's BIP-141 witness commitment as SPEC-CUSTODY specifies, with no
   fallback past a section that fails. Success proves the envelope's bytes
-  and its index outright (`wtxid`), with no multi-leaf residual, since the
-  presented witness is the chain's witness;
+  and its index outright (`wtxid`), with no residual, since the presented
+  witness is the chain's witness;
 - with no section, a single-input reveal needs nothing more
-  (`single-input`);
-- with no section and more than one input, the verifier MUST apply
-  SPEC-CUSTODY's prefix rule (`prefix`): every input before the envelope's
-  bound at control block depth 0, with `EnvelopeIndexUnprovenError` the
-  refusal when one cannot be bound. A multi-input reveal with neither a
-  witness section nor a fully bound prefix is always refused.
+  (`single-input`).
+
+A reveal with more than one input and no witness section is refused. The
+verifier MUST refuse it distinguishably from a forgery
+(`EnvelopeIndexUnprovenError`), naming the reveal's input count and the
+envelope's input, since such a bundle can be honest and merely unable to
+prove its numbering.
 
 At input `k` itself, in every case, the verifier MUST reject a key-path
 spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify
@@ -113,9 +114,9 @@ section for multi-input reveals.
 
 Verifiers SHOULD report the control block depth, `singleLeafTree` and
 `singleInputReveal`, with the residual SPEC-CUSTODY states: when
-`indexProof` is not `wtxid` and `singleLeafTree` is false, the author of the
-commit output can present a different committed leaf, which can change the
-envelope's content and its index together.
+`indexProof` is not `wtxid`, the binding proves what the commit output's
+author committed and not what the reveal executed, because control block
+depth 0 does not prove the observed tapscript was the script the input ran.
 
 Funding steps and the coinbase need no such check. Their arithmetic reads
 output values and outpoints, which the stripped serialization covers.

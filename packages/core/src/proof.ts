@@ -54,12 +54,21 @@ export interface ProofBundleJson {
   witness?: WitnessSectionJson;
 }
 
+/**
+ * What L2 established, and what it did not. Both fields are statements about
+ * what was COMMITTED. Neither proves the observed tapscript was the script the
+ * reveal executed: a single-leaf P2TR output is spendable by key path too, and
+ * the txid commits to neither the witness nor the spend path chosen, so the
+ * commit output's author can spend by key path, revealing no inscription, and
+ * serve the script-path witness afterwards. Only L3 shows the witness the
+ * chain saw, because the BIP-141 commitment covers the exact serialization.
+ */
 export interface L2Assurances {
-  /** control block merkle path depth; 0 means the taptree provably has a single leaf */
+  /** control block merkle path depth; 0 means the taptree provably committed a single leaf */
   controlBlockDepth: number;
-  /** taptree provably contains only the shown script (depth 0) */
+  /** the taptree provably committed only the shown script (depth 0) */
   singleLeafTree: boolean;
-  /** reveal tx has one input, pinning envelope indices given the shown script */
+  /** reveal tx has one input, so no other input can contribute an envelope */
   singleInputReveal: boolean;
 }
 
