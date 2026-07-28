@@ -3524,8 +3524,7 @@
       return trimmed;
     }
     const scheme = parsed.protocol.toLowerCase();
-    const defaultPort = scheme === "https:" && parsed.port === "443" || scheme === "http:" && parsed.port === "80";
-    const host = parsed.hostname.toLowerCase() + (parsed.port && !defaultPort ? `:${parsed.port}` : "");
+    const host = parsed.hostname.toLowerCase().replace(/\.$/, "") + (parsed.port ? `:${parsed.port}` : "");
     return `${scheme}//${host}${parsed.pathname.replace(/\/+$/, "")}${parsed.search}`;
   }
   var RETRYABLE_STATUS = /* @__PURE__ */ new Set([429, 503]);
