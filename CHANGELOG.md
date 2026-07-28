@@ -105,6 +105,21 @@ already binds.
   costs no request. `@ordspv/sidecar` gained the same option for operators
   fronting a non-mainnet node. Bundles built from real chain data are
   unaffected.
+- **A terminal coinbase below the BIP34 boundary needs its height attested.**
+  `verifySatGenealogy` cross-checked the claimed height against the coinbase's
+  own BIP34 push only from height 230,000 on. Below that the claim was the
+  server's word, and it flows straight into the sat arithmetic, so a hostile
+  bundle could choose the sat number, the ordinal name and the rarity,
+  including sat 0 at mythic. Such a coinbase is now refused with the new
+  `CoinbaseHeightUnprovenError` unless the caller's options carry a
+  `trustHeader` hook, whose hash-at-height attestation is what binds the
+  height to the header. The class is separate from `CustodyUnsupportedError`
+  because the bundle may be honest and merely unprovable offline.
+  `ord-resolve verify` has no anchor to consult, so it reports the bundle as
+  unproven offline and exits nonzero rather than printing a sat and a rarity.
+  `fetchSatIdentity` anchors both endpoint headers before the offline
+  verification now, instead of after it, so the attestation is in hand when
+  the rule asks for it. Heights at or above 230,000 are unchanged.
 - **Custody and sat identity verification bind the envelope to the taproot
   commitment.** Both anchored the reveal by its txid and then read the
   pointer and the envelope's input index out of the reveal's witness, which

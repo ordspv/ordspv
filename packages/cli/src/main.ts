@@ -333,6 +333,16 @@ async function main(): Promise<void> {
       );
       return;
     } catch (e) {
+      // an unproven sub-BIP34 coinbase height is not a forgery: the bundle may
+      // be honest and simply needs an anchor this offline command has no way
+      // to consult. Say so, and still exit nonzero
+      if ((e as Error).name === 'CoinbaseHeightUnprovenError') {
+        fail(
+          `bundle UNPROVEN offline: ${(e as Error).message}. ` +
+            `Anchor the coinbase block hash at that height against your own chain view ` +
+            `and re-run verification with that anchor supplied.`,
+        );
+      }
       fail(`bundle INVALID: ${(e as Error).message}`);
     }
   }

@@ -154,8 +154,18 @@ The height that numbers the sat is the one input a server can change without
 breaking a hash, so verifiers MUST NOT accept a claimed height unchecked.
 At heights at or above 230,000, verifiers MUST parse the BIP34 height from the
 coinbase's own scriptSig (first push, little-endian) and MUST reject a bundle
-whose claimed height contradicts it. Below 230,000 the height rests on header
-anchoring alone, since an attester's hash-at-height vote binds the pair.
+whose claimed height contradicts it.
+
+Below 230,000 no such push is required, so nothing inside the bundle binds the
+claim. A verifier MUST refuse a bundle whose terminal coinbase claims a height
+below 230,000 unless the caller supplied a header trust hook, which is what
+attests the block hash at the claimed height and so binds the pair. The refusal
+MUST be distinguishable from a forgery (`CoinbaseHeightUnprovenError` in the
+reference implementation), since such a bundle can be honest and merely
+unprovable offline, and the refusal MUST name the claimed height and the
+230,000 boundary. A verifier MUST NOT report a sat number, name or rarity for
+such a bundle, because an unchecked height below 230,000 lets the server choose
+all three, including sat 0 at mythic.
 
 ## Genealogy bundle
 

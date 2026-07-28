@@ -195,6 +195,25 @@ export function bip34Height(coinbase: ParsedTx): number | undefined {
 /** Enforce the BIP34 cross-check only comfortably past activation. */
 export const BIP34_ENFORCED_FROM = 230_000;
 
+/**
+ * The terminal coinbase's claimed height could not be proven. The height is
+ * what numbers the sat, so a server that picks it picks the sat number, the
+ * name and the rarity. From BIP34_ENFORCED_FROM on, the coinbase's own
+ * scriptSig carries the height and the bundle's claim is checked against it.
+ * Below that boundary no such push is required, and the only thing binding
+ * the pair is an attestation of the block hash at that height, which the
+ * caller supplies through the `trustHeader` hook. A bundle refused this way
+ * may be perfectly honest; it simply cannot prove its height offline, which
+ * is a different fact from being forged (plain Error) or leaving v1's sat
+ * domain (CustodyUnsupportedError).
+ */
+export class CoinbaseHeightUnprovenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CoinbaseHeightUnprovenError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Genealogy bundles
 // ---------------------------------------------------------------------------
@@ -402,6 +421,17 @@ export function verifySatGenealogy(
     if (embedded !== height) {
       throw new Error(`BIP34 height ${embedded} contradicts claimed height ${height}`);
     }
+  } else if (!opts.trustHeader) {
+    // verifyAnchoredHop already called the hook on this header when one was
+    // supplied, and a hook that attests hash-at-height binds the pair. With no
+    // hook the claimed height is the server's word alone, and it decides the
+    // sat number, the name and the rarity
+    throw new CoinbaseHeightUnprovenError(
+      `coinbase claims height ${height}, below the BIP34 boundary ${BIP34_ENFORCED_FROM}, ` +
+        `so the coinbase carries no height push to check the claim against; supply a ` +
+        `trustHeader hook that attests the block hash at that height, since the height ` +
+        `is what numbers the sat`,
+    );
   }
 
   const pos = outputSpacePosition(coinbase, expectVout, offset);

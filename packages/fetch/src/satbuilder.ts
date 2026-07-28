@@ -288,16 +288,6 @@ export async function fetchSatIdentity(
     throw new SatIdentityError('BUILD_FAILED', (e as Error).message);
   }
 
-  let identity: VerifiedSatIdentity;
-  try {
-    identity = verifySatGenealogy(built.bundle, { powLimitBits: options.powLimitBits });
-  } catch (e) {
-    if (e instanceof CustodyUnsupportedError) throw e;
-    // an unprovable index is a property of the reveal, not a forged bundle
-    if (e instanceof EnvelopeIndexUnprovenError) throw e;
-    throw new SatIdentityError('VERIFY_FAILED', (e as Error).message);
-  }
-
   const trust =
     options.trustHeader ??
     makeHeaderTrust({
@@ -325,12 +315,28 @@ export async function fetchSatIdentity(
     }
   };
 
-  return {
-    identity,
-    headerTrust: {
-      reveal: await anchor(built.bundle.reveal, 'reveal'),
-      coinbase: await anchor(built.bundle.coinbase, 'coinbase'),
-    },
-    bundle: built.bundle,
+  // both endpoint headers are anchored BEFORE the offline verification, so a
+  // coinbase below the BIP34 boundary has its claimed height attested by the
+  // time verifySatGenealogy asks. The core hook is synchronous and cannot
+  // await an attesting round trip, so the hook it receives reports the work
+  // this function already did.
+  const headerTrust = {
+    reveal: await anchor(built.bundle.reveal, 'reveal'),
+    coinbase: await anchor(built.bundle.coinbase, 'coinbase'),
   };
+
+  let identity: VerifiedSatIdentity;
+  try {
+    identity = verifySatGenealogy(built.bundle, {
+      powLimitBits: options.powLimitBits,
+      trustHeader: () => {},
+    });
+  } catch (e) {
+    if (e instanceof CustodyUnsupportedError) throw e;
+    // an unprovable index is a property of the reveal, not a forged bundle
+    if (e instanceof EnvelopeIndexUnprovenError) throw e;
+    throw new SatIdentityError('VERIFY_FAILED', (e as Error).message);
+  }
+
+  return { identity, headerTrust, bundle: built.bundle };
 }
