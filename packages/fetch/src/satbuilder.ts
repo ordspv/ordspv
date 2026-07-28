@@ -30,6 +30,7 @@ import {
   isCoinbaseTx,
   verifySatGenealogy,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   type GenealogyStepJson,
   type SatGenealogyBundleJson,
   type VerifiedSatIdentity,
@@ -41,7 +42,11 @@ import {
   type FetchFn,
   type BackendLimitsInit,
 } from './backends.js';
-import { assembleAnchoredHop, type AnchorBackend } from './custodybuilder.js';
+import {
+  assembleAnchoredHop,
+  attachRevealWitnessSection,
+  type AnchorBackend,
+} from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 
@@ -131,6 +136,7 @@ export async function buildSatGenealogyBundle(
   const k = inscription.input;
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, k);
+  await attachRevealWitnessSection(backend, reveal, revealHop);
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
   if (inscription.unboundByEvenField || revealValues[k] === 0n) {
     throw new CustodyUnsupportedError(
@@ -280,6 +286,8 @@ export async function fetchSatIdentity(
     identity = verifySatGenealogy(built.bundle);
   } catch (e) {
     if (e instanceof CustodyUnsupportedError) throw e;
+    // an unprovable index is a property of the reveal, not a forged bundle
+    if (e instanceof EnvelopeIndexUnprovenError) throw e;
     throw new SatIdentityError('VERIFY_FAILED', (e as Error).message);
   }
 

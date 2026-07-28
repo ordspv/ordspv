@@ -17,7 +17,11 @@
 import {
   parseTx,
   parseHeader,
+  parseBlock,
   hexToBytes,
+  bytesToHex,
+  internalToDisplay,
+  buildMerkleBranch,
   inscriptionsFromTx,
   parseInscriptionId,
   genesisSatpoint,
@@ -26,6 +30,8 @@ import {
   formatSatpoint,
   verifyCustodyBundle,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
+  ZERO32,
   type CustodyBundleJson,
   type CustodyHopJson,
   type Satpoint,
@@ -56,6 +62,12 @@ export interface AnchorBackend {
   getMerkleProof(txid: string): Promise<{ block_height: number; merkle: string[]; pos: number }>;
   getHeaderHex(blockHash: string): Promise<string>;
   getBlockInfo(blockHash: string): Promise<{ tx_count: number }>;
+  /**
+   * Optional: the raw block, used to build the reveal's wtxid proof on
+   * multi-input reveals. A backend without it still builds working bundles;
+   * their multi-input reveals fall back to the prefix rule at verification.
+   */
+  getBlockRaw?(blockHash: string): Promise<Uint8Array>;
 }
 
 export interface CustodyBackend extends AnchorBackend {
@@ -107,6 +119,43 @@ export async function assembleAnchoredHop(
 }
 
 /**
+ * Attach the reveal's wtxid proof to its hop, so the verifier can prove the
+ * envelope's index through the block's BIP-141 witness commitment. Only
+ * multi-input reveals need it; single-input bundles stay byte-identical to
+ * what earlier builders emitted. The whole added cost is one raw block
+ * request, the same request `buildProofBundle` makes for L3.
+ *
+ * Best effort by design: a backend without `getBlockRaw`, a failed request,
+ * or a served block that does not hash to the anchored block or does not
+ * hold the reveal at the proven position leaves the hop without a section.
+ * The verifier then falls back to the prefix rule or refuses the bundle as
+ * unproven; soundness never rests on this succeeding.
+ */
+export async function attachRevealWitnessSection(
+  backend: AnchorBackend,
+  reveal: ParsedTx,
+  hop: CustodyHopJson,
+): Promise<void> {
+  if (reveal.inputs.length === 1 || !backend.getBlockRaw) return;
+  try {
+    const raw = await backend.getBlockRaw(hop.block.hash);
+    const block = parseBlock(raw);
+    if (block.header.hash !== hop.block.hash.toLowerCase()) return;
+    const pos = block.txs.findIndex((t) => t.txid === reveal.txid);
+    if (pos === -1 || pos !== hop.tx.pos) return;
+    const txids = block.txs.map((t) => t.txidLE);
+    const wtxids = block.txs.map((t, i) => (i === 0 ? ZERO32 : t.wtxidLE));
+    hop.witness = {
+      coinbaseHex: bytesToHex(block.txs[0].raw),
+      coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
+      wtxidBranch: buildMerkleBranch(wtxids, pos).map(internalToDisplay),
+    };
+  } catch {
+    // availability only; the verifier decides what the bundle proves
+  }
+}
+
+/**
  * Build a custody bundle for an inscription by walking confirmed outspends
  * from its reveal. The result is UNVERIFIED; callers must run
  * `verifyCustodyBundle` (fetchCustody does both).
@@ -127,6 +176,7 @@ export async function buildCustodyBundle(
   }
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
+  await attachRevealWitnessSection(backend, reveal, revealHop);
   const hops: CustodyHopJson[] = [revealHop];
 
   // working (unverified) satpoint to know which outpoint to walk next
@@ -262,6 +312,9 @@ export async function fetchCustody(
   try {
     custody = verifyCustodyBundle(built.bundle);
   } catch (e) {
+    // an unprovable index is a property of the reveal, not a forged bundle;
+    // callers distinguish it the way they distinguish CustodyUnsupportedError
+    if (e instanceof EnvelopeIndexUnprovenError) throw e;
     throw new CustodyError('VERIFY_FAILED', (e as Error).message);
   }
 

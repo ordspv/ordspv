@@ -5,12 +5,14 @@ import {
   checkProofOfWork,
   computeMerkleRoot,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   firstSatOfBlock,
   hexToBytes,
   internalToDisplay,
   parseHeader,
   parseTx,
   satName,
+  serializeBlock,
   serializeFull,
   verifySatGenealogy,
   type ParsedTx,
@@ -24,7 +26,7 @@ import {
   SatIdentityError,
   SatStepLimitError,
 } from '../src/index.js';
-import { envelopeScript, taprootCommit } from '../../core/test/helpers.js';
+import { buildBlock, envelopeScript, taprootCommit } from '../../core/test/helpers.js';
 
 /**
  * Sat genealogy building driven against a mock esplora. The backend here is
@@ -536,5 +538,88 @@ describe('fetchSatIdentity', () => {
     const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
     await expect(p).rejects.toThrow(CustodyUnsupportedError);
     await expect(p).rejects.toThrow(/unbound at reveal/);
+  });
+});
+
+describe('fetchSatIdentity with multi-input reveals', () => {
+  // key-path funding leg on input 0, the envelope on input 1: the shape the
+  // prefix rule cannot prove and the wtxid proof exists for
+  const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+  const commit = buildTx(
+    [{ txid: coinbase.tx.txid, vout: 0 }],
+    [
+      { value: 10_000n },
+      { value: 20_000n, spk: TAP.scriptPubKey },
+    ],
+  );
+  const reveal = segwitTx(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [new Uint8Array(64).fill(7)] },
+      { txid: commit.tx.txid, vout: 1, witness: WITNESS },
+    ],
+    [{ value: 25_000n }],
+  );
+  // the reveal block needs a real witness commitment for the wtxid proof
+  const revealBlock = buildBlock([reveal.tx]);
+  const cbBlock = mineBlock([coinbase.tx]);
+
+  function routes(withRawBlock: boolean): Record<string, Route> {
+    const r: Record<string, Route> = {
+      ...routesFor(cbBlock, CB_HEIGHT, TIP),
+      ...routesFor(revealBlock, REVEAL_HEIGHT, TIP),
+      [`${E}/tx/${commit.tx.txid}/hex`]: commit.hex,
+    };
+    if (withRawBlock) {
+      r[`${E}/block/${revealBlock.blockHash}/raw`] = serializeBlock(
+        hexToBytes(revealBlock.headerHex),
+        revealBlock.txs,
+      );
+    }
+    return r;
+  }
+
+  const SAT = firstSatOfBlock(CB_HEIGHT) + 10_000n;
+
+  it('builds the reveal wtxid proof and verifies through it', async () => {
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(routes(true)),
+    });
+    expect(res.identity.indexProof).toBe('wtxid');
+    expect(res.identity.singleInputReveal).toBe(false);
+    expect(res.identity.sat).toBe(SAT);
+    expect(res.bundle.reveal.witness).toBeDefined();
+    // the bundle stands alone offline
+    const again = verifySatGenealogy(JSON.parse(JSON.stringify(res.bundle)));
+    expect(again.indexProof).toBe('wtxid');
+    expect(again.sat).toBe(SAT);
+  });
+
+  it('passes EnvelopeIndexUnprovenError through when no wtxid proof can be built', async () => {
+    // no raw-block route: the builder degrades to a section-less bundle and
+    // the verifier's refusal reaches the caller as itself, the way
+    // CustodyUnsupportedError does, so callers can tell honest-but-unprovable
+    // from forged
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(routes(false)),
+    });
+    await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
+    await expect(p).rejects.toThrow(/input 0 precedes envelope input 1/);
+  });
+
+  it('emits no witness section for a single-input reveal even with the block available', async () => {
+    const commit1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal1 = segwitTx([{ txid: commit1.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const block1 = buildBlock([reveal1.tx]);
+    const r: Record<string, Route> = {
+      ...routesFor(cbBlock, CB_HEIGHT, TIP),
+      ...routesFor(block1, REVEAL_HEIGHT, TIP),
+      [`${E}/tx/${commit1.tx.txid}/hex`]: commit1.hex,
+      [`${E}/block/${block1.blockHash}/raw`]: serializeBlock(hexToBytes(block1.headerHex), block1.txs),
+    };
+    const res = await fetchSatIdentity(`${reveal1.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(r) });
+    expect(res.identity.indexProof).toBe('single-input');
+    expect('witness' in res.bundle.reveal).toBe(false);
   });
 });

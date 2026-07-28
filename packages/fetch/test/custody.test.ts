@@ -5,11 +5,14 @@ import {
   hexToBytes,
   internalToDisplay,
   parseTx,
+  serializeBlock,
+  serializeFull,
+  verifyCustodyBundle,
   type ParsedTx,
 } from '@ordspv/core';
-import { fetchCustody, CustodyError } from '../src/index.js';
-import { CustodyUnsupportedError } from '@ordspv/core';
-import type { FetchFn } from '../src/backends.js';
+import { buildCustodyBundle, fetchCustody, CustodyError } from '../src/index.js';
+import { CustodyUnsupportedError, EnvelopeIndexUnprovenError } from '@ordspv/core';
+import { EsploraBackend, type FetchFn } from '../src/backends.js';
 import {
   buildBlock,
   commitTx,
@@ -299,5 +302,105 @@ describe('fetchCustody', () => {
     expect(res.custody.hops).toBe(1);
     expect(res.pendingSpendTxid).toBe(spend.txid);
     expect(res.tip.map((t) => t.state)).toEqual(['spent', 'spent']);
+  });
+});
+
+describe('fetchCustody with multi-input reveals', () => {
+  // key-path funding leg on input 0, the envelope on input 1: the shape the
+  // prefix rule cannot prove and the wtxid proof exists for
+  const env = envelopeScript({ fields: [[1, 'text/plain']], body: ['multi'] }, { checksigPrefix: true });
+  const tap = taprootCommit(env);
+
+  function legacyTxOut(
+    prevTxidDisplay: string,
+    vout: number,
+    outputs: { value: bigint; spk?: Uint8Array }[],
+  ): ParsedTx {
+    const parts: Uint8Array[] = [u32le(2), new Uint8Array([1])];
+    parts.push(hexToBytes(prevTxidDisplay).reverse(), u32le(vout), new Uint8Array([1, 0x51]), u32le(0xffffffff));
+    parts.push(new Uint8Array([outputs.length]));
+    for (const o of outputs) {
+      const spk = o.spk ?? new Uint8Array([0x51]);
+      parts.push(u64le(o.value), new Uint8Array([spk.length]), spk);
+    }
+    parts.push(u32le(0));
+    return parseTx(cat(...parts));
+  }
+
+  const commit = legacyTxOut('11'.repeat(32), 0, [
+    { value: 10_000n },
+    { value: 20_000n, spk: tap.scriptPubKey },
+  ]);
+  const reveal = parseTx(
+    serializeFull({
+      version: 2,
+      inputs: [
+        {
+          prevTxidLE: commit.txidLE,
+          prevTxid: commit.txid,
+          vout: 0,
+          scriptSig: new Uint8Array(0),
+          sequence: 0xfffffffd,
+          witness: [new Uint8Array(64).fill(7)],
+        },
+        {
+          prevTxidLE: commit.txidLE,
+          prevTxid: commit.txid,
+          vout: 1,
+          scriptSig: new Uint8Array(0),
+          sequence: 0xfffffffd,
+          witness: [new Uint8Array(64).fill(7), env, tap.controlBlock],
+        },
+      ],
+      outputs: [{ value: 25_000n, scriptPubKey: new Uint8Array([0x51]) }],
+      locktime: 0,
+    }),
+  );
+  const block = buildBlock([reveal]);
+  const id = `${reveal.txid}i0`;
+
+  function routes(withRawBlock: boolean): Record<string, Route> {
+    const r = routesForBlock(block, 100, 120);
+    r[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    r[`${E2}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    if (withRawBlock) {
+      r[`${E}/block/${block.blockHash}/raw`] = serializeBlock(hexToBytes(block.headerHex), block.txs);
+    }
+    return r;
+  }
+
+  it('builds the reveal wtxid proof and verifies through it', async () => {
+    const built = await buildCustodyBundle(id, new EsploraBackend(E, stubFetch(routes(true))));
+    expect(built.bundle.hops[0].witness).toBeDefined();
+    expect(verifyCustodyBundle(built.bundle).indexProof).toBe('wtxid');
+
+    const res = await fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(true)) });
+    expect(res.custody.indexProof).toBe('wtxid');
+    expect(res.custody.singleInputReveal).toBe(false);
+    expect(res.custody.genesis.offset).toBe(10_000n);
+  });
+
+  it('passes EnvelopeIndexUnprovenError through when no wtxid proof can be built', async () => {
+    // no raw-block route: the builder degrades to a section-less bundle and
+    // the verifier's refusal reaches the caller as itself, the way
+    // CustodyUnsupportedError does
+    const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(false)) });
+    await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
+    await expect(p).rejects.toThrow(/input 0 precedes envelope input 1/);
+  });
+
+  it('emits no witness section for a single-input reveal even with the block available', async () => {
+    const setup = inscriptionSetup();
+    const r = routesForBlock(setup.block, 100, 120);
+    r[`${E}/tx/${setup.commit.txid}/hex`] = bytesToHex(setup.commit.raw);
+    r[`${E}/tx/${setup.reveal.txid}/outspend/0`] = { spent: false };
+    r[`${E}/block/${setup.block.blockHash}/raw`] = serializeBlock(
+      hexToBytes(setup.block.headerHex),
+      setup.block.txs,
+    );
+    const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(r)));
+    expect('witness' in built.bundle.hops[0]).toBe(false);
+    expect(verifyCustodyBundle(built.bundle).indexProof).toBe('single-input');
   });
 });
