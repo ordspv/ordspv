@@ -64,8 +64,9 @@ export interface AnchorBackend {
   getBlockInfo(blockHash: string): Promise<{ tx_count: number }>;
   /**
    * Optional: the raw block, used to build the reveal's wtxid proof on
-   * multi-input reveals. A backend without it still builds working bundles;
-   * their multi-input reveals fall back to the prefix rule at verification.
+   * multi-input reveals. A backend without it still builds bundles for
+   * single-input reveals; a multi-input reveal needs the section from some
+   * backend or the bundle cannot be verified at all.
    */
   getBlockRaw?(blockHash: string): Promise<Uint8Array>;
 }
@@ -125,34 +126,58 @@ export async function assembleAnchoredHop(
  * what earlier builders emitted. The whole added cost is one raw block
  * request, the same request `buildProofBundle` makes for L3.
  *
- * Best effort by design: a backend without `getBlockRaw`, a failed request,
- * or a served block that does not hash to the anchored block or does not
- * hold the reveal at the proven position leaves the hop without a section.
- * The verifier then falls back to the prefix rule or refuses the bundle as
- * unproven; soundness never rests on this succeeding.
+ * A missing section is fatal at verification, so failure is reported rather
+ * than swallowed. Each backend is tried in the order the caller supplied
+ * them and its cause recorded, and when none can serve the block this throws
+ * `EnvelopeIndexUnprovenError` naming every backend and why it failed. A
+ * rate limit and an unprovable reveal are different facts, and the caller
+ * has to be able to tell them apart. No unverifiable bundle is emitted.
  */
 export async function attachRevealWitnessSection(
-  backend: AnchorBackend,
+  backends: AnchorBackend[],
   reveal: ParsedTx,
   hop: CustodyHopJson,
 ): Promise<void> {
-  if (reveal.inputs.length === 1 || !backend.getBlockRaw) return;
-  try {
-    const raw = await backend.getBlockRaw(hop.block.hash);
-    const block = parseBlock(raw);
-    if (block.header.hash !== hop.block.hash.toLowerCase()) return;
-    const pos = block.txs.findIndex((t) => t.txid === reveal.txid);
-    if (pos === -1 || pos !== hop.tx.pos) return;
-    const txids = block.txs.map((t) => t.txidLE);
-    const wtxids = block.txs.map((t, i) => (i === 0 ? ZERO32 : t.wtxidLE));
-    hop.witness = {
-      coinbaseHex: bytesToHex(block.txs[0].raw),
-      coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
-      wtxidBranch: buildMerkleBranch(wtxids, pos).map(internalToDisplay),
-    };
-  } catch {
-    // availability only; the verifier decides what the bundle proves
+  if (reveal.inputs.length === 1) return;
+  const causes: string[] = [];
+  for (const backend of backends) {
+    if (!backend.getBlockRaw) {
+      causes.push(`${backend.baseUrl}: backend serves no raw blocks`);
+      continue;
+    }
+    try {
+      const raw = await backend.getBlockRaw(hop.block.hash);
+      const block = parseBlock(raw);
+      if (block.header.hash !== hop.block.hash.toLowerCase()) {
+        causes.push(
+          `${backend.baseUrl}: served a block hashing to ${block.header.hash}, not ${hop.block.hash}`,
+        );
+        continue;
+      }
+      const pos = block.txs.findIndex((t) => t.txid === reveal.txid);
+      if (pos !== hop.tx.pos) {
+        causes.push(
+          `${backend.baseUrl}: reveal is at position ${pos} in the served block, proof says ${hop.tx.pos}`,
+        );
+        continue;
+      }
+      const txids = block.txs.map((t) => t.txidLE);
+      const wtxids = block.txs.map((t, i) => (i === 0 ? ZERO32 : t.wtxidLE));
+      hop.witness = {
+        coinbaseHex: bytesToHex(block.txs[0].raw),
+        coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
+        wtxidBranch: buildMerkleBranch(wtxids, pos).map(internalToDisplay),
+      };
+      return;
+    } catch (e) {
+      causes.push(`${backend.baseUrl}: ${(e as Error).message}`);
+    }
   }
+  throw new EnvelopeIndexUnprovenError(
+    `reveal ${reveal.txid} spends ${reveal.inputs.length} inputs, so its envelope numbering ` +
+      `needs the block's witness commitment, and no backend served block ${hop.block.hash}:\n` +
+      causes.join('\n'),
+  );
 }
 
 /**
@@ -163,7 +188,7 @@ export async function attachRevealWitnessSection(
 export async function buildCustodyBundle(
   inscriptionId: string,
   backend: CustodyBackend,
-  options: { maxHops?: number } = {},
+  options: { maxHops?: number; witnessBackends?: AnchorBackend[] } = {},
 ): Promise<BuildCustodyResult> {
   const maxHops = options.maxHops ?? 64;
   const id = parseInscriptionId(inscriptionId);
@@ -176,7 +201,7 @@ export async function buildCustodyBundle(
   }
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
-  await attachRevealWitnessSection(backend, reveal, revealHop);
+  await attachRevealWitnessSection(options.witnessBackends ?? [backend], reveal, revealHop);
   const hops: CustodyHopJson[] = [revealHop];
 
   // working (unverified) satpoint to know which outpoint to walk next
@@ -293,13 +318,20 @@ export async function fetchCustody(
   const buildErrors: string[] = [];
   for (const backend of backends) {
     try {
-      built = await buildCustodyBundle(inscriptionId, backend, { maxHops: options.maxHops });
+      built = await buildCustodyBundle(inscriptionId, backend, {
+        maxHops: options.maxHops,
+        // the witness section is worth every backend's attempt, not just the
+        // one walking the path; a refusal here means none of them served it
+        witnessBackends: backends,
+      });
       source = backend;
       break;
     } catch (e) {
       // a v1-domain refusal is a property of the path, not of the backend:
       // every backend would report the same, so surface it as-is
       if (e instanceof CustodyUnsupportedError) throw e;
+      // likewise: every backend was already tried for the raw block
+      if (e instanceof EnvelopeIndexUnprovenError) throw e;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }

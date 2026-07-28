@@ -347,9 +347,19 @@ describe('fetchSatIdentity', () => {
       ],
       [{ value: 2500n }],
     );
-    const routes = chainRoutes(coinbase, reveal, [fA]);
+    // two inputs, so the numbering needs the block's witness commitment
+    const revealBlock = buildBlock([reveal.tx]);
+    const routes = {
+      ...chainRoutes(coinbase, reveal, [fA]),
+      ...routesFor(revealBlock, REVEAL_HEIGHT, TIP),
+      [`${E}/block/${revealBlock.blockHash}/raw`]: serializeBlock(
+        hexToBytes(revealBlock.headerHex),
+        revealBlock.txs,
+      ),
+    };
 
     const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
+    expect(res.identity.indexProof).toBe('wtxid');
     expect(res.identity.revealPosition).toBe(1500n);
     expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT) + 1500n);
     expect(res.identity.depth).toBe(1);
@@ -595,17 +605,20 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(again.sat).toBe(SAT);
   });
 
-  it('passes EnvelopeIndexUnprovenError through when no wtxid proof can be built', async () => {
-    // no raw-block route: the builder degrades to a section-less bundle and
-    // the verifier's refusal reaches the caller as itself, the way
-    // CustodyUnsupportedError does, so callers can tell honest-but-unprovable
-    // from forged
+  it('passes EnvelopeIndexUnprovenError through, naming the backend cause', async () => {
+    // no raw-block route: the builder emits no unverifiable bundle, and the
+    // refusal reaches the caller as itself the way CustodyUnsupportedError
+    // does, so callers can tell honest-but-unprovable from forged
     const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
       ...OPTS,
       fetchFn: stubFetch(routes(false)),
     });
     await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
-    await expect(p).rejects.toThrow(/input 0 precedes envelope input 1/);
+    await expect(p).rejects.toThrow(/spends 2 inputs/);
+    // the real cause is a backend failure, not an unprovable reveal, and the
+    // message says so rather than blaming the reveal
+    await expect(p).rejects.toThrow(/HTTP 404/);
+    await expect(p).rejects.toThrow(new RegExp(E));
   });
 
   it('emits no witness section for a single-input reveal even with the block available', async () => {

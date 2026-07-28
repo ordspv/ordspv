@@ -8,9 +8,16 @@ import {
   serializeBlock,
   serializeFull,
   verifyCustodyBundle,
+  type CustodyHopJson,
   type ParsedTx,
 } from '@ordspv/core';
-import { buildCustodyBundle, fetchCustody, CustodyError } from '../src/index.js';
+import {
+  attachRevealWitnessSection,
+  buildCustodyBundle,
+  fetchCustody,
+  CustodyError,
+  type AnchorBackend,
+} from '../src/index.js';
 import { CustodyUnsupportedError, EnvelopeIndexUnprovenError } from '@ordspv/core';
 import { EsploraBackend, type FetchFn } from '../src/backends.js';
 import {
@@ -381,13 +388,39 @@ describe('fetchCustody with multi-input reveals', () => {
     expect(res.custody.genesis.offset).toBe(10_000n);
   });
 
-  it('passes EnvelopeIndexUnprovenError through when no wtxid proof can be built', async () => {
-    // no raw-block route: the builder degrades to a section-less bundle and
-    // the verifier's refusal reaches the caller as itself, the way
-    // CustodyUnsupportedError does
+  it('passes EnvelopeIndexUnprovenError through, naming the backend cause', async () => {
+    // no raw-block route: the builder emits no unverifiable bundle, and the
+    // refusal reaches the caller as itself the way CustodyUnsupportedError
+    // does
     const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(false)) });
     await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
-    await expect(p).rejects.toThrow(/input 0 precedes envelope input 1/);
+    await expect(p).rejects.toThrow(/spends 2 inputs/);
+    // the real cause is a backend failure, not an unprovable reveal
+    await expect(p).rejects.toThrow(/HTTP 404/);
+  });
+
+  it('names a backend that exposes no getBlockRaw as its own cause', async () => {
+    const full = new EsploraBackend(E, stubFetch(routes(true)));
+    // an AnchorBackend may omit getBlockRaw entirely; that is a cause too
+    const noRaw: AnchorBackend = {
+      baseUrl: 'https://noraw.test',
+      getTxHex: (t) => full.getTxHex(t),
+      getTxStatus: (t) => full.getTxStatus(t),
+      getMerkleProof: (t) => full.getMerkleProof(t),
+      getHeaderHex: (h) => full.getHeaderHex(h),
+      getBlockInfo: (h) => full.getBlockInfo(h),
+    };
+    const hop: CustodyHopJson = {
+      block: { height: 100, hash: block.blockHash, header: block.headerHex, txCount: block.txCount },
+      tx: { hex: bytesToHex(reveal.raw), pos: 1, txidBranch: [] },
+      prevTxs: [],
+    };
+    await expect(attachRevealWitnessSection([noRaw], reveal, hop)).rejects.toThrow(
+      /serves no raw blocks/,
+    );
+    // and it succeeds through a backend that does serve them
+    await attachRevealWitnessSection([noRaw, full], reveal, hop);
+    expect(hop.witness).toBeDefined();
   });
 
   it('emits no witness section for a single-input reveal even with the block available', async () => {

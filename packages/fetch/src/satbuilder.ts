@@ -122,7 +122,7 @@ async function prevTxsCovering(
 export async function buildSatGenealogyBundle(
   inscriptionId: string,
   backend: AnchorBackend,
-  options: { maxSteps?: number } = {},
+  options: { maxSteps?: number; witnessBackends?: AnchorBackend[] } = {},
 ): Promise<BuildSatGenealogyResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const id = parseInscriptionId(inscriptionId);
@@ -136,7 +136,7 @@ export async function buildSatGenealogyBundle(
   const k = inscription.input;
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, k);
-  await attachRevealWitnessSection(backend, reveal, revealHop);
+  await attachRevealWitnessSection(options.witnessBackends ?? [backend], reveal, revealHop);
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
   if (inscription.unboundByEvenField || revealValues[k] === 0n) {
     throw new CustodyUnsupportedError(
@@ -272,10 +272,17 @@ export async function fetchSatIdentity(
 
   let built: BuildSatGenealogyResult;
   try {
-    built = await buildSatGenealogyBundle(inscriptionId, pool, { maxSteps: options.maxSteps });
+    built = await buildSatGenealogyBundle(inscriptionId, pool, {
+      maxSteps: options.maxSteps,
+      // the pool already rotates every member for the raw block request and
+      // names each one's cause, so it is the whole witness-backend list
+      witnessBackends: [pool],
+    });
   } catch (e) {
     // a v1-domain refusal is a property of the ancestry, not of the backend
     if (e instanceof CustodyUnsupportedError) throw e;
+    // a reveal whose numbering no backend could prove, with each cause named
+    if (e instanceof EnvelopeIndexUnprovenError) throw e;
     // the step cap is deterministic: every backend walks to the same step
     if (e instanceof SatStepLimitError) throw e;
     throw new SatIdentityError('BUILD_FAILED', (e as Error).message);

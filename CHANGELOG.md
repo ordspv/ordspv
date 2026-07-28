@@ -139,6 +139,16 @@ already binds.
   `fetchSatIdentity`** the way `CustodyUnsupportedError` does, instead of
   arriving wrapped as `VERIFY_FAILED`. A bundle can be honest and still
   unprovable, and callers have to tell that apart from a forgery.
+- **The builder says why it produced no witness section.** It used to return
+  silently on every failure, so a rate limit, a timeout, a 404, and a backend
+  serving no raw blocks were indistinguishable from a reveal whose numbering
+  cannot be proven, and the caller was told the bundle was unprovable when
+  the real cause was availability. For a multi-input reveal the builder now
+  tries the raw block on each configured backend in the order the caller
+  supplied them, and when every one fails it throws
+  `EnvelopeIndexUnprovenError` naming each backend and its cause rather than
+  emitting a bundle the verifier will refuse. Single-input reveals attempt
+  nothing and their bundles are unchanged.
 - **`VerifiedCustody` and `VerifiedSatIdentity` report `singleInputReveal`**,
   as `L2Assurances` has since the field existed. The CLI prints it wherever it
   prints `controlBlockDepth` and `singleLeafTree`: the `custody` and `sat`
