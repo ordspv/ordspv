@@ -696,9 +696,9 @@ describe('envelope index binding (multi-input reveals)', () => {
       `${reveal.tx.txid}:0:10000`,
     );
     expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
-    // the message names the input count, the envelope's input, and the cause
+    // the message names the input count, the requested index, and the cause
     expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/reveal spends 2 inputs/);
-    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/envelope on input 1/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/any envelope index 1/);
     expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/no witness section/);
   });
 
@@ -881,6 +881,23 @@ describe('wtxid-anchored reveals (custody)', () => {
     const noSection = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
     delete noSection.hops[0].witness;
     expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
+  });
+
+  it('refuses an absent index before claiming how many envelopes there are', () => {
+    // the reveal carries two envelopes, and index 7 is in neither. With no
+    // witness section the count itself is unproven, so reporting "index 7 not
+    // present" would assert a count the bundle cannot support
+    const noSection = wtxidBundle(block, reveal.hex, 7, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+    delete noSection.hops[0].witness;
+    expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).toThrow(/any envelope index 7/);
+    expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).not.toThrow(/not present/);
+
+    // with the section the count IS proven, so the old message is supportable
+    const withSection = wtxidBundle(block, reveal.hex, 7, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+    expect(() => verifyCustodyBundle(withSection, NO_POW_FLOOR)).toThrow(
+      /contains 2 envelope\(s\); index 7 not present/,
+    );
   });
 
   it('proves the index of a reveal whose earlier input is a key-path spend', () => {

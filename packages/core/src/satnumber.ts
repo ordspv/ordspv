@@ -319,13 +319,16 @@ export function verifySatGenealogy(
     });
   }
 
+  // the refusal comes BEFORE the lookup: on such a reveal the envelope count
+  // itself is unproven, so "index N not present" would assert a count the
+  // bundle cannot support, in a plain Error that reads as a forgery
+  if (indexProof !== 'wtxid' && reveal.inputs.length !== 1) {
+    throw new EnvelopeIndexUnprovenError(unprovenIndexMessage('reveal', reveal, id.index));
+  }
   const allInscriptions = inscriptionsFromTx(reveal);
   const inscription = allInscriptions.find((i) => i.index === id.index);
   if (!inscription) {
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
-  }
-  if (indexProof !== 'wtxid' && reveal.inputs.length !== 1) {
-    throw new EnvelopeIndexUnprovenError(unprovenIndexMessage('reveal', reveal, inscription));
   }
   const k = inscription.input;
   // the reveal is anchored by txid, which does not cover the witness carrying

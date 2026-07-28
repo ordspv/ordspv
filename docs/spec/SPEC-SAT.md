@@ -102,8 +102,11 @@ MUST record the way the index was proven in `indexProof`:
 A reveal with more than one input and no witness section is refused. The
 verifier MUST refuse it distinguishably from a forgery
 (`EnvelopeIndexUnprovenError`), naming the reveal's input count and the
-envelope's input, since such a bundle can be honest and merely unable to
-prove its numbering.
+requested index, since such a bundle can be honest and merely unable to
+prove its numbering. The verifier MUST refuse before selecting an envelope,
+because the envelope count of such a reveal is itself unproven: reporting
+that the requested index is absent would assert a count the bundle cannot
+support.
 
 At input `k` itself, in every case, the verifier MUST reject a key-path
 spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify

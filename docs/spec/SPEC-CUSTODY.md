@@ -87,7 +87,10 @@ A reveal with more than one input and no witness section is refused. The
 verifier MUST refuse it distinguishably from a forgery
 (`EnvelopeIndexUnprovenError` in the reference implementation), since such a
 bundle can be perfectly honest and simply unable to prove its numbering, and
-the refusal MUST name the reveal's input count and the envelope's input.
+the refusal MUST name the reveal's input count and the requested index. The
+verifier MUST refuse before selecting an envelope, because the envelope count
+of such a reveal is itself unproven: reporting that the requested index is
+absent would assert a count the bundle cannot support.
 
 The verifier MUST accept a witness section only at the reveal. Later custody
 hops read nothing from witnesses, so the verifier MUST refuse a bundle whose

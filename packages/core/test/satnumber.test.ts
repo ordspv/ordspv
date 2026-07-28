@@ -693,9 +693,9 @@ describe('envelope index binding (multi-input reveals)', () => {
       firstSatOfBlock(1000) + 10_000n,
     );
     expect(() => verifySatGenealogy(bundle, FIXTURE_OPTS)).toThrow(EnvelopeIndexUnprovenError);
-    // the message names the input count, the envelope's input, and the cause
+    // the message names the input count, the requested index, and the cause
     expect(() => verifySatGenealogy(bundle, FIXTURE_OPTS)).toThrow(/reveal spends 2 inputs/);
-    expect(() => verifySatGenealogy(bundle, FIXTURE_OPTS)).toThrow(/envelope on input 1/);
+    expect(() => verifySatGenealogy(bundle, FIXTURE_OPTS)).toThrow(/any envelope index 1/);
     expect(() => verifySatGenealogy(bundle, FIXTURE_OPTS)).toThrow(/no witness section/);
   });
 
@@ -853,6 +853,22 @@ describe('wtxid-anchored reveals (genealogy)', () => {
     const noSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
     delete noSection.reveal.witness;
     expect(() => verifySatGenealogy(noSection, FIXTURE_OPTS)).toThrow(EnvelopeIndexUnprovenError);
+  });
+
+  it('refuses an absent index before claiming how many envelopes there are', () => {
+    // index 7 is in neither envelope. Without a section the count is unproven,
+    // so "index 7 not present" would assert a count the bundle cannot support
+    const noSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 7, firstSatOfBlock(1000) + 10_000n);
+    delete noSection.reveal.witness;
+    expect(() => verifySatGenealogy(noSection, FIXTURE_OPTS)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(noSection, FIXTURE_OPTS)).toThrow(/any envelope index 7/);
+    expect(() => verifySatGenealogy(noSection, FIXTURE_OPTS)).not.toThrow(/not present/);
+
+    // with the section the count IS proven, so the old message is supportable
+    const withSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 7, firstSatOfBlock(1000) + 10_000n);
+    expect(() => verifySatGenealogy(withSection, FIXTURE_OPTS)).toThrow(
+      /contains 2 envelope\(s\); index 7 not present/,
+    );
   });
 
   it('proves the index of a reveal whose earlier input is a key-path spend', () => {

@@ -175,8 +175,12 @@ already binds.
   hard error with no fallback, a section anywhere except the reveal is
   refused, and a multi-input reveal with no section throws the new
   `EnvelopeIndexUnprovenError`, naming the reveal's input count and the
-  envelope's input, since such a bundle can be honest and merely unable to
-  prove its numbering. Builders emit the section for multi-input reveals at
+  requested index, since such a bundle can be honest and merely unable to
+  prove its numbering. Both verifiers refuse before selecting the envelope:
+  the lookup used to run first, so a multi-input reveal with no section whose
+  requested index was absent reported "index N not present", a plain Error
+  asserting an envelope count the bundle cannot support. With a witness
+  section the count is proven and that message stands. Builders emit the section for multi-input reveals at
   the cost of one raw block request; single-input bundles are byte-identical
   to before. Found in review before any release carried this code.
 - **`EnvelopeIndexUnprovenError` passes through `fetchCustody` and

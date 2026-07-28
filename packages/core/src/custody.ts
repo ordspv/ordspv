@@ -111,13 +111,12 @@ export class EnvelopeIndexUnprovenError extends Error {
 export function unprovenIndexMessage(
   label: string,
   reveal: ParsedTx,
-  inscription: Inscription,
+  requestedIndex: number,
 ): string {
   return (
-    `${label}: reveal spends ${reveal.inputs.length} inputs with the envelope on input ` +
-    `${inscription.input}, and the bundle carries no witness section; every input's ` +
-    `witness is outside the txid, so the numbering that makes this envelope index ` +
-    `${inscription.index} cannot be proven`
+    `${label}: reveal spends ${reveal.inputs.length} inputs and the bundle carries no ` +
+    `witness section; every input's witness is outside the txid, so the numbering that ` +
+    `would make any envelope index ${requestedIndex} cannot be proven`
   );
 }
 
@@ -559,15 +558,18 @@ export function verifyCustodyBundle(
     });
   }
 
+  // the refusal comes BEFORE the lookup: on such a reveal the envelope count
+  // itself is unproven, so "index N not present" would assert a count the
+  // bundle cannot support, in a plain Error that reads as a forgery
+  if (indexProof !== 'wtxid' && reveal.inputs.length !== 1) {
+    throw new EnvelopeIndexUnprovenError(
+      unprovenIndexMessage('hop 0 (reveal)', reveal, id.index),
+    );
+  }
   const allInscriptions = inscriptionsFromTx(reveal);
   const inscription: Inscription | undefined = allInscriptions.find((i) => i.index === id.index);
   if (!inscription) {
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
-  }
-  if (indexProof !== 'wtxid' && reveal.inputs.length !== 1) {
-    throw new EnvelopeIndexUnprovenError(
-      unprovenIndexMessage('hop 0 (reveal)', reveal, inscription),
-    );
   }
   // the txid anchor above does not cover the witness the envelope came out of;
   // bind it before the pointer or the envelope input index is used for anything
