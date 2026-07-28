@@ -22,6 +22,7 @@ import {
   fetchCustody,
   fetchSatIdentity,
   normalizeBaseUrl,
+  type AttemptInfo,
   type VerificationMode,
   type WitnessSectionMode,
 } from '@ordspv/fetch';
@@ -104,6 +105,22 @@ function fail(message: string, code = 1): never {
 
 function str(v: string | boolean | undefined): string | undefined {
   return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * Say that the build moved to another backend, and why.
+ *
+ * A rotation can cost a whole second walk, which on a deep ancestry is
+ * thousands of requests and tens of minutes, and a caller watching a terminal
+ * cannot tell that from a hang. The first attempt says nothing, since nothing
+ * has gone wrong yet.
+ */
+function reportAttempt(info: AttemptInfo): void {
+  if (!info.cause) return;
+  console.error(
+    `retrying against ${info.baseUrl} (attempt ${info.attempt + 1} of ${info.total}); ` +
+      `previous attempt ended with: ${info.cause.message}`,
+  );
 }
 
 /**
@@ -206,6 +223,7 @@ async function main(): Promise<void> {
         esplora,
         anchorSources,
         witnessSection,
+        onAttempt: reportAttempt,
       });
       if (flags.has('json')) {
         console.log(
@@ -262,6 +280,7 @@ async function main(): Promise<void> {
         anchorSources,
         maxSteps,
         witnessSection,
+        onAttempt: reportAttempt,
       });
       const bundleOut = str(flags.get('bundle'));
       if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));

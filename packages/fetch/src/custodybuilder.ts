@@ -50,7 +50,7 @@ import {
   type HeaderTrustReport,
 } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
-import { sharedDomainRefusal, type DomainRefusal } from './failover.js';
+import { sharedDomainRefusal, type DomainRefusal, type OnAttempt } from './failover.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -337,6 +337,12 @@ export interface FetchCustodyOptions {
    * where a sub-BIP34 coinbase height rests on it.
    */
   trustHeader?: (header: import('@ordspv/core').BlockHeader, height: number) => Promise<HeaderTrustReport>;
+  /**
+   * Called once per build attempt, before it runs, with the backend leading it
+   * and what ended the attempt before. A rotation can cost a whole second walk,
+   * so a caller that shows progress has to be told one happened.
+   */
+  onAttempt?: OnAttempt;
 }
 
 export interface CustodyTipSource {
@@ -383,7 +389,15 @@ export async function fetchCustody(
   let source: EsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
-  for (const backend of backends) {
+  let lastCause: Error | undefined;
+  for (let i = 0; i < backends.length; i++) {
+    const backend = backends[i];
+    options.onAttempt?.({
+      baseUrl: backend.baseUrl,
+      attempt: i,
+      total: backends.length,
+      cause: lastCause,
+    });
     try {
       built = await buildCustodyBundle(inscriptionId, backend, {
         maxHops: options.maxHops,

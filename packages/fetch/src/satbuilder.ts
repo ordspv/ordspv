@@ -55,14 +55,19 @@ import {
 } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
-import { sharedDomainRefusal, type DomainRefusal } from './failover.js';
+import { sharedDomainRefusal, type DomainRefusal, type OnAttempt } from './failover.js';
 
 export class SatBuildError extends Error {}
 
 /**
- * The walk hit its step cap. Separate from SatBuildError (which it extends, so
- * existing catch sites keep working) so a caller can tell an ancestry that is
- * merely deeper than the cap from a backend that failed.
+ * The walk hit its step cap, so a caller can tell an ancestry that is merely
+ * deeper than the cap from a backend that failed.
+ *
+ * The class is defined in `@ordspv/core` and re-exported here, because the
+ * verifier refuses an over-deep bundle on the same ground and a caller that
+ * discriminates on the class has to see one class from both sides. It is
+ * therefore an `Error` rather than a `SatBuildError`; nothing catches the
+ * builder's base class to reach it.
  *
  * The depth that reached the cap is a function of the start position, and that
  * position is read out of a reveal witness the builder has not bound, so one
@@ -271,6 +276,13 @@ export interface FetchSatIdentityOptions {
     header: import('@ordspv/core').BlockHeader,
     height: number,
   ) => Promise<HeaderTrustReport>;
+  /**
+   * Called once per build attempt, before it runs, with the member leading it
+   * and what ended the attempt before. An attempt here is a whole walk, which
+   * on a deep ancestry is thousands of requests, so a caller that shows
+   * progress has to be told a rotation happened.
+   */
+  onAttempt?: OnAttempt;
 }
 
 export interface FetchSatIdentityResult {
@@ -340,8 +352,15 @@ export async function fetchSatIdentity(
   let pool: PooledEsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
+  let lastCause: Error | undefined;
   for (let i = 0; i < members.length; i++) {
     const attempt = new PooledEsploraBackend([...members.slice(i), ...members.slice(0, i)]);
+    options.onAttempt?.({
+      baseUrl: members[i].baseUrl,
+      attempt: i,
+      total: members.length,
+      cause: lastCause,
+    });
     try {
       built = await buildSatGenealogyBundle(inscriptionId, attempt, {
         maxSteps: options.maxSteps,

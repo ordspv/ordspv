@@ -6,13 +6,38 @@
  * it is therefore one backend's word: an unrecognized even field, a zero-value
  * envelope input, a fee-tail ancestry, and the walk depth that a start position
  * implies are all things a hostile backend can produce out of bytes nothing has
- * bound. So a builder MUST NOT treat such a refusal as terminal while another
- * backend is configured, and the wrappers record it as that backend's cause and
- * move on.
+ * bound. The same goes for the block hash and the position a backend's own
+ * status and merkle proof name, which is what decides whether the reveal's
+ * witness section can be built at all. So a builder MUST NOT treat a refusal
+ * as terminal while another backend is configured unless the refusal was
+ * derived from data the reveal txid commits, and the wrappers record the rest
+ * as that backend's cause and move on.
  *
  * Once a verifier raises the same class the fact is proven and the refusal is
  * terminal, because the bundle it refused had already bound its witness.
  */
+
+/**
+ * One build attempt, reported before it runs.
+ *
+ * Rotation is expensive: the ceiling is one full walk per configured backend,
+ * and a deep genealogy is thousands of requests and tens of minutes. A caller
+ * watching a terminal cannot tell that from a hang, so the wrappers say which
+ * backend they moved to and what ended the attempt before it.
+ */
+export interface AttemptInfo {
+  /** base URL of the backend leading this attempt */
+  baseUrl: string;
+  /** zero-based index of this attempt */
+  attempt: number;
+  /** attempts this build may make, one per configured backend */
+  total: number;
+  /** what ended the previous attempt; undefined on the first */
+  cause?: Error;
+}
+
+/** Progress hook for the build loops; the library default is undefined. */
+export type OnAttempt = (info: AttemptInfo) => void;
 
 /** One backend's build-time domain refusal, recorded instead of thrown. */
 export interface DomainRefusal {
