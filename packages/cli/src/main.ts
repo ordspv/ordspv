@@ -11,7 +11,7 @@ import {
   type SatGenealogyBundleJson,
 } from '@ordspv/core';
 import { classifyBundle, type BundleKind } from './bundlekind.js';
-import { contentResiduals, refusalReport } from './notes.js';
+import { contentResiduals, refusalJson, refusalReport, type RefusalContext } from './notes.js';
 import {
   buildProofBundle,
   EsploraBackend,
@@ -106,6 +106,31 @@ function str(v: string | boolean | undefined): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+/**
+ * Report a failure the same way on all three commands.
+ *
+ * The four refusals that are not forgeries carry their own exit code, and the
+ * code does not depend on which command raised them: a path outside v1's
+ * domain exits 4 whether the caller read a bundle back or resolved the same
+ * inscription live. A `--json` caller reads the class on stdout, since a
+ * scripted caller has no other discriminator.
+ */
+function failFrom(
+  e: unknown,
+  context: RefusalContext,
+  command: string,
+  json: boolean,
+  invalid: (message: string) => string,
+): never {
+  const refusal = refusalReport(e, context, command);
+  if (json) {
+    console.log(refusalJson(e, refusal));
+    process.exit(refusal ? refusal.code : 1);
+  }
+  if (refusal) fail(refusal.message, refusal.code);
+  fail(invalid((e as Error).message));
+}
+
 async function main(): Promise<void> {
   const { positional, flags } = parseArgs(process.argv.slice(2));
   if (positional.length === 0 || flags.has('help')) {
@@ -114,7 +139,8 @@ async function main(): Promise<void> {
         'usage:',
         '  ord-resolve <uri> [--verify none|L1|L2|L3] [--out FILE] [--json]',
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
-        '  ord-resolve verify <bundle.json>            proof, custody or sat genealogy',
+        '  ord-resolve verify <bundle.json> [--json] [--max-steps N]',
+        '                                              proof, custody or sat genealogy',
         '  ord-resolve custody <inscription-id> [--json]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
@@ -122,8 +148,10 @@ async function main(): Promise<void> {
         '  --witness-section always|when-needed   (custody, sat; default when-needed)',
         '      always pays one raw block request so the reveal carries its wtxid',
         '      proof, which proves the envelope index and the witness the chain ran',
-        'exit codes: 0 ok  1 bundle INVALID  2 usage  3 bundle UNPROVEN offline',
-        '  4 bundle OUT OF SCOPE (well formed, path outside what v1 proves)',
+        '  --max-steps N   funding steps the sat walk follows, and the bound the',
+        '      verifier reads a genealogy bundle under',
+        'exit codes: 0 ok  1 INVALID  2 usage  3 UNPROVEN  4 OUT OF SCOPE',
+        '  the code does not depend on the command; --json prints the class',
       ].join('\n'),
     );
     process.exit(positional.length === 0 ? 2 : 0);
@@ -213,7 +241,7 @@ async function main(): Promise<void> {
       }
       return;
     } catch (e) {
-      fail(`custody: ${(e as Error).message}`);
+      failFrom(e, 'live', 'custody', flags.has('json'), (m) => `custody: ${m}`);
     }
   }
 
@@ -273,7 +301,7 @@ async function main(): Promise<void> {
       }
       return;
     } catch (e) {
-      fail(`sat: ${(e as Error).message}`);
+      failFrom(e, 'live', 'sat', flags.has('json'), (m) => `sat: ${m}`);
     }
   }
 
@@ -386,12 +414,10 @@ async function main(): Promise<void> {
       );
       return;
     } catch (e) {
-      // three refusals are not claims of forgery: a bundle that cannot prove
+      // four refusals are not claims of forgery: a bundle that cannot prove
       // one fact offline is a different thing from a bundle that contradicts
       // itself, and each gets its own prefix and exit code
-      const refusal = refusalReport(e);
-      if (refusal) fail(refusal.message, refusal.code);
-      fail(`bundle INVALID: ${(e as Error).message}`);
+      failFrom(e, 'verify', 'verify', flags.has('json'), (m) => `bundle INVALID: ${m}`);
     }
   }
 

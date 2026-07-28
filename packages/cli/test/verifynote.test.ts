@@ -8,10 +8,11 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatStepLimitError,
   hexToBytes,
   parseTx,
 } from '@ordspv/core';
-import { contentResiduals, refusalReport } from '../src/notes.js';
+import { contentResiduals, refusalJson, refusalReport } from '../src/notes.js';
 
 /**
  * What `ord-resolve verify` tells a reader about the limits of an offline
@@ -166,20 +167,20 @@ describe('ord-resolve verify refusals', { timeout: 60_000 }, () => {
  */
 describe('shared CLI notes', () => {
   it('classifies each refusal with its own prefix and exit code', () => {
-    expect(refusalReport(new CoinbaseHeightUnprovenError('height x'))).toEqual({
+    expect(refusalReport(new CoinbaseHeightUnprovenError('height x'), 'verify')).toMatchObject({
       message: expect.stringMatching(/^bundle UNPROVEN offline: height x\./),
       code: 3,
     });
-    expect(refusalReport(new EnvelopeIndexUnprovenError('numbering x'))).toEqual({
+    expect(refusalReport(new EnvelopeIndexUnprovenError('numbering x'), 'verify')).toMatchObject({
       message: expect.stringMatching(/^bundle UNPROVEN offline: numbering x\..*--witness-section always/s),
       code: 3,
     });
-    expect(refusalReport(new CustodyUnsupportedError('fees x'))).toEqual({
+    expect(refusalReport(new CustodyUnsupportedError('fees x'), 'verify')).toMatchObject({
       message: expect.stringMatching(/^bundle OUT OF SCOPE: fees x\./),
       code: 4,
     });
     // anything else is the caller's `bundle INVALID` at exit 1
-    expect(refusalReport(new Error('merkle proof does not match'))).toBeUndefined();
+    expect(refusalReport(new Error('merkle proof does not match'), 'verify')).toBeUndefined();
   });
 
   it('carries the executed-leaf residual below L3 and the numbering one on multi-input', () => {
@@ -191,5 +192,134 @@ describe('shared CLI notes', () => {
     expect(multi).toHaveLength(2);
     expect(multi[0]).toMatch(/only a wtxid anchor proves the presented witness/);
     expect(multi[1]).toMatch(/envelope numbering is not proven at L2/);
+  });
+});
+
+/**
+ * A refusal has to survive the command it was raised under. The class-to-code
+ * mapping is one table, so a path outside v1's domain exits 4 whether the
+ * caller read a bundle back or resolved the same inscription live, and a
+ * `--json` caller reads the class rather than parsing a sentence.
+ *
+ * The live commands are driven with a backend URL no request can leave the
+ * machine for, so the whole file stays offline. That reaches the unmapped
+ * path end to end on both channels; the four mapped classes need a backend
+ * serving crafted bytes, so their codes are checked through `verify`, which
+ * runs the same reporter, and through the reporter itself.
+ */
+describe('refusals across commands', { timeout: 60_000 }, () => {
+  const TMP = mkdtempSync(join(tmpdir(), 'ordspv-refusal-'));
+  // undici rejects the scheme outright, so no name is looked up and no socket
+  // is opened; the CLI sees a backend that failed
+  const OFFLINE = 'file:///dev/null';
+
+  function cli(args: string[]): { status: number; stderr: string; stdout: string } {
+    const r = spawnSync('npx', ['tsx', MAIN, ...args], { cwd: ROOT, encoding: 'utf8' });
+    return { status: r.status ?? -1, stderr: r.stderr, stdout: r.stdout };
+  }
+
+  /** a genealogy bundle whose only readable fact is its step count */
+  function deepGenealogy(): string {
+    const path = join(TMP, 'deep.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        inscriptionId: `${'ab'.repeat(32)}i0`,
+        reveal: {},
+        funding: [{}, {}],
+        coinbase: {},
+        claimedSat: '1',
+      }),
+    );
+    return path;
+  }
+
+  it('reports the verifier step cap as UNPROVEN at exit 3 on both channels', () => {
+    const path = deepGenealogy();
+    const human = cli(['verify', path, '--max-steps', '1']);
+    expect(human.status).toBe(3);
+    expect(human.stderr).toMatch(/bundle UNPROVEN offline: genealogy has 2 steps, verifier cap is 1/);
+    expect(human.stderr).toMatch(/--max-steps N raises it/);
+
+    const json = cli(['verify', path, '--max-steps', '1', '--json']);
+    expect(json.status).toBe(3);
+    expect(JSON.parse(json.stdout)).toEqual({
+      ok: false,
+      error: 'SatStepLimitError',
+      message: 'genealogy has 2 steps, verifier cap is 1',
+      note: expect.stringMatching(/--max-steps N raises it/),
+    });
+  });
+
+  it('reads the same bundle past the cap when the flag raises it', () => {
+    // the raised cap gets past the step check and the bundle fails on its own
+    // contents, which is the point: refusing to read is not a verdict
+    const r = cli(['verify', deepGenealogy(), '--max-steps', '5']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/bundle INVALID:/);
+  });
+
+  it('rejects --max-steps on a bundle it does not bound, exit 2', () => {
+    const r = cli(['verify', join(EXT, `${SINGLE_INPUT}.bundle.json`), '--max-steps', '5']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--max-steps applies to sat genealogy bundles/);
+  });
+
+  it('gives custody and sat a JSON refusal channel at the same code', () => {
+    for (const command of ['custody', 'sat']) {
+      const args = [command, `${'ab'.repeat(32)}i0`, '--esplora', OFFLINE];
+      const human = cli(args);
+      expect(human.status).toBe(1);
+      expect(human.stderr).toMatch(new RegExp(`error: ${command}: `));
+
+      const json = cli([...args, '--json']);
+      expect(json.status).toBe(1);
+      const parsed = JSON.parse(json.stdout) as Record<string, unknown>;
+      expect(parsed.ok).toBe(false);
+      // no mapping, so the shape is the same and the class is the generic one
+      expect(parsed.error).toBe('Error');
+      expect(String(parsed.message)).toMatch(/fetch failed/);
+      expect(parsed.note).toBeUndefined();
+    }
+  });
+
+  it('maps each class to one exit code whichever command reports it', () => {
+    const cases = [
+      [new CoinbaseHeightUnprovenError('height x'), 3],
+      [new EnvelopeIndexUnprovenError('numbering x'), 3],
+      [new SatStepLimitError('depth x'), 3],
+      [new CustodyUnsupportedError('fees x'), 4],
+    ] as const;
+    for (const [error, code] of cases) {
+      const asVerify = refusalReport(error, 'verify');
+      const asLive = refusalReport(error, 'live', 'custody');
+      expect(asVerify?.code).toBe(code);
+      // the code is the class's, not the command's
+      expect(asLive?.code).toBe(code);
+      expect(asVerify?.name).toBe(error.name);
+      expect(asLive?.name).toBe(error.name);
+      expect(asVerify?.message).toMatch(/^bundle (UNPROVEN offline|OUT OF SCOPE): /);
+      expect(asLive?.message).toMatch(/^custody (UNPROVEN|OUT OF SCOPE): /);
+    }
+    expect(refusalReport(new Error('merkle proof does not match'), 'live', 'sat')).toBeUndefined();
+  });
+
+  it('emits one JSON shape for a mapped and an unmapped failure', () => {
+    const mapped = new CustodyUnsupportedError('fees x');
+    expect(JSON.parse(refusalJson(mapped, refusalReport(mapped, 'live', 'sat')))).toEqual({
+      ok: false,
+      error: 'CustodyUnsupportedError',
+      message: 'fees x',
+      note: expect.stringMatching(/leaves what v1 proves/),
+    });
+    const plain = new Error('merkle proof does not match');
+    expect(JSON.parse(refusalJson(plain, undefined))).toEqual({
+      ok: false,
+      error: 'Error',
+      message: 'merkle proof does not match',
+    });
+    // one line, so a caller reads it off stdout without a parser
+    expect(refusalJson(plain, undefined)).not.toMatch(/\n/);
   });
 });
