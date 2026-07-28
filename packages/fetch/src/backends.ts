@@ -84,8 +84,11 @@ export function resolveLimits(init: BackendLimitsInit = {}): BackendLimits {
  * in DNS and HTTP, so two spellings that differ only in case address the same
  * server; comparing raw strings let such a spelling pass as an independent
  * attester and vote for the header it had just served. Scheme and host are
- * lowercased, a default port is dropped, and trailing slashes go. The path
- * keeps its case, since path components are case-sensitive.
+ * lowercased, a single trailing dot on the host folds away (a root-anchored
+ * FQDN resolves to the same name), and trailing slashes go. The URL parser has
+ * already dropped a default port (:443 on https, :80 on http) by the time this
+ * code sees the parts; a non-default port stays, since it is a different
+ * endpoint. The path keeps its case, since path components are case-sensitive.
  *
  * This is canonicalization for comparison and not a general URL cleaner. Two
  * hostnames belonging to one operator stay two entries, because no string
@@ -101,9 +104,7 @@ export function normalizeBaseUrl(url: string): string {
     return trimmed;
   }
   const scheme = parsed.protocol.toLowerCase();
-  const defaultPort =
-    (scheme === 'https:' && parsed.port === '443') || (scheme === 'http:' && parsed.port === '80');
-  const host = parsed.hostname.toLowerCase() + (parsed.port && !defaultPort ? `:${parsed.port}` : '');
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '') + (parsed.port ? `:${parsed.port}` : '');
   return `${scheme}//${host}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`;
 }
 

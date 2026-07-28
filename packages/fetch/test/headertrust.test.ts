@@ -144,6 +144,20 @@ describe('fail-closed header anchoring', () => {
     await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 independent source/);
   });
 
+  it('excludes a serving backend spelled as a root-anchored FQDN', async () => {
+    // a trailing dot names the same DNS host, so this is the serving backend
+    // under another spelling, and it collapses to one attester with it
+    const alias = esplora('https://mempool.space./api', agreeRoutes('https://mempool.space/api', HEADER.hash));
+    const outsider = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
+    const trust = makeHeaderTrust({
+      esploras: [alias, outsider],
+      checkpoints: new Map(),
+      proofSources: new Set(['https://mempool.space/api']),
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(HeaderTrustError);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 independent source/);
+  });
+
   it('counts an agreeing attester whose tip endpoint fails (agreement is hash-only)', async () => {
     // the attester answers hash-at-height but its tip endpoint 404s; without
     // minConfirmations the tip must not be consulted at all, so the agreeing

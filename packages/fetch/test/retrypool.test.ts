@@ -187,6 +187,7 @@ describe('normalizeBaseUrl', () => {
       'https://mempool.space/api/',
       'https://mempool.space/api///',
       'https://mempool.space:443/api',
+      'https://mempool.space./api',
       '  https://mempool.space/api  ',
     ]) {
       expect(normalizeBaseUrl(variant)).toBe(canonical);
