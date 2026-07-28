@@ -20,6 +20,7 @@ import {
   fetchSatIdentity,
   normalizeBaseUrl,
   type VerificationMode,
+  type WitnessSectionMode,
 } from '@ordspv/fetch';
 
 /**
@@ -36,6 +37,7 @@ import {
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
  * Options: --esplora url[,url]   --gateway url[,url]   --anchor-source url[,url]
+ *          --witness-section always|when-needed
  */
 
 interface Args {
@@ -109,6 +111,9 @@ async function main(): Promise<void> {
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]  --anchor-source url[,url]',
+        '  --witness-section always|when-needed   (custody, sat; default when-needed)',
+        '      always pays one raw block request so the reveal carries its wtxid',
+        '      proof, which proves the envelope index and the witness the chain ran',
       ].join('\n'),
     );
     process.exit(positional.length === 0 ? 2 : 0);
@@ -122,6 +127,12 @@ async function main(): Promise<void> {
   const anchorSources = (
     str(flags.get('anchor-source'))?.split(',') ?? DEFAULT_ANCHOR_SOURCES
   ).map(normalizeBaseUrl);
+
+  const witnessSectionArg = str(flags.get('witness-section')) ?? 'when-needed';
+  if (witnessSectionArg !== 'always' && witnessSectionArg !== 'when-needed') {
+    fail('--witness-section must be always or when-needed', 2);
+  }
+  const witnessSection = witnessSectionArg as WitnessSectionMode;
 
   const [command] = positional;
 
@@ -156,6 +167,7 @@ async function main(): Promise<void> {
       const res = await fetchCustody(`${parsed.id.txid}i${parsed.id.index}`, {
         esplora,
         anchorSources,
+        witnessSection,
       });
       if (flags.has('json')) {
         console.log(
@@ -208,6 +220,7 @@ async function main(): Promise<void> {
         esplora,
         anchorSources,
         maxSteps,
+        witnessSection,
       });
       const bundleOut = str(flags.get('bundle'));
       if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));

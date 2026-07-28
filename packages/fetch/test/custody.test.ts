@@ -16,6 +16,7 @@ import {
   buildCustodyBundle,
   fetchCustody,
   CustodyError,
+  WitnessSectionUnavailableError,
   type AnchorBackend,
 } from '../src/index.js';
 import { CustodyUnsupportedError, EnvelopeIndexUnprovenError } from '@ordspv/core';
@@ -389,15 +390,17 @@ describe('fetchCustody with multi-input reveals', () => {
     expect(res.custody.genesis.offset).toBe(10_000n);
   });
 
-  it('passes EnvelopeIndexUnprovenError through, naming the backend cause', async () => {
+  it('passes WitnessSectionUnavailableError through, naming the backend cause', async () => {
     // no raw-block route: the builder emits no unverifiable bundle, and the
-    // refusal reaches the caller as itself the way CustodyUnsupportedError
-    // does
+    // failure reaches the caller as itself the way CustodyUnsupportedError
+    // does. It is availability, so it is NOT the verifier's refusal class
     const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(false)) });
-    await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
-    await expect(p).rejects.toThrow(/spends 2 inputs/);
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.not.toThrow(EnvelopeIndexUnprovenError);
+    await expect(p).rejects.toThrow(/spends 2 input/);
     // the real cause is a backend failure, not an unprovable reveal
     await expect(p).rejects.toThrow(/HTTP 404/);
+    await expect(p).rejects.toThrow(new RegExp(E));
   });
 
   it('names a backend that exposes no getBlockRaw as its own cause', async () => {
@@ -436,5 +439,47 @@ describe('fetchCustody with multi-input reveals', () => {
     const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(r)));
     expect('witness' in built.bundle.hops[0]).toBe(false);
     expect(verifyCustodyBundle(built.bundle, NO_POW_FLOOR).indexProof).toBe('single-input');
+  });
+
+  it('witnessSection always attaches a section to a single-input reveal', async () => {
+    const setup = inscriptionSetup();
+    const r = routesForBlock(setup.block, 100, 120);
+    r[`${E}/tx/${setup.commit.txid}/hex`] = bytesToHex(setup.commit.raw);
+    r[`${E}/tx/${setup.reveal.txid}/outspend/0`] = { spent: false };
+    r[`${E}/block/${setup.block.blockHash}/raw`] = serializeBlock(
+      hexToBytes(setup.block.headerHex),
+      setup.block.txs,
+    );
+    const backend = new EsploraBackend(E, stubFetch(r));
+    const always = await buildCustodyBundle(setup.id, backend, { witnessSection: 'always' });
+    expect(always.bundle.hops[0].witness).toBeDefined();
+    const verified = verifyCustodyBundle(always.bundle, NO_POW_FLOOR);
+    expect(verified.indexProof).toBe('wtxid');
+    expect(verified.singleInputReveal).toBe(true);
+
+    // when-needed on the same reveal emits the same bytes as before the option
+    const needed = await buildCustodyBundle(setup.id, backend, { witnessSection: 'when-needed' });
+    const dflt = await buildCustodyBundle(setup.id, backend);
+    expect(JSON.stringify(needed.bundle)).toBe(JSON.stringify(dflt.bundle));
+    expect('witness' in needed.bundle.hops[0]).toBe(false);
+  });
+
+  it('witnessSection always with every backend failing throws with each cause', async () => {
+    const setup = inscriptionSetup();
+    const r = routesForBlock(setup.block, 100, 120);
+    r[`${E}/tx/${setup.commit.txid}/hex`] = bytesToHex(setup.commit.raw);
+    r[`${E}/tx/${setup.reveal.txid}/outspend/0`] = { spent: false };
+    // no raw-block route at all: every backend fails to serve it
+    const one = new EsploraBackend(E, stubFetch(r));
+    const two = new EsploraBackend(E2, stubFetch(r));
+    const p = buildCustodyBundle(setup.id, one, {
+      witnessSection: 'always',
+      witnessBackends: [one, two],
+    });
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.toThrow(new RegExp(E));
+    await expect(p).rejects.toThrow(new RegExp(E2));
+    await expect(p).rejects.toThrow(/HTTP 404/);
+    await expect(p).rejects.toThrow(/always/);
   });
 });

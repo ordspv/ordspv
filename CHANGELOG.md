@@ -171,16 +171,31 @@ already binds.
   `fetchSatIdentity`** the way `CustodyUnsupportedError` does, instead of
   arriving wrapped as `VERIFY_FAILED`. A bundle can be honest and still
   unprovable, and callers have to tell that apart from a forgery.
-- **The builder says why it produced no witness section.** It used to return
-  silently on every failure, so a rate limit, a timeout, a 404, and a backend
-  serving no raw blocks were indistinguishable from a reveal whose numbering
-  cannot be proven, and the caller was told the bundle was unprovable when
-  the real cause was availability. For a multi-input reveal the builder now
+- **The builder says why it produced no witness section, in a class of its
+  own.** It used to return silently on every failure, so a rate limit, a
+  timeout, a 404, and a backend serving no raw blocks were indistinguishable
+  from a reveal whose numbering cannot be proven, and the caller was told the
+  bundle was unprovable when the real cause was availability. The builder now
   tries the raw block on each configured backend in the order the caller
-  supplied them, and when every one fails it throws
-  `EnvelopeIndexUnprovenError` naming each backend and its cause rather than
-  emitting a bundle the verifier will refuse. Single-input reveals attempt
-  nothing and their bundles are unchanged.
+  supplied them, and when every one fails it throws the new
+  `WitnessSectionUnavailableError` naming each backend and its cause rather
+  than emitting a bundle the verifier will refuse. That class means "no
+  backend served the block, and retrying may work";
+  `EnvelopeIndexUnprovenError` keeps its one verifier-side meaning, "this
+  bundle cannot prove its numbering, whoever serves it". `fetchCustody` and
+  `fetchSatIdentity` pass the new class through unwrapped, as they do the
+  other refusal classes. Reveals that need no section attempt nothing and
+  their bundles are unchanged.
+- **Builders can emit the witness section for any reveal.** The builder
+  returned immediately on a single-input reveal, so nothing in this release
+  could produce `indexProof: 'wtxid'` for the majority of inscriptions, while
+  SPEC-CUSTODY tells a consumer holding the inscriber inside its threat model
+  to require exactly that. `buildCustodyBundle`, `buildSatGenealogyBundle`,
+  `fetchCustody` and `fetchSatIdentity` take `witnessSection: 'always' |
+  'when-needed'`, and `ord-resolve custody` and `ord-resolve sat` take
+  `--witness-section`. The default `'when-needed'` preserves today's behavior
+  byte for byte; `'always'` pays one raw block request so the reveal carries
+  its wtxid proof and the bundle verifies with no executed-leaf residual.
 - **`VerifiedCustody` and `VerifiedSatIdentity` report `singleInputReveal`**,
   as `L2Assurances` has since the field existed. The CLI prints it wherever it
   prints `controlBlockDepth` and `singleLeafTree`: the `custody` and `sat`

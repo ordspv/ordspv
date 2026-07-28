@@ -83,6 +83,12 @@ export class CustodyUnsupportedError extends Error {
  * that carries no witness section for such a reveal may be perfectly honest;
  * it simply cannot prove the numbering, which is a different fact from being
  * forged (plain Error) or leaving v1's sat domain (CustodyUnsupportedError).
+ *
+ * This is the verifier's refusal and nothing else. Retrying it elsewhere
+ * changes nothing, since the bundle it was handed cannot prove its numbering
+ * whoever serves it. A builder that could not fetch the block a section is
+ * made from throws `WitnessSectionUnavailableError` from `@ordspv/fetch`,
+ * which is availability and may well succeed on a retry.
  */
 export class EnvelopeIndexUnprovenError extends Error {
   constructor(message: string) {

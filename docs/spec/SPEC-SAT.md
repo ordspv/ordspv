@@ -110,7 +110,11 @@ spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify
 the BIP-341 script-path commitment, rejecting the bundle when it does not
 hold. The verifier MUST accept a witness section only at the reveal, and MUST
 refuse a bundle carrying one on a funding step or on the terminal coinbase
-hop. Builders SHOULD emit the section for multi-input reveals.
+hop. Builders SHOULD emit the section for multi-input reveals, and MUST be
+able to emit it for any reveal on request, as SPEC-CUSTODY requires and for
+the same reason: a consumer holding the inscriber inside its threat model
+needs `indexProof` `wtxid` on every inscription, single-input reveals
+included.
 
 Verifiers SHOULD report the control block depth, `singleLeafTree` and
 `singleInputReveal`, with the residual SPEC-CUSTODY states: when

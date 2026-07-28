@@ -84,6 +84,24 @@ export interface BuildCustodyResult {
 export class CustodyBuildError extends Error {}
 
 /**
+ * No backend could serve the raw block the reveal's witness section is built
+ * from. This is an availability failure and retrying elsewhere or later may
+ * well succeed, which is exactly what `EnvelopeIndexUnprovenError` does not
+ * mean: that class is the verifier's refusal of a reveal whose numbering
+ * cannot be proven at all. The message names every backend tried and its
+ * cause, including a backend that exposes no raw-block method.
+ */
+export class WitnessSectionUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WitnessSectionUnavailableError';
+  }
+}
+
+/** Whether the builder attaches the reveal's witness section (SPEC-CUSTODY). */
+export type WitnessSectionMode = 'always' | 'when-needed';
+
+/**
  * Anchor a transaction: fetch its inclusion proof, header, and block tx count,
  * plus the prev txs for inputs 0..prevTxsUpTo (pass -1 for none, as a coinbase
  * needs). Nothing here is trusted; the bundle verifier re-proves all of it.
@@ -121,24 +139,32 @@ export async function assembleAnchoredHop(
 
 /**
  * Attach the reveal's wtxid proof to its hop, so the verifier can prove the
- * envelope's index through the block's BIP-141 witness commitment. Only
- * multi-input reveals need it; single-input bundles stay byte-identical to
- * what earlier builders emitted. The whole added cost is one raw block
- * request, the same request `buildProofBundle` makes for L3.
+ * envelope's index through the block's BIP-141 witness commitment. The whole
+ * added cost is one raw block request, the same request `buildProofBundle`
+ * makes for L3.
  *
- * A missing section is fatal at verification, so failure is reported rather
- * than swallowed. Each backend is tried in the order the caller supplied
- * them and its cause recorded, and when none can serve the block this throws
- * `EnvelopeIndexUnprovenError` naming every backend and why it failed. A
- * rate limit and an unprovable reveal are different facts, and the caller
- * has to be able to tell them apart. No unverifiable bundle is emitted.
+ * `mode` decides which reveals get one. `'when-needed'`, the default, attaches
+ * it to multi-input reveals only, since a single-input reveal proves its own
+ * numbering; those bundles stay byte-identical to what earlier builders
+ * emitted. `'always'` attaches it to every reveal, which is what a caller
+ * needs when the inscriber is inside its threat model: only a wtxid anchor
+ * shows the witness the chain executed.
+ *
+ * A missing section is fatal at verification for a multi-input reveal, and it
+ * is what the caller asked for under `'always'`, so failure is reported rather
+ * than swallowed. Each backend is tried in the order the caller supplied them
+ * and its cause recorded, and when none can serve the block this throws
+ * `WitnessSectionUnavailableError` naming every backend and why it failed. A
+ * rate limit and an unprovable reveal are different facts, and the caller has
+ * to be able to tell them apart. No unverifiable bundle is emitted.
  */
 export async function attachRevealWitnessSection(
   backends: AnchorBackend[],
   reveal: ParsedTx,
   hop: CustodyHopJson,
+  mode: WitnessSectionMode = 'when-needed',
 ): Promise<void> {
-  if (reveal.inputs.length === 1) return;
+  if (mode === 'when-needed' && reveal.inputs.length === 1) return;
   const causes: string[] = [];
   for (const backend of backends) {
     if (!backend.getBlockRaw) {
@@ -173,9 +199,9 @@ export async function attachRevealWitnessSection(
       causes.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }
-  throw new EnvelopeIndexUnprovenError(
-    `reveal ${reveal.txid} spends ${reveal.inputs.length} inputs, so its envelope numbering ` +
-      `needs the block's witness commitment, and no backend served block ${hop.block.hash}:\n` +
+  throw new WitnessSectionUnavailableError(
+    `reveal ${reveal.txid} spends ${reveal.inputs.length} input(s) and its witness section ` +
+      `was requested (${mode}), and no backend served block ${hop.block.hash}:\n` +
       causes.join('\n'),
   );
 }
@@ -188,7 +214,11 @@ export async function attachRevealWitnessSection(
 export async function buildCustodyBundle(
   inscriptionId: string,
   backend: CustodyBackend,
-  options: { maxHops?: number; witnessBackends?: AnchorBackend[] } = {},
+  options: {
+    maxHops?: number;
+    witnessBackends?: AnchorBackend[];
+    witnessSection?: WitnessSectionMode;
+  } = {},
 ): Promise<BuildCustodyResult> {
   const maxHops = options.maxHops ?? 64;
   const id = parseInscriptionId(inscriptionId);
@@ -201,7 +231,12 @@ export async function buildCustodyBundle(
   }
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
-  await attachRevealWitnessSection(options.witnessBackends ?? [backend], reveal, revealHop);
+  await attachRevealWitnessSection(
+    options.witnessBackends ?? [backend],
+    reveal,
+    revealHop,
+    options.witnessSection,
+  );
   const hops: CustodyHopJson[] = [revealHop];
 
   // working (unverified) satpoint to know which outpoint to walk next
@@ -265,6 +300,15 @@ export interface FetchCustodyOptions {
   fetchFn?: FetchFn;
   limits?: BackendLimitsInit;
   maxHops?: number;
+  /**
+   * Whether the reveal hop carries its wtxid proof. `'when-needed'` (default)
+   * attaches it to multi-input reveals only, which is what verification
+   * requires and keeps single-input bundles byte-identical to before the
+   * option existed. `'always'` attaches it to every reveal, at one raw block
+   * request, so the bundle verifies at `indexProof: 'wtxid'` and carries no
+   * executed-leaf residual.
+   */
+  witnessSection?: WitnessSectionMode;
   /** see HeaderTrustOptions; defaults mirror the resolver */
   minHeaderAgreement?: number;
   minConfirmations?: number;
@@ -320,6 +364,7 @@ export async function fetchCustody(
     try {
       built = await buildCustodyBundle(inscriptionId, backend, {
         maxHops: options.maxHops,
+        witnessSection: options.witnessSection,
         // the witness section is worth every backend's attempt, not just the
         // one walking the path; a refusal here means none of them served it
         witnessBackends: backends,
@@ -330,7 +375,10 @@ export async function fetchCustody(
       // a v1-domain refusal is a property of the path, not of the backend:
       // every backend would report the same, so surface it as-is
       if (e instanceof CustodyUnsupportedError) throw e;
-      // likewise: every backend was already tried for the raw block
+      // likewise: every backend was already tried for the raw block, and the
+      // caller has to see that this was availability and not an unprovable
+      // reveal
+      if (e instanceof WitnessSectionUnavailableError) throw e;
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }

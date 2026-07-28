@@ -25,6 +25,7 @@ import {
   SatBuildError,
   SatIdentityError,
   SatStepLimitError,
+  WitnessSectionUnavailableError,
 } from '../src/index.js';
 import {
   buildBlock,
@@ -610,16 +611,18 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(again.sat).toBe(SAT);
   });
 
-  it('passes EnvelopeIndexUnprovenError through, naming the backend cause', async () => {
+  it('passes WitnessSectionUnavailableError through, naming the backend cause', async () => {
     // no raw-block route: the builder emits no unverifiable bundle, and the
-    // refusal reaches the caller as itself the way CustodyUnsupportedError
-    // does, so callers can tell honest-but-unprovable from forged
+    // failure reaches the caller as itself the way CustodyUnsupportedError
+    // does. It is availability, so callers can tell "retry later" from the
+    // verifier's "this reveal can never be proven"
     const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
       ...OPTS,
       fetchFn: stubFetch(routes(false)),
     });
-    await expect(p).rejects.toThrow(EnvelopeIndexUnprovenError);
-    await expect(p).rejects.toThrow(/spends 2 inputs/);
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.not.toThrow(EnvelopeIndexUnprovenError);
+    await expect(p).rejects.toThrow(/spends 2 input/);
     // the real cause is a backend failure, not an unprovable reveal, and the
     // message says so rather than blaming the reveal
     await expect(p).rejects.toThrow(/HTTP 404/);
@@ -639,5 +642,57 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     const res = await fetchSatIdentity(`${reveal1.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(r) });
     expect(res.identity.indexProof).toBe('single-input');
     expect('witness' in res.bundle.reveal).toBe(false);
+  });
+
+  it('witnessSection always attaches a section to a single-input reveal', async () => {
+    const commit1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal1 = segwitTx([{ txid: commit1.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const block1 = buildBlock([reveal1.tx]);
+    const r: Record<string, Route> = {
+      ...routesFor(cbBlock, CB_HEIGHT, TIP),
+      ...routesFor(block1, REVEAL_HEIGHT, TIP),
+      [`${E}/tx/${commit1.tx.txid}/hex`]: commit1.hex,
+      [`${E}/block/${block1.blockHash}/raw`]: serializeBlock(hexToBytes(block1.headerHex), block1.txs),
+    };
+    const id = `${reveal1.tx.txid}i0`;
+    const res = await fetchSatIdentity(id, {
+      ...OPTS,
+      fetchFn: stubFetch(r),
+      witnessSection: 'always',
+    });
+    expect(res.identity.indexProof).toBe('wtxid');
+    expect(res.identity.singleInputReveal).toBe(true);
+    expect(res.bundle.reveal.witness).toBeDefined();
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
+
+    // when-needed emits the same bytes the default does
+    const backend = new EsploraBackend(E, stubFetch(r));
+    const needed = await buildSatGenealogyBundle(id, backend, { witnessSection: 'when-needed' });
+    const dflt = await buildSatGenealogyBundle(id, backend);
+    expect(JSON.stringify(needed.bundle)).toBe(JSON.stringify(dflt.bundle));
+    expect('witness' in needed.bundle.reveal).toBe(false);
+  });
+
+  it('witnessSection always with every backend failing throws with each cause', async () => {
+    const commit1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal1 = segwitTx([{ txid: commit1.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const block1 = buildBlock([reveal1.tx]);
+    // no raw-block route: the one request the section needs is the one missing
+    const r: Record<string, Route> = {
+      ...routesFor(cbBlock, CB_HEIGHT, TIP),
+      ...routesFor(block1, REVEAL_HEIGHT, TIP),
+      [`${E}/tx/${commit1.tx.txid}/hex`]: commit1.hex,
+    };
+    const p = fetchSatIdentity(`${reveal1.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E],
+      fetchFn: stubFetch(r),
+      witnessSection: 'always',
+    });
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.not.toThrow(EnvelopeIndexUnprovenError);
+    await expect(p).rejects.toThrow(/HTTP 404/);
+    await expect(p).rejects.toThrow(new RegExp(E));
+    await expect(p).rejects.toThrow(/always/);
   });
 });

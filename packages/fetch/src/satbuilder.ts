@@ -45,7 +45,9 @@ import {
 import {
   assembleAnchoredHop,
   attachRevealWitnessSection,
+  WitnessSectionUnavailableError,
   type AnchorBackend,
+  type WitnessSectionMode,
 } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
@@ -122,7 +124,11 @@ async function prevTxsCovering(
 export async function buildSatGenealogyBundle(
   inscriptionId: string,
   backend: AnchorBackend,
-  options: { maxSteps?: number; witnessBackends?: AnchorBackend[] } = {},
+  options: {
+    maxSteps?: number;
+    witnessBackends?: AnchorBackend[];
+    witnessSection?: WitnessSectionMode;
+  } = {},
 ): Promise<BuildSatGenealogyResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const id = parseInscriptionId(inscriptionId);
@@ -136,7 +142,12 @@ export async function buildSatGenealogyBundle(
   const k = inscription.input;
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, k);
-  await attachRevealWitnessSection(options.witnessBackends ?? [backend], reveal, revealHop);
+  await attachRevealWitnessSection(
+    options.witnessBackends ?? [backend],
+    reveal,
+    revealHop,
+    options.witnessSection,
+  );
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
   if (inscription.unboundByEvenField || revealValues[k] === 0n) {
     throw new CustodyUnsupportedError(
@@ -225,6 +236,15 @@ export interface FetchSatIdentityOptions {
   limits?: BackendLimitsInit;
   /** funding steps the walk will follow (default `DEFAULT_MAX_STEPS`) */
   maxSteps?: number;
+  /**
+   * Whether the reveal hop carries its wtxid proof. `'when-needed'` (default)
+   * attaches it to multi-input reveals only, which is what verification
+   * requires and keeps single-input bundles byte-identical to before the
+   * option existed. `'always'` attaches it to every reveal, at one raw block
+   * request, so the bundle verifies at `indexProof: 'wtxid'` and carries no
+   * executed-leaf residual.
+   */
+  witnessSection?: WitnessSectionMode;
   /** see HeaderTrustOptions; defaults mirror the resolver */
   minHeaderAgreement?: number;
   minConfirmations?: number;
@@ -274,6 +294,7 @@ export async function fetchSatIdentity(
   try {
     built = await buildSatGenealogyBundle(inscriptionId, pool, {
       maxSteps: options.maxSteps,
+      witnessSection: options.witnessSection,
       // the pool already rotates every member for the raw block request and
       // names each one's cause, so it is the whole witness-backend list
       witnessBackends: [pool],
@@ -281,6 +302,9 @@ export async function fetchSatIdentity(
   } catch (e) {
     // a v1-domain refusal is a property of the ancestry, not of the backend
     if (e instanceof CustodyUnsupportedError) throw e;
+    // no backend served the raw block, with each cause named; retrying later
+    // may succeed, which is why this is not the verifier's refusal class
+    if (e instanceof WitnessSectionUnavailableError) throw e;
     // a reveal whose numbering no backend could prove, with each cause named
     if (e instanceof EnvelopeIndexUnprovenError) throw e;
     // the step cap is deterministic: every backend walks to the same step

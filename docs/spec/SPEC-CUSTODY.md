@@ -116,7 +116,18 @@ one.
 
 Builders SHOULD emit the witness section for multi-input reveals; the
 reference builder does, at the cost of one raw block request, and emits no
-section for single-input reveals, whose bundles are unchanged.
+section for single-input reveals by default, whose bundles are unchanged.
+
+Builders MUST be able to emit the section for ANY reveal, single-input ones
+included, because a consumer holding the inscriber inside its threat model
+needs `indexProof` `wtxid` on every inscription it verifies, and a builder
+that cannot produce one leaves that consumer with a remedy it cannot
+exercise. The reference builder takes `witnessSection: 'always' |
+'when-needed'` (`--witness-section` on the CLI), defaulting to
+`'when-needed'`, which is the behavior above. A builder asked for a section
+it cannot fetch MUST fail rather than emit a bundle without it, and MUST
+report that failure distinguishably from the verifier's refusal above, since
+one is availability and the other is not.
 
 Verifiers SHOULD report the control block's merkle path depth at input `k`,
 whether it is zero (`singleLeafTree`), and whether the reveal has a single
