@@ -132,6 +132,17 @@ it cannot fetch MUST fail rather than emit a bundle without it, and MUST
 report that failure distinguishably from the verifier's refusal above, since
 one is availability and the other is not.
 
+A builder reads the envelope out of the served reveal witness before anything
+has bound that witness, so a domain refusal it derives from that envelope is
+one backend's claim about the path and not the chain's answer. A builder MUST
+NOT treat such a refusal as terminal while another backend is configured; it
+MUST record the refusal as that backend's cause and build against the next
+one. The refusal becomes terminal once a verifier raises it, because the
+bundle a verifier refused had already bound its witness through the envelope
+binding above. A builder that has exhausted every configured backend SHOULD
+report the refusal in the class each backend raised, and SHOULD name every
+backend that reported it.
+
 Verifiers SHOULD report the control block's merkle path depth at input `k`,
 whether it is zero (`singleLeafTree`), and whether the reveal has a single
 input (`singleInputReveal`). When `indexProof` is `wtxid` the presented

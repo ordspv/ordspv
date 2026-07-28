@@ -264,11 +264,12 @@ describe('fetchCustody', () => {
     await expect(p).rejects.toThrow(/exceeds 1 hops/);
   });
 
-  it('surfaces a fee-spillover path as CustodyUnsupportedError, not backend failover', async () => {
+  it('surfaces a fee-spillover path as CustodyUnsupportedError once every backend reports it', async () => {
     const { commit, reveal, block, id } = inscriptionSetup();
     // the confirmed spend burns everything to fees (single zero-value output),
-    // so the tracked sat leaves v1's domain: a deterministic refusal that must
-    // not be retried against, or masked by, other backends
+    // so the tracked sat leaves v1's domain. Both backends serve the same
+    // chain, so both report it, and only then is it the chain's answer rather
+    // than one server's
     const spend = legacySpend(reveal.txid, 0, [0n]);
     const blockB = buildBlock([spend]);
     const routes = {
@@ -283,9 +284,15 @@ describe('fetchCustody', () => {
       status: { confirmed: true, block_height: 105, block_hash: blockB.blockHash },
     };
 
-    const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes) });
+    // E2 answers everything E answers, so the refusal is not one server's word
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(E2, E), init);
+
+    const p = fetchCustody(id, { ...OPTS, fetchFn });
     await expect(p).rejects.toThrow(CustodyUnsupportedError);
     await expect(p).rejects.toThrow(/does not track sats through fees/);
+    await expect(p).rejects.toThrow(/every configured backend reported this/);
+    await expect(p).rejects.toThrow(new RegExp(`${E},.*${E2}`));
   });
 
   it('stops at an unconfirmed spend and reports it as pending', async () => {
@@ -311,6 +318,97 @@ describe('fetchCustody', () => {
     expect(res.custody.hops).toBe(1);
     expect(res.pendingSpendTxid).toBe(spend.txid);
     expect(res.tip.map((t) => t.state)).toEqual(['spent', 'spent']);
+  });
+});
+
+/**
+ * A domain refusal the builder raises comes out of the reveal witness, and the
+ * txid does not commit to that witness, so one backend can produce it where
+ * another does not. Until a verifier has bound the witness, such a refusal is
+ * that backend's claim and the wrapper must ask the next one.
+ */
+describe('fetchCustody build-time domain refusals', () => {
+  const E4 = 'https://esplora4.test';
+  // attesters that serve no bytes, so failover to E2 still anchors
+  const ANCHORS = { anchorSources: [E3, E4] };
+
+  /** the same transaction with input 0's witness replaced (txid unchanged) */
+  function withWitness(tx: ParsedTx, witness: Uint8Array[]): ParsedTx {
+    return parseTx(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, n) => (n === 0 ? { ...inp, witness } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  /** an envelope ord treats as UNBOUND: tag 22 is even and unrecognized */
+  function evenFieldWitness(): Uint8Array[] {
+    const script = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    return [new Uint8Array(64).fill(7), script, taprootCommit(script).controlBlock];
+  }
+
+  /** copy every route registered for `from` onto `to` */
+  function mirror(routes: Record<string, Route>, from: string, to: string): Record<string, Route> {
+    const out = { ...routes };
+    for (const [url, route] of Object.entries(routes)) {
+      if (url.startsWith(from)) out[to + url.slice(from.length)] = route;
+    }
+    return out;
+  }
+
+  /** E serves a reveal whose envelope is unbound; E2 serves the honest one */
+  function poisonedSetup() {
+    const { commit, reveal, block, id } = inscriptionSetup();
+    const poisoned = withWitness(reveal, evenFieldWitness());
+    expect(poisoned.txid).toBe(reveal.txid);
+    let routes = routesForBlock(block, 100, 120);
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    routes[`${E4}/block-height/100`] = block.blockHash;
+    routes[`${E4}/blocks/tip/height`] = '120';
+    routes = mirror(routes, E, E2);
+    // only after mirroring, so E2 keeps the honest bytes
+    routes[`${E}/tx/${reveal.txid}/hex`] = bytesToHex(poisoned.raw);
+    return { commit, reveal, block, id, routes };
+  }
+
+  it('asks the next backend when one serves an unbound envelope', async () => {
+    const { reveal, id, routes } = poisonedSetup();
+    const res = await fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(routes) });
+    // E2's honest reveal built the bundle, and it verified
+    expect(res.custody.hops).toBe(1);
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(res.custody.genesis.offset).toBe(0n);
+  });
+
+  it('surfaces the refusal when the poisoning backend is the only one', async () => {
+    const { id, routes } = poisonedSetup();
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, esplora: [E], fetchFn: stubFetch(routes) });
+    await expect(p).rejects.toThrow(CustodyUnsupportedError);
+    await expect(p).rejects.toThrow(/unbound at reveal/);
+    await expect(p).rejects.toThrow(new RegExp(`every configured backend reported this.*${E}`));
+  });
+
+  it('reports mixed failures as BUILD_FAILED with every cause', async () => {
+    const { id, routes } = poisonedSetup();
+    // E refuses on domain grounds, E2 serves nothing at all
+    const stripped: Record<string, Route> = {};
+    for (const [url, route] of Object.entries(routes)) {
+      if (!url.startsWith(E2) || url.includes('/block-height/') || url.includes('/tip/')) {
+        stripped[url] = route;
+      }
+    }
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(stripped) });
+    await expect(p).rejects.toThrow(CustodyError);
+    await expect(p).rejects.toThrow(/all backends failed/);
+    await expect(p).rejects.toThrow(/unbound at reveal/);
+    await expect(p).rejects.toThrow(/HTTP 404/);
   });
 });
 

@@ -229,6 +229,18 @@ live backend; the reference builder defaults to 4,096 and exposes it as
 `--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past 800
 funding steps, so a builder cap below four figures refuses real work.
 
+A builder derives its start position, and therefore its walk, from an envelope
+it read out of a reveal witness nothing has bound. A refusal it raises from
+that position is one backend's claim, including a fee-tail ancestry, an
+unbound inscription, and a walk that reached the builder's own step cap. A
+builder MUST NOT treat any of them as terminal while another backend is
+configured; it MUST record the refusal as that backend's cause and walk again
+leading with the next one, and it MUST NOT be read as a fact about the chain
+until a verifier raises the same refusal on a bundle whose envelope binding
+holds. A builder that has exhausted every configured backend SHOULD report the
+refusal in the class each backend raised, and SHOULD name every backend that
+reported it.
+
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.
 

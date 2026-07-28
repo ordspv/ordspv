@@ -25,6 +25,7 @@ import {
   fetchSatIdentity,
   SatBuildError,
   SatIdentityError,
+  perHeaderAttestation,
   SatStepLimitError,
   WitnessSectionUnavailableError,
 } from '../src/index.js';
@@ -413,10 +414,11 @@ describe('fetchSatIdentity', () => {
     await expect(p).rejects.not.toThrow(SatIdentityError);
   });
 
-  it('does not rewalk the ancestry on a second backend after hitting the cap', async () => {
-    // every backend walks to the same step, so a second full walk buys
-    // nothing: the request count with two backends pooled must match the
-    // request count with one
+  it('rewalks on the next backend after the cap, and names both when both agree', async () => {
+    // the depth that reached the cap is a function of a start position read
+    // out of an unbound witness, so one backend's cap is one backend's claim.
+    // The walk is repeated leading with the second member, at the cost of a
+    // second full walk, and only then is the refusal the ancestry's answer
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
     const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
     const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
@@ -435,16 +437,16 @@ describe('fetchSatIdentity', () => {
     };
 
     const one = counting();
-    await expect(
-      fetchSatIdentity(id, { ...OPTS, esplora: [E], maxSteps: 1, fetchFn: one.fetchFn }),
-    ).rejects.toThrow(SatStepLimitError);
+    const single = fetchSatIdentity(id, { ...OPTS, esplora: [E], maxSteps: 1, fetchFn: one.fetchFn });
+    await expect(single).rejects.toThrow(SatStepLimitError);
+    await expect(single).rejects.toThrow(new RegExp(`every configured backend reported this.*${E}`));
 
     const two = counting();
-    await expect(
-      fetchSatIdentity(id, { ...OPTS, esplora: [E, EB], maxSteps: 1, fetchFn: two.fetchFn }),
-    ).rejects.toThrow(SatStepLimitError);
+    const pair = fetchSatIdentity(id, { ...OPTS, esplora: [E, EB], maxSteps: 1, fetchFn: two.fetchFn });
+    await expect(pair).rejects.toThrow(SatStepLimitError);
+    await expect(pair).rejects.toThrow(new RegExp(`${E},.*${EB}`));
 
-    expect(two.count()).toBe(one.count());
+    expect(two.count()).toBe(one.count() * 2);
   });
 
   it('walks past the old 512-step ceiling on the raised default', async () => {
@@ -580,15 +582,100 @@ describe('fetchSatIdentity', () => {
         attests: undefined,
       }),
     });
-    // the wrapper reports it as a verification failure, with the core
-    // refusal's own words carried through
-    await expect(p).rejects.toThrow(SatIdentityError);
+    // the refusal passes through unwrapped: the bundle may be honest and
+    // merely unanchored, which the caller has to tell from a forgery
+    await expect(p).rejects.toThrow(CoinbaseHeightUnprovenError);
+    await expect(p).rejects.not.toThrow(SatIdentityError);
     await expect(p).rejects.toThrow(/below the BIP34 boundary 230000/);
     await expect(p).rejects.toThrow(/hash-at-height/);
     // and the core class itself is what refused
     expect(() =>
       verifySatGenealogy(res.bundle, { ...NO_POW_FLOOR, trustHeader: () => {} }),
     ).toThrow(CoinbaseHeightUnprovenError);
+  });
+
+  it('asks the next backend when one serves an unbound envelope', async () => {
+    // the reveal's envelope is read out of a witness the txid does not commit
+    // to, so E can serve an unbound one and keep the txid. EB serves the
+    // honest witness, and the identity comes from EB
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    // tag 22 is even and unrecognized, which is what makes ord call it unbound
+    const evenField = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+        },
+      ],
+      [{ value: 546n }],
+    );
+    expect(poisoned.tx.txid).toBe(reveal.tx.txid);
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    // EB answers everything E answers, except that E serves the unbound reveal
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : base(url, init);
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
+  it('answers the header marker per header, and throws on one it never anchored', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+
+    // the hook the wrapper hands the verifier reports each anchored hop's own
+    // verdict, so the reveal hop's call cannot answer with the coinbase's
+    const asked: { hash: string; height: number }[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(routes),
+      trustHeader: async (header, height) => {
+        asked.push({ hash: header.hash, height });
+        return {
+          checkpointHit: false,
+          sourcesQueried: 2,
+          sourcesAgreed: 2,
+          independentSources: 2,
+          builderIsSource: false,
+          anchored: true,
+          // only the coinbase anchor attests hash-at-height here
+          attests: height === CB_HEIGHT ? ('hash-at-height' as const) : undefined,
+        };
+      },
+    });
+    expect(asked.map((a) => a.height)).toEqual([REVEAL_HEIGHT, CB_HEIGHT]);
+    expect(res.headerTrust.reveal.attests).toBeUndefined();
+    expect(res.headerTrust.coinbase.attests).toBe('hash-at-height');
+
+    // the marker itself: each hop's own verdict, and a refusal to answer for
+    // a header this build never anchored
+    const revealHeader = parseHeader(hexToBytes(res.bundle.reveal.block.header));
+    const coinbaseHeader = parseHeader(hexToBytes(res.bundle.coinbase.block.header));
+    const marker = perHeaderAttestation([
+      { hash: res.bundle.reveal.block.hash, report: res.headerTrust.reveal },
+      { hash: res.bundle.coinbase.block.hash, report: res.headerTrust.coinbase },
+    ]);
+    expect(marker(revealHeader, REVEAL_HEIGHT)).toBeUndefined();
+    expect(marker(coinbaseHeader, CB_HEIGHT)).toBe('hash-at-height');
+    const foreign = parseHeader(hexToBytes(mineBlock([commit.tx]).headerHex));
+    expect(() => marker(foreign, 1)).toThrow(/anchored neither endpoint for/);
   });
 
   it('refuses an unbound inscription rather than inventing a sat', async () => {

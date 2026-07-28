@@ -50,6 +50,7 @@ import {
   type HeaderTrustReport,
 } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
+import { sharedDomainRefusal, type DomainRefusal } from './failover.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -381,6 +382,7 @@ export async function fetchCustody(
   let built: BuildCustodyResult | undefined;
   let source: EsploraBackend | undefined;
   const buildErrors: string[] = [];
+  const refusals: DomainRefusal[] = [];
   for (const backend of backends) {
     try {
       built = await buildCustodyBundle(inscriptionId, backend, {
@@ -393,18 +395,22 @@ export async function fetchCustody(
       source = backend;
       break;
     } catch (e) {
-      // a v1-domain refusal is a property of the path, not of the backend:
-      // every backend would report the same, so surface it as-is
-      if (e instanceof CustodyUnsupportedError) throw e;
-      // likewise: every backend was already tried for the raw block, and the
-      // caller has to see that this was availability and not an unprovable
-      // reveal
+      // every backend was already tried for the raw block, and the caller has
+      // to see that this was availability and not an unprovable reveal
       if (e instanceof WitnessSectionUnavailableError) throw e;
+      // the verifier's refusal, which is about the bundle and not the server
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
+      // a v1-domain refusal raised HERE came out of a witness nothing has
+      // bound, so it is this backend's claim about the path and not the
+      // chain's. Record it and ask the next backend; the verifier's own
+      // refusal, after the bundle proved its witness, stays terminal
+      if (e instanceof CustodyUnsupportedError) refusals.push({ baseUrl: backend.baseUrl, error: e });
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }
   if (!built || !source) {
+    const shared = sharedDomainRefusal(refusals, backends.length);
+    if (shared) throw shared;
     throw new CustodyError('BUILD_FAILED', `all backends failed:\n${buildErrors.join('\n')}`);
   }
 
@@ -416,6 +422,10 @@ export async function fetchCustody(
     // an unprovable index is a property of the reveal, not a forged bundle;
     // callers distinguish it the way they distinguish CustodyUnsupportedError
     if (e instanceof EnvelopeIndexUnprovenError) throw e;
+    // raised HERE the domain refusal is terminal and unwrapped: the bundle
+    // bound its witness before the verifier read a satpoint out of it, so the
+    // path really does leave what v1 proves
+    if (e instanceof CustodyUnsupportedError) throw e;
     throw new CustodyError('VERIFY_FAILED', (e as Error).message);
   }
 

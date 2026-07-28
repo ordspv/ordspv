@@ -29,9 +29,12 @@ import {
   coinbaseSatAt,
   isCoinbaseTx,
   verifySatGenealogy,
+  CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  type BlockHeader,
   type GenealogyStepJson,
+  type HeaderAttestation,
   type SatGenealogyBundleJson,
   type VerifiedSatIdentity,
   type ParsedTx,
@@ -51,14 +54,20 @@ import {
 } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
+import { sharedDomainRefusal, type DomainRefusal } from './failover.js';
 
 export class SatBuildError extends Error {}
 
 /**
  * The walk hit its step cap. Separate from SatBuildError (which it extends, so
- * existing catch sites keep working) because the cap is deterministic and
- * identical on every backend: rewalking the whole ancestry against a second
- * one reaches the same step and costs another full walk.
+ * existing catch sites keep working) so a caller can tell an ancestry that is
+ * merely deeper than the cap from a backend that failed.
+ *
+ * The depth that reached the cap is a function of the start position, and that
+ * position is read out of a reveal witness the builder has not bound, so one
+ * backend can produce this refusal where another does not. `fetchSatIdentity`
+ * therefore records it as that backend's cause and leads the next attempt with
+ * another member, at the cost of a second full walk.
  */
 export class SatStepLimitError extends SatBuildError {}
 
@@ -281,42 +290,91 @@ export class SatIdentityError extends Error {
   }
 }
 
+/**
+ * The core `trustHeader` hook an already-anchored build hands the verifier.
+ *
+ * It answers per header rather than per call: each anchored endpoint reports
+ * its own verdict, so a rule that reads an attestation at a hop other than the
+ * one the caller had in mind gets that hop's answer instead of another's. A
+ * header no endpoint here anchored is a question this hook cannot answer, and
+ * it throws rather than guessing.
+ *
+ * The core hook is synchronous and cannot await an attesting round trip, which
+ * is why the anchoring runs first and this reports what it found.
+ */
+export function perHeaderAttestation(
+  endpoints: { hash: string; report: HeaderTrustReport }[],
+): (header: BlockHeader, height: number) => HeaderAttestation {
+  const byHash = new Map(endpoints.map((e) => [e.hash.toLowerCase(), e.report]));
+  return (header, height) => {
+    const report = byHash.get(header.hash);
+    if (report) return report.attests;
+    throw new Error(
+      `verifier asked about header ${header.hash} at height ${height}, which this ` +
+        `build anchored neither endpoint for`,
+    );
+  };
+}
+
 export async function fetchSatIdentity(
   inscriptionId: string,
   options: FetchSatIdentityOptions = {},
 ): Promise<FetchSatIdentityResult> {
-  // one pool, one walk: a mid-walk failure rotates to another member and
-  // retries that request, instead of restarting thousands of steps from the
-  // reveal against the next backend
-  const pool = new PooledEsploraBackend(
-    (options.esplora ?? DEFAULT_ESPLORA).map(
-      (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
-    ),
+  const members = (options.esplora ?? DEFAULT_ESPLORA).map(
+    (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
   );
   const anchors = (options.anchorSources ?? DEFAULT_ANCHOR_SOURCES).map(
     (u) => new EsploraBackend(u, options.fetchFn, options.limits ?? {}),
   );
 
-  let built: BuildSatGenealogyResult;
-  try {
-    built = await buildSatGenealogyBundle(inscriptionId, pool, {
-      maxSteps: options.maxSteps,
-      witnessSection: options.witnessSection,
-      // the pool already rotates every member for the raw block request and
-      // names each one's cause, so it is the whole witness-backend list
-      witnessBackends: [pool],
-    });
-  } catch (e) {
-    // a v1-domain refusal is a property of the ancestry, not of the backend
-    if (e instanceof CustodyUnsupportedError) throw e;
-    // no backend served the raw block, with each cause named; retrying later
-    // may succeed, which is why this is not the verifier's refusal class
-    if (e instanceof WitnessSectionUnavailableError) throw e;
-    // a reveal whose numbering no backend could prove, with each cause named
-    if (e instanceof EnvelopeIndexUnprovenError) throw e;
-    // the step cap is deterministic: every backend walks to the same step
-    if (e instanceof SatStepLimitError) throw e;
-    throw new SatIdentityError('BUILD_FAILED', (e as Error).message);
+  // One pool, one walk: a mid-walk failure rotates to another member and
+  // retries that request, instead of restarting thousands of steps from the
+  // reveal. A domain refusal is the one failure rotation cannot answer,
+  // because it comes out of a reveal witness nothing has bound rather than out
+  // of a failed request, so each attempt leads with a different member and
+  // pays for the whole walk again. Attempt i's first request is the reveal and
+  // a fresh pool starts at its first member, so attempt i reads the reveal
+  // from member i.
+  let built: BuildSatGenealogyResult | undefined;
+  let pool: PooledEsploraBackend | undefined;
+  const buildErrors: string[] = [];
+  const refusals: DomainRefusal[] = [];
+  for (let i = 0; i < members.length; i++) {
+    const attempt = new PooledEsploraBackend([...members.slice(i), ...members.slice(0, i)]);
+    try {
+      built = await buildSatGenealogyBundle(inscriptionId, attempt, {
+        maxSteps: options.maxSteps,
+        witnessSection: options.witnessSection,
+        // the pool already rotates every member for the raw block request and
+        // names each one's cause, so it is the whole witness-backend list
+        witnessBackends: [attempt],
+      });
+      pool = attempt;
+      break;
+    } catch (e) {
+      // no backend served the raw block, with each cause named; retrying later
+      // may succeed, which is why this is not the verifier's refusal class
+      if (e instanceof WitnessSectionUnavailableError) throw e;
+      // a reveal whose numbering no backend could prove, with each cause named
+      if (e instanceof EnvelopeIndexUnprovenError) throw e;
+      // a v1-domain refusal raised HERE is derived from the served envelope,
+      // which nothing has bound yet, so it is this backend's claim about the
+      // ancestry. Record it and lead the next attempt with another member
+      if (e instanceof CustodyUnsupportedError || e instanceof SatStepLimitError) {
+        refusals.push({ baseUrl: members[i].baseUrl, error: e });
+        buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+        continue;
+      }
+      // every member already failed the request that ended this walk, so
+      // leading with another member repeats thousands of steps for nothing
+      buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+      break;
+    }
+  }
+  if (!built || !pool) {
+    const shared = sharedDomainRefusal(refusals, members.length);
+    if (shared) throw shared;
+    throw new SatIdentityError('BUILD_FAILED', `build failed:\n${buildErrors.join('\n')}`);
   }
 
   const trust =
@@ -356,21 +414,25 @@ export async function fetchSatIdentity(
     coinbase: await anchor(built.bundle.coinbase, 'coinbase'),
   };
 
+  const marker = perHeaderAttestation([
+    { hash: built.bundle.reveal.block.hash, report: headerTrust.reveal },
+    { hash: built.bundle.coinbase.block.hash, report: headerTrust.coinbase },
+  ]);
+
   let identity: VerifiedSatIdentity;
   try {
     identity = verifySatGenealogy(built.bundle, {
       powLimitBits: options.powLimitBits,
-      // the marker is the coinbase anchor's own verdict, reported back to the
-      // core verifier: `anchor('coinbase')` ran just above and threw unless the
-      // header was pinned, and its report says whether that pinning compared
-      // the hash at the claimed height. A hook that only rejects reports
-      // nothing here, and a sub-BIP34 coinbase is refused as it should be
-      trustHeader: () => headerTrust.coinbase.attests,
+      trustHeader: marker,
     });
   } catch (e) {
     if (e instanceof CustodyUnsupportedError) throw e;
     // an unprovable index is a property of the reveal, not a forged bundle
     if (e instanceof EnvelopeIndexUnprovenError) throw e;
+    // an unanchored sub-BIP34 height likewise: the bundle may be honest and
+    // simply lacks the attestation that binds its height, which is a different
+    // fact from a forgery and the caller has to be able to tell them apart
+    if (e instanceof CoinbaseHeightUnprovenError) throw e;
     throw new SatIdentityError('VERIFY_FAILED', (e as Error).message);
   }
 
