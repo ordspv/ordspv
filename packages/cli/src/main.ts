@@ -45,15 +45,16 @@ interface Args {
 
 /**
  * How firmly the envelope is bound to the commit output. A single-leaf taptree
- * proves nothing else was committed; a deeper one leaves the author able to
- * present another leaf they committed, which is the L2 residual, and on a
- * multi-input reveal that residual covers the envelope's index as well.
+ * proves nothing else was committed by the prevout's author. It does not prove
+ * the leaf was executed, since the output is spendable by key path too and the
+ * txid commits to neither the witness nor the spend path. Only a wtxid-anchored
+ * reveal shows the witness the chain saw.
  */
 function envelopeNote(r: {
   controlBlockDepth: number;
   singleLeafTree: boolean;
   singleInputReveal: boolean;
-  indexProof: 'wtxid' | 'single-input' | 'prefix';
+  indexProof: 'wtxid' | 'single-input';
 }): string {
   const tree = r.singleLeafTree
     ? 'bound to the commit output, single-leaf taptree'
@@ -61,9 +62,7 @@ function envelopeNote(r: {
   const index =
     r.indexProof === 'wtxid'
       ? 'index proven by the block witness commitment'
-      : r.indexProof === 'single-input'
-        ? 'index pinned by the single input'
-        : 'index proven by prefix binding';
+      : 'index pinned by the single input';
   return `${tree}, ${r.singleInputReveal ? 'single-input reveal' : 'multi-input reveal'}, ${index}`;
 }
 

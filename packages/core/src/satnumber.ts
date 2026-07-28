@@ -27,8 +27,10 @@ import { parseHeader } from './header.js';
 import { verifyWitnessAnchoring } from './witnesscommit.js';
 import {
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   isCoinbaseTx,
   provenInputValues,
+  unprovenIndexMessage,
   verifyAnchoredHop,
   verifyEnvelopeBinding,
   type CustodyHopJson,
@@ -281,11 +283,11 @@ export function verifySatGenealogy(
   }
   verifyAnchoredHop(bundle.reveal, reveal, 'reveal', opts);
 
-  // how the envelope's index is proven, strongest first: a witness section
-  // pins every input's witness through the block's BIP-141 commitment; a
-  // single-input reveal has nothing to renumber; otherwise every prefix
-  // input must bind, and may fail to (EnvelopeIndexUnprovenError)
-  let indexProof: IndexProof;
+  // how the envelope's index is proven: a witness section pins every input's
+  // witness through the block's BIP-141 commitment, and a single-input reveal
+  // has nothing to renumber. A multi-input reveal without a section cannot
+  // prove the numbering at all (EnvelopeIndexUnprovenError)
+  const indexProof: IndexProof = bundle.reveal.witness ? 'wtxid' : 'single-input';
   if (bundle.reveal.witness) {
     verifyWitnessAnchoring({
       witness: bundle.reveal.witness,
@@ -294,9 +296,6 @@ export function verifySatGenealogy(
       reveal,
       pos: bundle.reveal.tx.pos,
     });
-    indexProof = 'wtxid';
-  } else {
-    indexProof = reveal.inputs.length === 1 ? 'single-input' : 'prefix';
   }
 
   const allInscriptions = inscriptionsFromTx(reveal);
@@ -304,17 +303,14 @@ export function verifySatGenealogy(
   if (!inscription) {
     throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
   }
+  if (indexProof !== 'wtxid' && reveal.inputs.length !== 1) {
+    throw new EnvelopeIndexUnprovenError(unprovenIndexMessage('reveal', reveal, inscription));
+  }
   const k = inscription.input;
   // the reveal is anchored by txid, which does not cover the witness carrying
   // this envelope; bind it to the commit output before its pointer or its
   // input index is used to derive a position
-  const binding = verifyEnvelopeBinding(
-    reveal,
-    inscription,
-    bundle.reveal.prevTxs,
-    'reveal',
-    indexProof === 'prefix',
-  );
+  const binding = verifyEnvelopeBinding(reveal, inscription, bundle.reveal.prevTxs, 'reveal');
   // prevTxs must cover at least inputs 0..k so the envelope input's value is
   // proven; a pointer can push the start position into a LATER input, so any
   // additional prev txs the bundle supplies are used too
