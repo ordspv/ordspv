@@ -405,7 +405,9 @@ export function verifySatGenealogy(
   }
 
   // ---- terminal coinbase ----
-  if (bundle.coinbase.witness) {
+  // presence, not truth: `"witness": 0` carries no data and must still be
+  // refused, the way the funding-step guard above refuses it
+  if ((bundle.coinbase as { witness?: unknown }).witness !== undefined) {
     throw new Error('coinbase: witness section is only accepted at the reveal');
   }
   const coinbase = parseHexTxChecked(bundle.coinbase.tx.hex, 'coinbase');

@@ -1037,4 +1037,24 @@ describe('wtxid-anchored reveals (custody)', () => {
     b.finalSatpoint = `${spend.tx.txid}:0:10000`;
     expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow(/witness section is only accepted at the reveal/);
   });
+
+  it('refuses a falsy witness value on a later hop', () => {
+    // untrusted JSON can carry `"witness": 0`, which is falsy and carries no
+    // data; the rule is stated without exception, so presence is what counts
+    for (const value of [0, '', false, null]) {
+      const b = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+      const spend = fundingTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
+      const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+      b.hops.push({
+        block: { height: 800_010, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+        tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+        prevTxs: [reveal.hex],
+        witness: value as never,
+      });
+      b.finalSatpoint = `${spend.tx.txid}:0:10000`;
+      expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow(
+        /hop 1: witness section is only accepted at the reveal/,
+      );
+    }
+  });
 });

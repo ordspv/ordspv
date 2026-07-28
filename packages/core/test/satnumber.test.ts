@@ -902,6 +902,18 @@ describe('wtxid-anchored reveals (genealogy)', () => {
     expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(/witness section is only accepted at the reveal/);
   });
 
+  it('refuses a falsy witness value on the coinbase, the way it does on a step', () => {
+    // untrusted JSON can carry `"witness": 0`, which is falsy and carries no
+    // data; the rule is stated without exception, so presence is what counts
+    for (const value of [0, '', false, null]) {
+      const b = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+      (b.coinbase as { witness?: unknown }).witness = value;
+      expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+        /coinbase: witness section is only accepted at the reveal/,
+      );
+    }
+  });
+
   it('refuses a witness section on a funding step', () => {
     // GenealogyStepJson declares no witness field, so only untrusted JSON can
     // carry one; the spec's rule binds every element and not just the coinbase

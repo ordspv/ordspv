@@ -587,7 +587,10 @@ export function verifyCustodyBundle(
   for (let h = 1; h < bundle.hops.length; h++) {
     const hop = bundle.hops[h];
     const label = `hop ${h}`;
-    if (hop.witness) {
+    // a bundle is untrusted JSON, so the guard tests presence and not truth:
+    // `"witness": 0` carries no data, and it must still not slip a rule the
+    // spec states without exception
+    if ((hop as { witness?: unknown }).witness !== undefined) {
       throw new Error(`${label}: witness section is only accepted at the reveal`);
     }
     const tx = parseHopTx(hop.tx.hex, label);
