@@ -173,7 +173,9 @@ already binds.
   a new `indexProof` field (`'wtxid'` or `'single-input'`), printed by the
   CLI beside the other assurance fields. A present section that fails is a
   hard error with no fallback, a section anywhere except the reveal is
-  refused, and a multi-input reveal with no section throws the new
+  refused on presence rather than on truth (a bundle is untrusted JSON, and
+  `"witness": 0` used to slip the check on a later custody hop and on the
+  terminal coinbase), and a multi-input reveal with no section throws the new
   `EnvelopeIndexUnprovenError`, naming the reveal's input count and the
   requested index, since such a bundle can be honest and merely unable to
   prove its numbering. Both verifiers refuse before selecting the envelope:
@@ -267,10 +269,71 @@ already binds.
   803 steps. The cap now raises through `--max-steps` and stays under the
   verifier-side cap of 10,000 that SPEC-SAT sets.
 - **Hitting the step cap reports the cap.** It surfaced as
-  `all backends failed`, naming the wrong cause after re-walking the whole
-  ancestry on every backend to reach the same deterministic answer. It is now
+  `all backends failed`, naming the wrong cause. It is now
   `SatStepLimitError`, a `SatBuildError` so existing catch sites still work,
-  and `fetchSatIdentity` rethrows it without trying another backend.
+  and the message names `--max-steps`.
+- **Security: a build-time domain refusal is one backend's word, and both
+  wrappers now treat it that way.** The builders read the envelope out of the
+  served reveal witness, which the txid does not commit to, and then made
+  domain decisions from it: an inscription unbound by an unrecognized even
+  field or a zero-value envelope input, a fee-tail ancestry, and the walk
+  depth that reached the step cap. Both wrappers rethrew those refusals out of
+  the build loop at once, on the reasoning that the condition belongs to the
+  path rather than to the backend. That reasoning holds for a verified bundle
+  and not for a served one. One hostile backend could rewrite the reveal's
+  witness, keep the txid, and make `ord-resolve custody <id>` report an
+  inscription as unbound at reveal while every other configured backend went
+  unasked, and the envelope binding that would have refused the rewritten
+  tapscript never ran because the builder gave up first. `fetchCustody` and
+  `fetchSatIdentity` now record `CustodyUnsupportedError` and
+  `SatStepLimitError` raised during a build as that backend's cause and build
+  against the next one. When every configured backend reported the same class
+  the refusal is rethrown in that class, with its message extended to say that
+  every backend agreed and to name them, so a caller still discriminates on
+  the class it discriminated on before. Mixed failures report `BUILD_FAILED`
+  with every cause joined. The same class raised by `verifyCustodyBundle` or
+  `verifySatGenealogy` stays terminal and now passes through `fetchCustody`
+  unwrapped as it already did through `fetchSatIdentity`, because a bundle a
+  verifier refused had already bound its witness.
+  `EnvelopeIndexUnprovenError` and `WitnessSectionUnavailableError` keep their
+  immediate rethrow, since neither is derived from unbound witness data. On
+  the genealogy side each attempt leads with a different pool member and pays
+  for the whole walk again, which is the cost of the fix on deep ancestries.
+- **`fetchSatIdentity` passes an unproven coinbase height through unwrapped.**
+  `CoinbaseHeightUnprovenError` from `verifySatGenealogy` became
+  `SatIdentityError('VERIFY_FAILED')`, which is the class conflation the
+  refusal exists to avoid: the bundle may be honest and merely unanchored. It
+  now passes through beside `CustodyUnsupportedError` and
+  `EnvelopeIndexUnprovenError`.
+- **The header marker answers per header.** The hook `fetchSatIdentity` hands
+  the core verifier ignored its arguments and answered the coinbase anchor's
+  verdict for every hop asked about, discarding the reveal anchor's. It was
+  safe only because one call site reads the marker, and any later rule reading
+  an attestation at the reveal hop would have inherited the wrong header's
+  answer silently. The hook now matches on the header's hash and answers that
+  endpoint's own verdict, and throws for a header the build anchored neither
+  endpoint for.
+- **`ord-resolve verify` distinguishes three refusals from a forgery, with
+  exit codes.** Everything but an unproven coinbase height was reported as
+  `bundle INVALID`, so an honest multi-input reveal carrying no witness
+  section, and a true fee-bound path outside what v1 proves, both read as
+  forgeries. The command now reports `bundle UNPROVEN offline:` at exit code 3
+  for an unproven coinbase height or an unprovable envelope numbering, naming
+  `--witness-section always` in the second case, and `bundle OUT OF SCOPE:` at
+  exit code 4 for a path outside v1's sat domain. Everything else keeps
+  `bundle INVALID:` at exit code 1, and usage errors keep exit code 2. The
+  four codes are listed in the usage text. Classification is by error class
+  rather than by the error's name string.
+- **The L2 numbering residual reaches the two surfaces that render bytes.**
+  `ord-resolve resolve` printed `[L2] <type> <n> bytes block=<hash>` with no
+  residual at all and emitted `verification.l2` as bare booleans, while the
+  extension viewer's headline said `verified at L2 ... rendered from proven
+  bytes` for a multi-input reveal that a gateway alone can renumber. The
+  resolve command's human line and its JSON now carry the same residual
+  sentences `verify` carries, built by one shared function, and the viewer's
+  headline states the open numbering in place of the stronger claim. The
+  viewer also drops an unreachable `(+witness commitment)` string, which could
+  never fire because the assurances it sat in are populated at L2 only.
 - **The CLI says what it did not prove, on every command that prints a
   result.** `ord-resolve verify` carried the executed-leaf residual for
   custody and genealogy bundles and left the proof-bundle branch with the bare
@@ -321,9 +384,10 @@ already binds.
   configuration, and `--anchor-source` covers custom ones. Heights under a
   compiled checkpoint are unaffected.
 - **Mid-walk failover is asymmetric for now.** `fetchSatIdentity` builds
-  through a pool and keeps its progress across a member failure. `resolver.ts`
-  and `custodybuilder.ts` still use per-backend failover, where a failure
-  restarts the build on the next backend.
+  through a pool and keeps its progress across a member failure; only a domain
+  refusal starts a fresh walk, leading with the next member. `resolver.ts` and
+  `custodybuilder.ts` still use per-backend failover, where a failure restarts
+  the build on the next backend.
 - All five packages move to 0.3.0; inter-package pins updated to match.
 
 ## [0.2.1] - 2026-07-14
