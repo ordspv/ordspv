@@ -148,6 +148,8 @@ export interface EnvelopeBinding {
   controlBlockDepth: number;
   /** the taptree provably contains only the observed tapscript (depth 0) */
   singleLeafTree: boolean;
+  /** reveal tx has one input, pinning envelope indices given the shown script */
+  singleInputReveal: boolean;
 }
 
 /**
@@ -241,7 +243,11 @@ export function verifyEnvelopeBinding(
         );
       }
       const controlBlockDepth = parseControlBlock(tapscript.controlBlock).path.length;
-      binding = { controlBlockDepth, singleLeafTree: controlBlockDepth === 0 };
+      binding = {
+        controlBlockDepth,
+        singleLeafTree: controlBlockDepth === 0,
+        singleInputReveal: reveal.inputs.length === 1,
+      };
     } else {
       if (!tapscript) {
         throw new EnvelopeIndexUnprovenError(
@@ -434,6 +440,8 @@ export interface VerifiedCustody {
   controlBlockDepth: number;
   /** the reveal's taptree provably contains only the observed tapscript */
   singleLeafTree: boolean;
+  /** reveal tx has one input, pinning envelope indices given the shown script */
+  singleInputReveal: boolean;
 }
 
 function parseHopTx(hex: string, label: string): ParsedTx {
@@ -574,5 +582,6 @@ export function verifyCustodyBundle(
     hops: bundle.hops.length,
     controlBlockDepth: binding.controlBlockDepth,
     singleLeafTree: binding.singleLeafTree,
+    singleInputReveal: binding.singleInputReveal,
   };
 }

@@ -530,6 +530,7 @@ describe('verifyCustodyBundle', () => {
     const res = verifyCustodyBundle(singleHopBundle());
     expect(res.controlBlockDepth).toBe(0);
     expect(res.singleLeafTree).toBe(true);
+    expect(res.singleInputReveal).toBe(true);
   });
 
   it('rejects a rewritten envelope witness that keeps the txid', () => {
@@ -730,6 +731,7 @@ describe('envelope index binding (prefix inputs)', () => {
     expect(res1.genesis.offset).toBe(10_000n);
     expect(res1.controlBlockDepth).toBe(0);
     expect(res1.singleLeafTree).toBe(true);
+    expect(res1.singleInputReveal).toBe(false);
 
     // forged: envelope A's witness replaced by a key-path spend, so B would
     // renumber from 1 to 0 and <txid>i0 would resolve to B's sat
@@ -834,5 +836,6 @@ describe('envelope index binding (prefix inputs)', () => {
     const res = verifyCustodyBundle(bundle);
     expect(res.genesis.offset).toBe(0n);
     expect(res.singleLeafTree).toBe(true);
+    expect(res.singleInputReveal).toBe(true);
   });
 });

@@ -46,12 +46,18 @@ interface Args {
 /**
  * How firmly the envelope is bound to the commit output. A single-leaf taptree
  * proves nothing else was committed; a deeper one leaves the author able to
- * present another leaf they committed, which is the L2 residual.
+ * present another leaf they committed, which is the L2 residual, and on a
+ * multi-input reveal that residual covers the envelope's index as well.
  */
-function envelopeNote(r: { controlBlockDepth: number; singleLeafTree: boolean }): string {
-  return r.singleLeafTree
+function envelopeNote(r: {
+  controlBlockDepth: number;
+  singleLeafTree: boolean;
+  singleInputReveal: boolean;
+}): string {
+  const tree = r.singleLeafTree
     ? 'bound to the commit output, single-leaf taptree'
     : `bound to the commit output, taptree depth ${r.controlBlockDepth} (the author committed other leaves)`;
+  return `${tree}, ${r.singleInputReveal ? 'single-input reveal' : 'multi-input reveal'}`;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -157,6 +163,7 @@ async function main(): Promise<void> {
               path: res.custody.path,
               controlBlockDepth: res.custody.controlBlockDepth,
               singleLeafTree: res.custody.singleLeafTree,
+              singleInputReveal: res.custody.singleInputReveal,
               tip: res.tip,
               pendingSpendTxid: res.pendingSpendTxid,
             },
@@ -211,6 +218,7 @@ async function main(): Promise<void> {
               revealPosition: identity.revealPosition,
               controlBlockDepth: identity.controlBlockDepth,
               singleLeafTree: identity.singleLeafTree,
+              singleInputReveal: identity.singleInputReveal,
               headerTrust: res.headerTrust,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
@@ -260,6 +268,7 @@ async function main(): Promise<void> {
               revealPosition: result.revealPosition.toString(),
               controlBlockDepth: result.controlBlockDepth,
               singleLeafTree: result.singleLeafTree,
+              singleInputReveal: result.singleInputReveal,
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
@@ -284,6 +293,7 @@ async function main(): Promise<void> {
               height: result.height,
               controlBlockDepth: result.controlBlockDepth,
               singleLeafTree: result.singleLeafTree,
+              singleInputReveal: result.singleInputReveal,
               note: anchorNote,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),

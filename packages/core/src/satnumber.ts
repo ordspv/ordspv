@@ -229,6 +229,8 @@ export interface VerifiedSatIdentity {
   controlBlockDepth: number;
   /** the reveal's taptree provably contains only the observed tapscript */
   singleLeafTree: boolean;
+  /** reveal tx has one input, pinning envelope indices given the shown script */
+  singleInputReveal: boolean;
 }
 
 export interface GenealogyVerifyOptions extends CustodyVerifyOptions {
@@ -386,5 +388,6 @@ export function verifySatGenealogy(
     revealPosition,
     controlBlockDepth: binding.controlBlockDepth,
     singleLeafTree: binding.singleLeafTree,
+    singleInputReveal: binding.singleInputReveal,
   };
 }
