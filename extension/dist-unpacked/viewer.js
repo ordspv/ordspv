@@ -2829,6 +2829,44 @@
   function computeWitnessCommitment(witnessRoot, reserved) {
     return sha256d(concatBytes(witnessRoot, reserved));
   }
+  function verifyWitnessAnchoring(args) {
+    const { witness, header, txCount, reveal, pos } = args;
+    const expectedHeight = treeHeight(txCount);
+    let coinbase;
+    try {
+      coinbase = parseTx(hexToBytes(witness.coinbaseHex.trim()));
+    } catch (e) {
+      throw new Error(`coinbase: cannot parse transaction: ${e.message}`);
+    }
+    if (coinbase.strippedRaw.length === 64) {
+      throw new Error("coinbase: 64-byte transactions are rejected (leaf/node ambiguity)");
+    }
+    if (!isCoinbase(coinbase)) throw new Error("claimed coinbase is not a coinbase transaction");
+    const cbBranch = witness.coinbaseTxidBranch.map(displayToInternal);
+    if (cbBranch.length !== expectedHeight) {
+      throw new Error(`coinbase branch depth ${cbBranch.length} != tree height ${expectedHeight}`);
+    }
+    const { root: cbRoot } = verifyMerkleBranch(coinbase.txidLE, cbBranch, 0, txCount);
+    if (!bytesEqual(cbRoot, header.merkleRootLE)) {
+      throw new Error("coinbase txid merkle proof does not match header merkle root");
+    }
+    const commitment = findWitnessCommitment(coinbase);
+    if (!commitment) throw new Error("coinbase has no BIP-141 witness commitment output");
+    const reserved = witnessReservedValue(coinbase);
+    const wtxidBranch = witness.wtxidBranch.map(displayToInternal);
+    if (wtxidBranch.length !== expectedHeight) {
+      throw new Error(`wtxid branch depth ${wtxidBranch.length} != tree height ${expectedHeight}`);
+    }
+    if (pos === 1 && !bytesEqual(wtxidBranch[0], ZERO32)) {
+      throw new Error("wtxid branch sibling at position 1 must be the zeroed coinbase leaf");
+    }
+    if (pos === 0) throw new Error("reveal tx cannot be the coinbase");
+    const { root: witnessRoot } = verifyMerkleBranch(reveal.wtxidLE, wtxidBranch, pos, txCount);
+    const expectedCommitment = computeWitnessCommitment(witnessRoot, reserved);
+    if (!bytesEqual(expectedCommitment, commitment)) {
+      throw new Error("witness commitment mismatch: reveal witness is not the one committed in this block");
+    }
+  }
 
   // packages/core/src/envelope.ts
   var TAG_CONTENT_TYPE = 1;
@@ -3122,37 +3160,13 @@
     }
     if (bundle.level !== "L3") throw new Error(`unknown proof level ${bundle.level}`);
     if (!bundle.witness) throw new Error("L3 bundle missing witness section");
-    const coinbase = parseHexTx(bundle.witness.coinbaseHex, "coinbase");
-    if (!isCoinbase(coinbase)) throw new Error("claimed coinbase is not a coinbase transaction");
-    const cbBranch = bundle.witness.coinbaseTxidBranch.map(displayToInternal);
-    if (cbBranch.length !== expectedHeight) {
-      throw new Error(`coinbase branch depth ${cbBranch.length} != tree height ${expectedHeight}`);
-    }
-    const { root: cbRoot } = verifyMerkleBranch(coinbase.txidLE, cbBranch, 0, bundle.block.txCount);
-    if (!bytesEqual(cbRoot, header.merkleRootLE)) {
-      throw new Error("coinbase txid merkle proof does not match header merkle root");
-    }
-    const commitment = findWitnessCommitment(coinbase);
-    if (!commitment) throw new Error("coinbase has no BIP-141 witness commitment output");
-    const reserved = witnessReservedValue(coinbase);
-    const wtxidBranch = bundle.witness.wtxidBranch.map(displayToInternal);
-    if (wtxidBranch.length !== expectedHeight) {
-      throw new Error(`wtxid branch depth ${wtxidBranch.length} != tree height ${expectedHeight}`);
-    }
-    if (bundle.reveal.pos === 1 && !bytesEqual(wtxidBranch[0], ZERO32)) {
-      throw new Error("wtxid branch sibling at position 1 must be the zeroed coinbase leaf");
-    }
-    if (bundle.reveal.pos === 0) throw new Error("reveal tx cannot be the coinbase");
-    const { root: witnessRoot } = verifyMerkleBranch(
-      reveal.wtxidLE,
-      wtxidBranch,
-      bundle.reveal.pos,
-      bundle.block.txCount
-    );
-    const expectedCommitment = computeWitnessCommitment(witnessRoot, reserved);
-    if (!bytesEqual(expectedCommitment, commitment)) {
-      throw new Error("witness commitment mismatch: reveal witness is not the one committed in this block");
-    }
+    verifyWitnessAnchoring({
+      witness: bundle.witness,
+      header,
+      txCount: bundle.block.txCount,
+      reveal,
+      pos: bundle.reveal.pos
+    });
     return {
       level: "L3",
       inscriptionId: bundle.inscriptionId.toLowerCase(),
