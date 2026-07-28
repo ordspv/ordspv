@@ -4,13 +4,8 @@ import { parseHeader, checkProofOfWork, type BlockHeader } from './header.js';
 import { parseInscriptionId } from './inscriptionId.js';
 import { treeHeight, verifyMerkleBranch } from './merkle.js';
 import { extractTapscript, parseControlBlock, verifyScriptPathCommitment } from './taproot.js';
-import { isCoinbase, parseTx, type ParsedTx } from './tx.js';
-import {
-  computeWitnessCommitment,
-  findWitnessCommitment,
-  witnessReservedValue,
-  ZERO32,
-} from './witnesscommit.js';
+import { parseTx, type ParsedTx } from './tx.js';
+import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
 
 /**
  * Proof bundles: self-contained, backend-independent evidence that inscription
@@ -56,13 +51,7 @@ export interface ProofBundleJson {
   /** required for L2 (and harmless in L3): the tx whose output the reveal input spends */
   commit?: { hex: string };
   /** required for L3 */
-  witness?: {
-    coinbaseHex: string;
-    /** coinbase txid-tree branch (position 0), display-order hex */
-    coinbaseTxidBranch: string[];
-    /** wtxid-tree branch for the reveal at reveal.pos, display-order hex */
-    wtxidBranch: string[];
-  };
+  witness?: WitnessSectionJson;
 }
 
 export interface L2Assurances {
@@ -185,40 +174,14 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   if (bundle.level !== 'L3') throw new Error(`unknown proof level ${(bundle as { level: string }).level}`);
   if (!bundle.witness) throw new Error('L3 bundle missing witness section');
 
-  // ---- coinbase inclusion (txid tree, position 0) ----
-  const coinbase = parseHexTx(bundle.witness.coinbaseHex, 'coinbase');
-  if (!isCoinbase(coinbase)) throw new Error('claimed coinbase is not a coinbase transaction');
-  const cbBranch = bundle.witness.coinbaseTxidBranch.map(displayToInternal);
-  if (cbBranch.length !== expectedHeight) {
-    throw new Error(`coinbase branch depth ${cbBranch.length} != tree height ${expectedHeight}`);
-  }
-  const { root: cbRoot } = verifyMerkleBranch(coinbase.txidLE, cbBranch, 0, bundle.block.txCount);
-  if (!bytesEqual(cbRoot, header.merkleRootLE)) {
-    throw new Error('coinbase txid merkle proof does not match header merkle root');
-  }
-
-  // ---- witness commitment ----
-  const commitment = findWitnessCommitment(coinbase);
-  if (!commitment) throw new Error('coinbase has no BIP-141 witness commitment output');
-  const reserved = witnessReservedValue(coinbase);
-  const wtxidBranch = bundle.witness.wtxidBranch.map(displayToInternal);
-  if (wtxidBranch.length !== expectedHeight) {
-    throw new Error(`wtxid branch depth ${wtxidBranch.length} != tree height ${expectedHeight}`);
-  }
-  if (bundle.reveal.pos === 1 && !bytesEqual(wtxidBranch[0], ZERO32)) {
-    throw new Error('wtxid branch sibling at position 1 must be the zeroed coinbase leaf');
-  }
-  if (bundle.reveal.pos === 0) throw new Error('reveal tx cannot be the coinbase');
-  const { root: witnessRoot } = verifyMerkleBranch(
-    reveal.wtxidLE,
-    wtxidBranch,
-    bundle.reveal.pos,
-    bundle.block.txCount,
-  );
-  const expectedCommitment = computeWitnessCommitment(witnessRoot, reserved);
-  if (!bytesEqual(expectedCommitment, commitment)) {
-    throw new Error('witness commitment mismatch: reveal witness is not the one committed in this block');
-  }
+  // coinbase inclusion + witness commitment, shared with custody/genealogy
+  verifyWitnessAnchoring({
+    witness: bundle.witness,
+    header,
+    txCount: bundle.block.txCount,
+    reveal,
+    pos: bundle.reveal.pos,
+  });
 
   return {
     level: 'L3',

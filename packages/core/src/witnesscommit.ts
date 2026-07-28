@@ -1,7 +1,8 @@
-import { bytesEqual, concatBytes } from './bytes.js';
+import { bytesEqual, concatBytes, displayToInternal, hexToBytes } from './bytes.js';
 import { sha256d } from './hash.js';
-import { computeMerkleRoot } from './merkle.js';
-import { isCoinbase, type ParsedTx } from './tx.js';
+import { computeMerkleRoot, treeHeight, verifyMerkleBranch } from './merkle.js';
+import { isCoinbase, parseTx, type ParsedTx } from './tx.js';
+import type { BlockHeader } from './header.js';
 
 /**
  * BIP-141 witness commitment: a coinbase output whose scriptPubKey begins
@@ -66,5 +67,79 @@ export function verifyWitnessCommitment(coinbase: ParsedTx, witnessRoot: Uint8Ar
   const expected = computeWitnessCommitment(witnessRoot, reserved);
   if (!bytesEqual(commitment, expected)) {
     throw new Error('witness commitment mismatch');
+  }
+}
+
+/**
+ * The reveal-anchoring witness section shared by proof bundles (L3) and, at
+ * the reveal hop, custody and genealogy bundles.
+ */
+export interface WitnessSectionJson {
+  coinbaseHex: string;
+  /** coinbase txid-tree branch (position 0), display-order hex */
+  coinbaseTxidBranch: string[];
+  /** wtxid-tree branch for the reveal at its position, display-order hex */
+  wtxidBranch: string[];
+}
+
+/**
+ * Anchor a reveal's whole witness into the block's BIP-141 witness
+ * commitment. The header is the caller's already-anchored header for the
+ * block the reveal is proven into, and the reveal MUST already be
+ * txid-proven into it at `pos`. On success, the reveal's exact serialization
+ * including every input's witness is the one committed in the block, which
+ * pins envelope bytes, per-input envelope counts, and therefore envelope
+ * numbering all at once.
+ *
+ * These are the L3 checks verifyProofBundle has always run, in the same
+ * order with the same error messages; this is their shared home so custody
+ * and genealogy verification run the same consensus logic.
+ */
+export function verifyWitnessAnchoring(args: {
+  witness: WitnessSectionJson;
+  header: BlockHeader;
+  txCount: number;
+  reveal: ParsedTx;
+  pos: number;
+}): void {
+  const { witness, header, txCount, reveal, pos } = args;
+  const expectedHeight = treeHeight(txCount);
+
+  // ---- coinbase inclusion (txid tree, position 0) ----
+  let coinbase: ParsedTx;
+  try {
+    coinbase = parseTx(hexToBytes(witness.coinbaseHex.trim()));
+  } catch (e) {
+    throw new Error(`coinbase: cannot parse transaction: ${(e as Error).message}`);
+  }
+  if (coinbase.strippedRaw.length === 64) {
+    throw new Error('coinbase: 64-byte transactions are rejected (leaf/node ambiguity)');
+  }
+  if (!isCoinbase(coinbase)) throw new Error('claimed coinbase is not a coinbase transaction');
+  const cbBranch = witness.coinbaseTxidBranch.map(displayToInternal);
+  if (cbBranch.length !== expectedHeight) {
+    throw new Error(`coinbase branch depth ${cbBranch.length} != tree height ${expectedHeight}`);
+  }
+  const { root: cbRoot } = verifyMerkleBranch(coinbase.txidLE, cbBranch, 0, txCount);
+  if (!bytesEqual(cbRoot, header.merkleRootLE)) {
+    throw new Error('coinbase txid merkle proof does not match header merkle root');
+  }
+
+  // ---- witness commitment ----
+  const commitment = findWitnessCommitment(coinbase);
+  if (!commitment) throw new Error('coinbase has no BIP-141 witness commitment output');
+  const reserved = witnessReservedValue(coinbase);
+  const wtxidBranch = witness.wtxidBranch.map(displayToInternal);
+  if (wtxidBranch.length !== expectedHeight) {
+    throw new Error(`wtxid branch depth ${wtxidBranch.length} != tree height ${expectedHeight}`);
+  }
+  if (pos === 1 && !bytesEqual(wtxidBranch[0], ZERO32)) {
+    throw new Error('wtxid branch sibling at position 1 must be the zeroed coinbase leaf');
+  }
+  if (pos === 0) throw new Error('reveal tx cannot be the coinbase');
+  const { root: witnessRoot } = verifyMerkleBranch(reveal.wtxidLE, wtxidBranch, pos, txCount);
+  const expectedCommitment = computeWitnessCommitment(witnessRoot, reserved);
+  if (!bytesEqual(expectedCommitment, commitment)) {
+    throw new Error('witness commitment mismatch: reveal witness is not the one committed in this block');
   }
 }

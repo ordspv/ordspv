@@ -42,6 +42,7 @@ import {
   parseControlBlock,
   verifyScriptPathCommitment,
 } from './taproot.js';
+import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
 
 /** A location in the sat space of a confirmed transaction's outputs. */
 export interface Satpoint {
@@ -142,6 +143,18 @@ export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: numb
   return values;
 }
 
+/**
+ * How a verifier proved which envelope the inscription id names.
+ *
+ * 'wtxid': the reveal's whole witness is anchored in the block's BIP-141
+ * witness commitment, which pins envelope bytes and numbering outright.
+ * 'single-input': the reveal has one input, and the input count is
+ * txid-committed, so there is nothing to renumber.
+ * 'prefix': every input before the envelope's is bound to its P2TR prevout at
+ * control block depth 0, so each one's envelope count is proven.
+ */
+export type IndexProof = 'wtxid' | 'single-input' | 'prefix';
+
 /** What the envelope binding established about the reveal's taptree. */
 export interface EnvelopeBinding {
   /** control block merkle path depth; 0 means the taptree provably has a single leaf */
@@ -170,14 +183,20 @@ export interface EnvelopeBinding {
  * Binding the selected envelope alone is not enough. Its index is a running
  * count over the envelopes found in every input before it, in input order, so
  * rewriting an EARLIER input's witness renumbers the envelopes without
- * touching the txid or the selected input. Every input up to and including
- * the envelope's input k is therefore held to the same standard: a
- * script-path spend of a P2TR prevout whose tapscript verifies. Prefix inputs
- * must additionally bind at control block depth 0, because a deeper taptree
- * would let its author present a different committed leaf with a different
- * envelope count. A prefix input that cannot meet this may still be honest,
- * so it refuses with EnvelopeIndexUnprovenError rather than a plain Error.
- * Inputs after k receive higher numbers and cannot renumber the selection.
+ * touching the txid or the selected input. When `bindPrefix` is true, every
+ * input up to and including the envelope's input k is therefore held to the
+ * same standard: a script-path spend of a P2TR prevout whose tapscript
+ * verifies. Prefix inputs must additionally bind at control block depth 0,
+ * because a deeper taptree would let its author present a different committed
+ * leaf with a different envelope count. A prefix input that cannot meet this
+ * may still be honest, so it refuses with EnvelopeIndexUnprovenError rather
+ * than a plain Error. Inputs after k receive higher numbers and cannot
+ * renumber the selection.
+ *
+ * Callers pass `bindPrefix: false` when the index is proven some other way:
+ * a wtxid-anchored reveal has every input's witness pinned by the block's
+ * witness commitment, and a single-input reveal has no prefix at all. The
+ * envelope input's own binding runs in every case.
  *
  * The residual at input k is the L2 residual: a multi-leaf taptree lets a
  * witness present any leaf its author committed, so this proves the commit
@@ -189,13 +208,14 @@ export function verifyEnvelopeBinding(
   inscription: Inscription,
   prevTxsHex: string[],
   label = 'reveal',
+  bindPrefix = true,
 ): EnvelopeBinding {
   const k = inscription.input;
   if (!reveal.inputs[k]) {
     throw new Error(`${label}: envelope input ${k} out of range`);
   }
   let binding: EnvelopeBinding | undefined;
-  for (let i = 0; i <= k; i++) {
+  for (let i = bindPrefix ? 0 : k; i <= k; i++) {
     const input = reveal.inputs[i];
     const role = i === k ? `envelope input ${i}` : `input ${i}`;
     const prevHex = prevTxsHex[i];
@@ -410,6 +430,13 @@ export interface CustodyHopJson {
    * (later hops); later entries may be omitted or empty.
    */
   prevTxs: string[];
+  /**
+   * Reveal hop only: anchors the reveal's whole witness into the block's
+   * BIP-141 witness commitment, proving envelope bytes and numbering
+   * outright (indexProof 'wtxid'). Verifiers refuse the section on any
+   * other hop; later hops read nothing from witnesses.
+   */
+  witness?: WitnessSectionJson;
 }
 
 export interface CustodyBundleJson {
@@ -442,6 +469,8 @@ export interface VerifiedCustody {
   singleLeafTree: boolean;
   /** reveal tx has one input, pinning envelope indices given the shown script */
   singleInputReveal: boolean;
+  /** how the envelope's index was proven */
+  indexProof: IndexProof;
 }
 
 function parseHopTx(hex: string, label: string): ParsedTx {
@@ -505,6 +534,24 @@ export function verifyCustodyBundle(
   }
   verifyAnchoredHop(revealHop, reveal, 'hop 0 (reveal)', opts);
 
+  // how the envelope's index is proven, strongest first: a witness section
+  // pins every input's witness through the block's BIP-141 commitment; a
+  // single-input reveal has nothing to renumber; otherwise every prefix
+  // input must bind, and may fail to (EnvelopeIndexUnprovenError)
+  let indexProof: IndexProof;
+  if (revealHop.witness) {
+    verifyWitnessAnchoring({
+      witness: revealHop.witness,
+      header: parseHeader(hexToBytes(revealHop.block.header)),
+      txCount: revealHop.block.txCount,
+      reveal,
+      pos: revealHop.tx.pos,
+    });
+    indexProof = 'wtxid';
+  } else {
+    indexProof = reveal.inputs.length === 1 ? 'single-input' : 'prefix';
+  }
+
   const allInscriptions = inscriptionsFromTx(reveal);
   const inscription: Inscription | undefined = allInscriptions.find((i) => i.index === id.index);
   if (!inscription) {
@@ -512,7 +559,13 @@ export function verifyCustodyBundle(
   }
   // the txid anchor above does not cover the witness the envelope came out of;
   // bind it before the pointer or the envelope input index is used for anything
-  const binding = verifyEnvelopeBinding(reveal, inscription, revealHop.prevTxs, 'hop 0 (reveal)');
+  const binding = verifyEnvelopeBinding(
+    reveal,
+    inscription,
+    revealHop.prevTxs,
+    'hop 0 (reveal)',
+    indexProof === 'prefix',
+  );
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, inscription.input);
   const genesis = genesisSatpoint(reveal, inscription, revealValues, revealHop.block.height);
 
@@ -526,6 +579,9 @@ export function verifyCustodyBundle(
   for (let h = 1; h < bundle.hops.length; h++) {
     const hop = bundle.hops[h];
     const label = `hop ${h}`;
+    if (hop.witness) {
+      throw new Error(`${label}: witness section is only accepted at the reveal`);
+    }
     const tx = parseHopTx(hop.tx.hex, label);
     if (seenTxids.has(tx.txid)) throw new Error(`${label}: duplicate transaction ${tx.txid}`);
     seenTxids.add(tx.txid);
@@ -583,5 +639,6 @@ export function verifyCustodyBundle(
     controlBlockDepth: binding.controlBlockDepth,
     singleLeafTree: binding.singleLeafTree,
     singleInputReveal: binding.singleInputReveal,
+    indexProof,
   };
 }

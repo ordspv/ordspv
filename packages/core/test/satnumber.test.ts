@@ -27,7 +27,7 @@ import {
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { envelopeScript, revealTx, script, taprootCommit } from './helpers.js';
+import { buildBlock, envelopeScript, revealTx, script, taprootCommit, type TestBlock } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // local raw-tx builders (values and scripts are all the arithmetic needs)
@@ -407,6 +407,7 @@ describe('verifySatGenealogy', () => {
     expect(res.controlBlockDepth).toBe(0);
     expect(res.singleLeafTree).toBe(true);
     expect(res.singleInputReveal).toBe(true);
+    expect(res.indexProof).toBe('single-input');
   });
 
   it('rejects a rewritten envelope witness that keeps the txid', () => {
@@ -553,6 +554,7 @@ describe('envelope index binding (prefix inputs)', () => {
     expect(res1.controlBlockDepth).toBe(0);
     expect(res1.singleLeafTree).toBe(true);
     expect(res1.singleInputReveal).toBe(false);
+    expect(res1.indexProof).toBe('prefix');
 
     // forged: envelope A's witness replaced by a key-path spend, so B would
     // renumber from 1 to 0 and <txid>i0 would fold to B's sat
@@ -608,5 +610,135 @@ describe('envelope index binding (prefix inputs)', () => {
     const bundle = genealogy(reveal, commit, 0, firstSatOfBlock(1000) + 10_000n);
     expect(() => verifySatGenealogy(bundle)).toThrow(EnvelopeIndexUnprovenError);
     expect(() => verifySatGenealogy(bundle)).toThrow(/merkle depth 1/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wtxid anchoring: the witness commitment pins numbering on multi-input reveals
+// ---------------------------------------------------------------------------
+
+describe('wtxid-anchored reveals (genealogy)', () => {
+  const SIG = new Uint8Array(64).fill(7);
+  const envA = envelopeScript({ fields: [[1, 'text/plain']], body: ['A'] }, { checksigPrefix: true });
+  const envB = envelopeScript({ fields: [[1, 'text/plain']], body: ['B'] }, { checksigPrefix: true });
+  const tapA = taprootCommit(envA);
+  const tapB = taprootCommit(envB);
+
+  const cb = buildCoinbase([{ value: 3_000_000_000n }]);
+  // batch reveal, both envelopes committed by their own prevouts
+  const commit = buildTx(
+    [{ txid: cb.tx.txid, vout: 0 }],
+    [
+      { value: 10_000n, spk: tapA.scriptPubKey },
+      { value: 20_000n, spk: tapB.scriptPubKey },
+    ],
+  );
+  const reveal = buildSegwitTx(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
+      { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+    ],
+    [{ value: 25_000n }],
+  );
+  const block = buildBlock([reveal.tx]);
+
+  // the pointer-bundle shape: key-path funding input ahead of the envelope
+  const commitKey = buildTx(
+    [{ txid: cb.tx.txid, vout: 0 }],
+    [
+      { value: 10_000n },
+      { value: 20_000n, spk: tapB.scriptPubKey },
+    ],
+  );
+  const revealKey = buildSegwitTx(
+    [
+      { txid: commitKey.tx.txid, vout: 0, witness: [SIG] },
+      { txid: commitKey.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+    ],
+    [{ value: 25_000n }],
+  );
+  const blockKey = buildBlock([revealKey.tx]);
+
+  function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
+    return parseTx(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, i) => (witnesses[i] ? { ...inp, witness: witnesses[i]! } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  function wtxidGenealogy(
+    blk: TestBlock,
+    revealHex: string,
+    commitHex: string,
+    index: number,
+    claimedSat: bigint,
+  ): SatGenealogyBundleJson {
+    return {
+      version: 1,
+      inscriptionId: `${blk.txs[1].txid}i${index}`,
+      reveal: {
+        block: { height: 2000, hash: blk.blockHash, header: blk.headerHex, txCount: blk.txCount },
+        tx: { hex: revealHex, pos: 1, txidBranch: blk.txidBranch(1) },
+        prevTxs: [commitHex, commitHex],
+        witness: {
+          coinbaseHex: bytesToHex(blk.txs[0].raw),
+          coinbaseTxidBranch: blk.txidBranch(0),
+          wtxidBranch: blk.wtxidBranch(1),
+        },
+      },
+      funding: [{ tx: { hex: commitHex }, prevTxs: [cb.hex] }],
+      coinbase: anchoredHop(cb.tx.txidLE, cb.hex, 1000, []),
+      claimedSat: claimedSat.toString(),
+    };
+  }
+
+  it('verifies an honest witness-anchored multi-input bundle, same sat as the prefix rule', () => {
+    const withSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+    const res = verifySatGenealogy(withSection);
+    expect(res.indexProof).toBe('wtxid');
+    expect(res.revealPosition).toBe(10_000n);
+    expect(res.sat).toBe(firstSatOfBlock(1000) + 10_000n);
+    expect(res.singleInputReveal).toBe(false);
+
+    const noSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+    delete noSection.reveal.witness;
+    const prefixRes = verifySatGenealogy(noSection);
+    expect(prefixRes.indexProof).toBe('prefix');
+    expect(prefixRes.sat).toBe(res.sat);
+  });
+
+  it('proves the index of a reveal whose prefix input is a key-path spend', () => {
+    const noSection = wtxidGenealogy(blockKey, bytesToHex(revealKey.tx.raw), commitKey.hex, 0, firstSatOfBlock(1000) + 10_000n);
+    delete noSection.reveal.witness;
+    expect(() => verifySatGenealogy(noSection)).toThrow(EnvelopeIndexUnprovenError);
+
+    const withSection = wtxidGenealogy(blockKey, bytesToHex(revealKey.tx.raw), commitKey.hex, 0, firstSatOfBlock(1000) + 10_000n);
+    const res = verifySatGenealogy(withSection);
+    expect(res.indexProof).toBe('wtxid');
+    expect(res.sat).toBe(firstSatOfBlock(1000) + 10_000n);
+  });
+
+  it('rejects all three witness rewrites against the block commitment', () => {
+    const rewrites: (Uint8Array[] | undefined)[][] = [
+      [[SIG], [SIG, envA, tapA.controlBlock]], // move A onto input 1
+      [[SIG], undefined], // delete A, renumbering B
+      [[SIG, envB, taprootCommit(envA).controlBlock], undefined], // insert junk on input 0
+    ];
+    for (const witnesses of rewrites) {
+      const forged = withWitnesses(reveal.tx, witnesses);
+      expect(forged.txid).toBe(reveal.tx.txid);
+      const b = wtxidGenealogy(block, bytesToHex(forged.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+      expect(() => verifySatGenealogy(b)).toThrow(/witness commitment mismatch/);
+    }
+  });
+
+  it('refuses a witness section on the terminal coinbase hop', () => {
+    const b = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+    b.coinbase.witness = { coinbaseHex: '00', coinbaseTxidBranch: [], wtxidBranch: [] };
+    expect(() => verifySatGenealogy(b)).toThrow(/witness section is only accepted at the reveal/);
   });
 });

@@ -10,9 +10,14 @@ import {
   transferSatpoint,
   provenInputValues,
   verifyCustodyBundle,
+  verifyWitnessAnchoring,
   serializeFull,
+  parseHeader,
+  buildMerkleBranch,
+  computeMerkleRoot,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  ZERO32,
   type CustodyBundleJson,
   type Inscription,
   type ParsedTx,
@@ -22,7 +27,7 @@ import {
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { envelopeScript, script, taprootCommit } from './helpers.js';
+import { buildBlock, envelopeScript, script, taprootCommit, type TestBlock } from './helpers.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
 const revealHex = readFileSync(join(FIXTURES, 'reveal.hex'), 'utf8').trim();
@@ -561,77 +566,81 @@ describe('verifyCustodyBundle', () => {
 });
 
 // ---------------------------------------------------------------------------
+// shared fixtures for envelope index binding and wtxid anchoring
+// ---------------------------------------------------------------------------
+
+const SIG = new Uint8Array(64).fill(7);
+const envA = envelopeScript({ fields: [[1, 'text/plain']], body: ['A'] }, { checksigPrefix: true });
+const envB = envelopeScript({ fields: [[1, 'text/plain']], body: ['B'] }, { checksigPrefix: true });
+const tapA = taprootCommit(envA);
+const tapB = taprootCommit(envB);
+// a committed tapscript with no envelope in it, for honest non-envelope inputs
+const plainScript = script(sha256(new TextEncoder().encode('key')), 0xac);
+const tapPlain = taprootCommit(plainScript);
+
+/** legacy funding tx whose outputs carry chosen scriptPubKeys */
+function fundingTx(
+  inputs: { txid: string; vout: number }[],
+  outputs: { value: bigint; spk?: Uint8Array }[],
+): { hex: string; tx: ParsedTx } {
+  const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
+  for (const inp of inputs) {
+    parts.push(
+      hexToBytes(inp.txid).reverse(),
+      u32le(inp.vout),
+      varint(1),
+      new Uint8Array([0x51]),
+      u32le(0xffffffff),
+    );
+  }
+  parts.push(varint(outputs.length));
+  for (const o of outputs) {
+    const spk = o.spk ?? new Uint8Array([0x51]);
+    parts.push(u64le(o.value), varint(spk.length), spk);
+  }
+  parts.push(u32le(0));
+  const raw = cat(...parts);
+  return { hex: bytesToHex(raw), tx: parseTx(raw) };
+}
+
+/** segwit reveal with one witness stack per input */
+function segwitReveal(
+  inputs: { txid: string; vout: number; witness: Uint8Array[] }[],
+  outputs: bigint[],
+): { hex: string; tx: ParsedTx } {
+  const raw = serializeFull({
+    version: 2,
+    inputs: inputs.map((i) => ({
+      prevTxidLE: hexToBytes(i.txid).reverse(),
+      prevTxid: i.txid,
+      vout: i.vout,
+      scriptSig: new Uint8Array(0),
+      sequence: 0xfffffffd,
+      witness: i.witness,
+    })),
+    outputs: outputs.map((value) => ({ value, scriptPubKey: new Uint8Array([0x51]) })),
+    locktime: 0,
+  });
+  return { hex: bytesToHex(raw), tx: parseTx(raw) };
+}
+
+/** re-serialize with some witnesses replaced; the txid cannot change */
+function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
+  return parseTx(
+    serializeFull({
+      version: tx.version,
+      inputs: tx.inputs.map((inp, i) => (witnesses[i] ? { ...inp, witness: witnesses[i]! } : inp)),
+      outputs: tx.outputs,
+      locktime: tx.locktime,
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // envelope index binding: every input before the envelope's is bound too
 // ---------------------------------------------------------------------------
 
 describe('envelope index binding (prefix inputs)', () => {
-  const SIG = new Uint8Array(64).fill(7);
-  const envA = envelopeScript({ fields: [[1, 'text/plain']], body: ['A'] }, { checksigPrefix: true });
-  const envB = envelopeScript({ fields: [[1, 'text/plain']], body: ['B'] }, { checksigPrefix: true });
-  const tapA = taprootCommit(envA);
-  const tapB = taprootCommit(envB);
-  // a committed tapscript with no envelope in it, for honest non-envelope inputs
-  const plainScript = script(sha256(new TextEncoder().encode('key')), 0xac);
-  const tapPlain = taprootCommit(plainScript);
-
-  /** legacy funding tx whose outputs carry chosen scriptPubKeys */
-  function fundingTx(
-    inputs: { txid: string; vout: number }[],
-    outputs: { value: bigint; spk?: Uint8Array }[],
-  ): { hex: string; tx: ParsedTx } {
-    const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
-    for (const inp of inputs) {
-      parts.push(
-        hexToBytes(inp.txid).reverse(),
-        u32le(inp.vout),
-        varint(1),
-        new Uint8Array([0x51]),
-        u32le(0xffffffff),
-      );
-    }
-    parts.push(varint(outputs.length));
-    for (const o of outputs) {
-      const spk = o.spk ?? new Uint8Array([0x51]);
-      parts.push(u64le(o.value), varint(spk.length), spk);
-    }
-    parts.push(u32le(0));
-    const raw = cat(...parts);
-    return { hex: bytesToHex(raw), tx: parseTx(raw) };
-  }
-
-  /** segwit reveal with one witness stack per input */
-  function segwitReveal(
-    inputs: { txid: string; vout: number; witness: Uint8Array[] }[],
-    outputs: bigint[],
-  ): { hex: string; tx: ParsedTx } {
-    const raw = serializeFull({
-      version: 2,
-      inputs: inputs.map((i) => ({
-        prevTxidLE: hexToBytes(i.txid).reverse(),
-        prevTxid: i.txid,
-        vout: i.vout,
-        scriptSig: new Uint8Array(0),
-        sequence: 0xfffffffd,
-        witness: i.witness,
-      })),
-      outputs: outputs.map((value) => ({ value, scriptPubKey: new Uint8Array([0x51]) })),
-      locktime: 0,
-    });
-    return { hex: bytesToHex(raw), tx: parseTx(raw) };
-  }
-
-  /** re-serialize with some witnesses replaced; the txid cannot change */
-  function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
-    return parseTx(
-      serializeFull({
-        version: tx.version,
-        inputs: tx.inputs.map((inp, i) => (witnesses[i] ? { ...inp, witness: witnesses[i]! } : inp)),
-        outputs: tx.outputs,
-        locktime: tx.locktime,
-      }),
-    );
-  }
-
   function oneHopBundle(
     reveal: ParsedTx,
     hex: string,
@@ -837,5 +846,235 @@ describe('envelope index binding (prefix inputs)', () => {
     expect(res.genesis.offset).toBe(0n);
     expect(res.singleLeafTree).toBe(true);
     expect(res.singleInputReveal).toBe(true);
+    expect(res.indexProof).toBe('single-input');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wtxid anchoring: the witness commitment pins numbering on multi-input reveals
+// ---------------------------------------------------------------------------
+
+describe('wtxid-anchored reveals (custody)', () => {
+  // batch reveal: envelope A on input 0, envelope B on input 1, each
+  // committed by its own prevout
+  const commit = fundingTx(
+    [{ txid: T0, vout: 3 }],
+    [
+      { value: 10_000n, spk: tapA.scriptPubKey },
+      { value: 20_000n, spk: tapB.scriptPubKey },
+    ],
+  );
+  const reveal = segwitReveal(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
+      { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+    ],
+    [25_000n],
+  );
+  const block = buildBlock([reveal.tx]);
+
+  // the pointer-bundle shape: key-path funding input ahead of the envelope
+  const commitKey = fundingTx(
+    [{ txid: T1, vout: 3 }],
+    [
+      { value: 10_000n },
+      { value: 20_000n, spk: tapB.scriptPubKey },
+    ],
+  );
+  const revealKey = segwitReveal(
+    [
+      { txid: commitKey.tx.txid, vout: 0, witness: [SIG] },
+      { txid: commitKey.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+    ],
+    [25_000n],
+  );
+  const blockKey = buildBlock([revealKey.tx]);
+
+  function wtxidBundle(
+    blk: TestBlock,
+    revealHex: string,
+    index: number,
+    prevTxs: string[],
+    finalSatpoint: string,
+  ): CustodyBundleJson {
+    const revealPos = 1;
+    return {
+      version: 1,
+      inscriptionId: `${blk.txs[revealPos].txid}i${index}`,
+      hops: [
+        {
+          block: { height: 800_000, hash: blk.blockHash, header: blk.headerHex, txCount: blk.txCount },
+          tx: { hex: revealHex, pos: revealPos, txidBranch: blk.txidBranch(revealPos) },
+          prevTxs,
+          witness: {
+            coinbaseHex: bytesToHex(blk.txs[0].raw),
+            coinbaseTxidBranch: blk.txidBranch(0),
+            wtxidBranch: blk.wtxidBranch(revealPos),
+          },
+        },
+      ],
+      finalSatpoint,
+    };
+  }
+
+  it('verifies an honest witness-anchored multi-input bundle, same sat as the prefix rule', () => {
+    const withSection = wtxidBundle(
+      block,
+      reveal.hex,
+      1,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    const res = verifyCustodyBundle(withSection);
+    expect(res.indexProof).toBe('wtxid');
+    expect(res.genesis.offset).toBe(10_000n);
+    expect(res.controlBlockDepth).toBe(0);
+    expect(res.singleLeafTree).toBe(true);
+    expect(res.singleInputReveal).toBe(false);
+
+    // the same fixture verified under the prefix rule folds to the same sat
+    const noSection = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+    delete noSection.hops[0].witness;
+    const prefixRes = verifyCustodyBundle(noSection);
+    expect(prefixRes.indexProof).toBe('prefix');
+    expect(prefixRes.genesis).toEqual(res.genesis);
+  });
+
+  it('proves the index of a reveal whose prefix input is a key-path spend', () => {
+    // without a witness section this reveal is refused as unprovable; the
+    // wtxid anchoring is exactly what closes it
+    const noSection = wtxidBundle(
+      blockKey,
+      revealKey.hex,
+      0,
+      [commitKey.hex, commitKey.hex],
+      `${revealKey.tx.txid}:0:10000`,
+    );
+    delete noSection.hops[0].witness;
+    expect(() => verifyCustodyBundle(noSection)).toThrow(EnvelopeIndexUnprovenError);
+
+    const withSection = wtxidBundle(
+      blockKey,
+      revealKey.hex,
+      0,
+      [commitKey.hex, commitKey.hex],
+      `${revealKey.tx.txid}:0:10000`,
+    );
+    const res = verifyCustodyBundle(withSection);
+    expect(res.indexProof).toBe('wtxid');
+    expect(res.genesis.offset).toBe(10_000n);
+  });
+
+  it('rejects all three witness rewrites against the block commitment', () => {
+    // moving the envelope, deleting a prefix envelope, and inserting one all
+    // change some input's witness, so the committed wtxid no longer matches
+    const rewrites: (Uint8Array[] | undefined)[][] = [
+      [[SIG], [SIG, envA, tapA.controlBlock]], // move A onto input 1
+      [[SIG], undefined], // delete A, renumbering B
+      [[SIG, plainScript, tapPlain.controlBlock], undefined], // insert junk on input 0
+    ];
+    for (const witnesses of rewrites) {
+      const forged = withWitnesses(reveal.tx, witnesses);
+      expect(forged.txid).toBe(reveal.tx.txid);
+      const b = wtxidBundle(
+        block,
+        bytesToHex(forged.raw),
+        1,
+        [commit.hex, commit.hex],
+        `${reveal.tx.txid}:0:10000`,
+      );
+      expect(() => verifyCustodyBundle(b)).toThrow(/witness commitment mismatch/);
+    }
+  });
+
+  it('rejects forged witness sections with the shared function messages', () => {
+    const base = () =>
+      wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+
+    const notCoinbase = base();
+    notCoinbase.hops[0].witness!.coinbaseHex = reveal.hex;
+    expect(() => verifyCustodyBundle(notCoinbase)).toThrow(/not a coinbase transaction/);
+
+    const badCbDepth = base();
+    badCbDepth.hops[0].witness!.coinbaseTxidBranch = [
+      ...badCbDepth.hops[0].witness!.coinbaseTxidBranch,
+      '11'.repeat(32),
+    ];
+    expect(() => verifyCustodyBundle(badCbDepth)).toThrow(/coinbase branch depth/);
+
+    const badWtxidDepth = base();
+    badWtxidDepth.hops[0].witness!.wtxidBranch = [
+      ...badWtxidDepth.hops[0].witness!.wtxidBranch,
+      '11'.repeat(32),
+    ];
+    expect(() => verifyCustodyBundle(badWtxidDepth)).toThrow(/wtxid branch depth/);
+
+    // tampering the reserved value leaves the coinbase's txid intact but
+    // changes the commitment preimage
+    const cb = block.txs[0];
+    const tampered = parseTx(
+      serializeFull({
+        version: cb.version,
+        inputs: [{ ...cb.inputs[0], witness: [sha256(new Uint8Array([9]))] }],
+        outputs: cb.outputs,
+        locktime: cb.locktime,
+      }),
+    );
+    expect(tampered.txid).toBe(cb.txid);
+    const badReserved = base();
+    badReserved.hops[0].witness!.coinbaseHex = bytesToHex(tampered.raw);
+    expect(() => verifyCustodyBundle(badReserved)).toThrow(/witness commitment mismatch/);
+  });
+
+  it('rejects a coinbase with no commitment output through the shared function', () => {
+    // a block whose coinbase carries no witness commitment cannot anchor any
+    // witness; built by hand because the block helper always commits
+    const bare = parseTx(
+      serializeFull({
+        version: 1,
+        inputs: [
+          {
+            prevTxidLE: new Uint8Array(32),
+            prevTxid: '0'.repeat(64),
+            vout: 0xffffffff,
+            scriptSig: new Uint8Array([0x03, 0x01, 0x02, 0x03]),
+            sequence: 0xffffffff,
+            witness: [sha256(new TextEncoder().encode('reserved'))],
+          },
+        ],
+        outputs: [{ value: 312_500_000n, scriptPubKey: new Uint8Array([0x51]) }],
+        locktime: 0,
+      }),
+    );
+    const txids = [bare.txidLE, reveal.tx.txidLE];
+    const headerRaw = new Uint8Array(80);
+    headerRaw.set(computeMerkleRoot(txids), 36);
+    expect(() =>
+      verifyWitnessAnchoring({
+        witness: {
+          coinbaseHex: bytesToHex(bare.raw),
+          coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
+          wtxidBranch: buildMerkleBranch([ZERO32, reveal.tx.wtxidLE], 1).map(internalToDisplay),
+        },
+        header: parseHeader(headerRaw),
+        txCount: 2,
+        reveal: reveal.tx,
+        pos: 1,
+      }),
+    ).toThrow(/no BIP-141 witness commitment output/);
+  });
+
+  it('refuses a witness section on a later custody hop', () => {
+    const b = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+    const spend = fundingTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    b.hops.push({
+      block: { height: 800_010, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+      prevTxs: [reveal.hex],
+      witness: { coinbaseHex: '00', coinbaseTxidBranch: [], wtxidBranch: [] },
+    });
+    b.finalSatpoint = `${spend.tx.txid}:0:10000`;
+    expect(() => verifyCustodyBundle(b)).toThrow(/witness section is only accepted at the reveal/);
   });
 });

@@ -23,6 +23,8 @@ import { ParsedTx, parseTx } from './tx.js';
 import { inscriptionsFromTx } from './envelope.js';
 import { parseInscriptionId } from './inscriptionId.js';
 import { hexToBytes } from './bytes.js';
+import { parseHeader } from './header.js';
+import { verifyWitnessAnchoring } from './witnesscommit.js';
 import {
   CustodyUnsupportedError,
   isCoinbaseTx,
@@ -31,6 +33,7 @@ import {
   verifyEnvelopeBinding,
   type CustodyHopJson,
   type CustodyVerifyOptions,
+  type IndexProof,
   type Satpoint,
 } from './custody.js';
 
@@ -231,6 +234,8 @@ export interface VerifiedSatIdentity {
   singleLeafTree: boolean;
   /** reveal tx has one input, pinning envelope indices given the shown script */
   singleInputReveal: boolean;
+  /** how the envelope's index was proven */
+  indexProof: IndexProof;
 }
 
 export interface GenealogyVerifyOptions extends CustodyVerifyOptions {
@@ -275,6 +280,25 @@ export function verifySatGenealogy(
     throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
   }
   verifyAnchoredHop(bundle.reveal, reveal, 'reveal', opts);
+
+  // how the envelope's index is proven, strongest first: a witness section
+  // pins every input's witness through the block's BIP-141 commitment; a
+  // single-input reveal has nothing to renumber; otherwise every prefix
+  // input must bind, and may fail to (EnvelopeIndexUnprovenError)
+  let indexProof: IndexProof;
+  if (bundle.reveal.witness) {
+    verifyWitnessAnchoring({
+      witness: bundle.reveal.witness,
+      header: parseHeader(hexToBytes(bundle.reveal.block.header)),
+      txCount: bundle.reveal.block.txCount,
+      reveal,
+      pos: bundle.reveal.tx.pos,
+    });
+    indexProof = 'wtxid';
+  } else {
+    indexProof = reveal.inputs.length === 1 ? 'single-input' : 'prefix';
+  }
+
   const allInscriptions = inscriptionsFromTx(reveal);
   const inscription = allInscriptions.find((i) => i.index === id.index);
   if (!inscription) {
@@ -284,7 +308,13 @@ export function verifySatGenealogy(
   // the reveal is anchored by txid, which does not cover the witness carrying
   // this envelope; bind it to the commit output before its pointer or its
   // input index is used to derive a position
-  const binding = verifyEnvelopeBinding(reveal, inscription, bundle.reveal.prevTxs);
+  const binding = verifyEnvelopeBinding(
+    reveal,
+    inscription,
+    bundle.reveal.prevTxs,
+    'reveal',
+    indexProof === 'prefix',
+  );
   // prevTxs must cover at least inputs 0..k so the envelope input's value is
   // proven; a pointer can push the start position into a LATER input, so any
   // additional prev txs the bundle supplies are used too
@@ -350,6 +380,9 @@ export function verifySatGenealogy(
   }
 
   // ---- terminal coinbase ----
+  if (bundle.coinbase.witness) {
+    throw new Error('coinbase: witness section is only accepted at the reveal');
+  }
   const coinbase = parseHexTxChecked(bundle.coinbase.tx.hex, 'coinbase');
   if (coinbase.txid !== expectTxid) {
     throw new Error(`coinbase hashes to ${coinbase.txid}, chain expects ${expectTxid}`);
@@ -389,5 +422,6 @@ export function verifySatGenealogy(
     controlBlockDepth: binding.controlBlockDepth,
     singleLeafTree: binding.singleLeafTree,
     singleInputReveal: binding.singleInputReveal,
+    indexProof,
   };
 }

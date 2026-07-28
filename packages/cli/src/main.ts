@@ -53,11 +53,18 @@ function envelopeNote(r: {
   controlBlockDepth: number;
   singleLeafTree: boolean;
   singleInputReveal: boolean;
+  indexProof: 'wtxid' | 'single-input' | 'prefix';
 }): string {
   const tree = r.singleLeafTree
     ? 'bound to the commit output, single-leaf taptree'
     : `bound to the commit output, taptree depth ${r.controlBlockDepth} (the author committed other leaves)`;
-  return `${tree}, ${r.singleInputReveal ? 'single-input reveal' : 'multi-input reveal'}`;
+  const index =
+    r.indexProof === 'wtxid'
+      ? 'index proven by the block witness commitment'
+      : r.indexProof === 'single-input'
+        ? 'index pinned by the single input'
+        : 'index proven by prefix binding';
+  return `${tree}, ${r.singleInputReveal ? 'single-input reveal' : 'multi-input reveal'}, ${index}`;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -164,6 +171,7 @@ async function main(): Promise<void> {
               controlBlockDepth: res.custody.controlBlockDepth,
               singleLeafTree: res.custody.singleLeafTree,
               singleInputReveal: res.custody.singleInputReveal,
+              indexProof: res.custody.indexProof,
               tip: res.tip,
               pendingSpendTxid: res.pendingSpendTxid,
             },
@@ -219,6 +227,7 @@ async function main(): Promise<void> {
               controlBlockDepth: identity.controlBlockDepth,
               singleLeafTree: identity.singleLeafTree,
               singleInputReveal: identity.singleInputReveal,
+              indexProof: identity.indexProof,
               headerTrust: res.headerTrust,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
@@ -269,6 +278,7 @@ async function main(): Promise<void> {
               controlBlockDepth: result.controlBlockDepth,
               singleLeafTree: result.singleLeafTree,
               singleInputReveal: result.singleInputReveal,
+              indexProof: result.indexProof,
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
@@ -294,6 +304,7 @@ async function main(): Promise<void> {
               controlBlockDepth: result.controlBlockDepth,
               singleLeafTree: result.singleLeafTree,
               singleInputReveal: result.singleInputReveal,
+              indexProof: result.indexProof,
               note: anchorNote,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
