@@ -750,6 +750,15 @@
     const hashValue = leBytesToBigInt(header.hashLE);
     return hashValue <= target;
   }
+  function checkPowLimit(header, powLimitBits, label = "header") {
+    const limit = powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : powLimitBits;
+    if (limit === null) return;
+    if (bitsToTarget(header.bits) > bitsToTarget(limit)) {
+      throw new Error(
+        `${label}: target (bits 0x${header.bits.toString(16)}) is easier than the proof-of-work limit 0x${limit.toString(16)}; set powLimitBits for non-mainnet chains`
+      );
+    }
+  }
   var MAINNET_CHAIN_PARAMS = {
     retargetInterval: 2016,
     targetTimespan: 14 * 24 * 3600,
@@ -3122,6 +3131,7 @@
     if (header.hash !== bundle.block.hash.toLowerCase()) {
       throw new Error(`header hashes to ${header.hash}, bundle claims ${bundle.block.hash}`);
     }
+    checkPowLimit(header, opts.powLimitBits);
     if (!checkProofOfWork(header)) throw new Error("header fails proof of work");
     if (!Number.isInteger(bundle.block.txCount) || bundle.block.txCount < 1) {
       throw new Error("bundle missing valid txCount");
@@ -3986,7 +3996,7 @@ ${errors.join("\n")}`);
       );
       let verified;
       try {
-        verified = verifyProofBundle(bundle);
+        verified = verifyProofBundle(bundle, { powLimitBits: this.options.powLimitBits });
       } catch (e) {
         throw new OrdResolveError("VERIFY_FAILED", e.message);
       }
