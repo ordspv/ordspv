@@ -2829,8 +2829,27 @@
   function computeWitnessCommitment(witnessRoot, reserved) {
     return sha256d(concatBytes(witnessRoot, reserved));
   }
+  var HEX32 = /^[0-9a-fA-F]{64}$/;
+  function checkWitnessSectionShape(witness) {
+    const w = witness;
+    if (typeof w.coinbaseHex !== "string" || !/^[0-9a-fA-F]+$/.test(w.coinbaseHex.trim())) {
+      throw new Error("witness section: coinbaseHex must be a non-empty hex string");
+    }
+    for (const field of ["coinbaseTxidBranch", "wtxidBranch"]) {
+      const branch = w[field];
+      if (!Array.isArray(branch)) {
+        throw new Error(`witness section: ${field} must be an array of 32-byte hex strings`);
+      }
+      for (let i = 0; i < branch.length; i++) {
+        if (typeof branch[i] !== "string" || !HEX32.test(branch[i])) {
+          throw new Error(`witness section: ${field}[${i}] must be a 32-byte hex string`);
+        }
+      }
+    }
+  }
   function verifyWitnessAnchoring(args) {
     const { witness, header, txCount, reveal, pos } = args;
+    checkWitnessSectionShape(witness);
     const expectedHeight = treeHeight(txCount);
     let coinbase;
     try {
