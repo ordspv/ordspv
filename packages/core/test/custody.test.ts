@@ -12,15 +12,17 @@ import {
   verifyCustodyBundle,
   serializeFull,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   type CustodyBundleJson,
   type Inscription,
   type ParsedTx,
   hexToBytes,
   bytesToHex,
+  sha256,
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { envelopeScript, taprootCommit } from './helpers.js';
+import { envelopeScript, script, taprootCommit } from './helpers.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
 const revealHex = readFileSync(join(FIXTURES, 'reveal.hex'), 'utf8').trim();
@@ -554,5 +556,283 @@ describe('verifyCustodyBundle', () => {
 
     // and the honest bundle it was derived from still verifies
     expect(verifyCustodyBundle(singleHopBundle()).genesis.offset).toBe(0n);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// envelope index binding: every input before the envelope's is bound too
+// ---------------------------------------------------------------------------
+
+describe('envelope index binding (prefix inputs)', () => {
+  const SIG = new Uint8Array(64).fill(7);
+  const envA = envelopeScript({ fields: [[1, 'text/plain']], body: ['A'] }, { checksigPrefix: true });
+  const envB = envelopeScript({ fields: [[1, 'text/plain']], body: ['B'] }, { checksigPrefix: true });
+  const tapA = taprootCommit(envA);
+  const tapB = taprootCommit(envB);
+  // a committed tapscript with no envelope in it, for honest non-envelope inputs
+  const plainScript = script(sha256(new TextEncoder().encode('key')), 0xac);
+  const tapPlain = taprootCommit(plainScript);
+
+  /** legacy funding tx whose outputs carry chosen scriptPubKeys */
+  function fundingTx(
+    inputs: { txid: string; vout: number }[],
+    outputs: { value: bigint; spk?: Uint8Array }[],
+  ): { hex: string; tx: ParsedTx } {
+    const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
+    for (const inp of inputs) {
+      parts.push(
+        hexToBytes(inp.txid).reverse(),
+        u32le(inp.vout),
+        varint(1),
+        new Uint8Array([0x51]),
+        u32le(0xffffffff),
+      );
+    }
+    parts.push(varint(outputs.length));
+    for (const o of outputs) {
+      const spk = o.spk ?? new Uint8Array([0x51]);
+      parts.push(u64le(o.value), varint(spk.length), spk);
+    }
+    parts.push(u32le(0));
+    const raw = cat(...parts);
+    return { hex: bytesToHex(raw), tx: parseTx(raw) };
+  }
+
+  /** segwit reveal with one witness stack per input */
+  function segwitReveal(
+    inputs: { txid: string; vout: number; witness: Uint8Array[] }[],
+    outputs: bigint[],
+  ): { hex: string; tx: ParsedTx } {
+    const raw = serializeFull({
+      version: 2,
+      inputs: inputs.map((i) => ({
+        prevTxidLE: hexToBytes(i.txid).reverse(),
+        prevTxid: i.txid,
+        vout: i.vout,
+        scriptSig: new Uint8Array(0),
+        sequence: 0xfffffffd,
+        witness: i.witness,
+      })),
+      outputs: outputs.map((value) => ({ value, scriptPubKey: new Uint8Array([0x51]) })),
+      locktime: 0,
+    });
+    return { hex: bytesToHex(raw), tx: parseTx(raw) };
+  }
+
+  /** re-serialize with some witnesses replaced; the txid cannot change */
+  function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
+    return parseTx(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, i) => (witnesses[i] ? { ...inp, witness: witnesses[i]! } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  function oneHopBundle(
+    reveal: ParsedTx,
+    hex: string,
+    index: number,
+    prevTxs: string[],
+    finalSatpoint: string,
+  ): CustodyBundleJson {
+    const mined = mineSingleTxBlock(reveal.txidLE, new Uint8Array(32));
+    return {
+      version: 1,
+      inscriptionId: `${reveal.txid}i${index}`,
+      hops: [
+        {
+          block: { height: 800_000, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+          tx: { hex, pos: 0, txidBranch: [] },
+          prevTxs,
+        },
+      ],
+      finalSatpoint,
+    };
+  }
+
+  it('rejects an envelope moved to another input that reuses the commit script', () => {
+    // commit pays the SAME taproot spk twice, so the moved envelope still
+    // matches the commitment of whichever input it lands on
+    const commit = fundingTx(
+      [{ txid: T0, vout: 0 }],
+      [
+        { value: 10_000n, spk: tapA.scriptPubKey },
+        { value: 20_000n, spk: tapA.scriptPubKey },
+      ],
+    );
+    const reveal = segwitReveal(
+      [
+        { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
+        { txid: commit.tx.txid, vout: 1, witness: [SIG] },
+      ],
+      [25_000n],
+    );
+    // honest: the envelope may sit on input 0, because there is no prefix
+    const honest = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:0`,
+    );
+    expect(verifyCustodyBundle(honest).genesis.offset).toBe(0n);
+
+    // forged: same txid, witnesses swapped; the genesis satpoint would move
+    // by input 0's value if the numbering were trusted
+    const moved = withWitnesses(reveal.tx, [[SIG], [SIG, envA, tapA.controlBlock]]);
+    expect(moved.txid).toBe(reveal.tx.txid);
+    const forged = oneHopBundle(
+      moved,
+      bytesToHex(moved.raw),
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(() => verifyCustodyBundle(forged)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(forged)).toThrow(/input 0/);
+  });
+
+  it('rejects a deleted earlier envelope that renumbers the survivor', () => {
+    const commit = fundingTx(
+      [{ txid: T1, vout: 0 }],
+      [
+        { value: 10_000n, spk: tapA.scriptPubKey },
+        { value: 20_000n, spk: tapB.scriptPubKey },
+      ],
+    );
+    const reveal = segwitReveal(
+      [
+        { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
+        { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+      ],
+      [25_000n],
+    );
+    // honest: both ids resolve, and i1's prefix input is bound at depth 0
+    const honest0 = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:0`,
+    );
+    expect(verifyCustodyBundle(honest0).genesis.offset).toBe(0n);
+    const honest1 = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      1,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    const res1 = verifyCustodyBundle(honest1);
+    expect(res1.genesis.offset).toBe(10_000n);
+    expect(res1.controlBlockDepth).toBe(0);
+    expect(res1.singleLeafTree).toBe(true);
+
+    // forged: envelope A's witness replaced by a key-path spend, so B would
+    // renumber from 1 to 0 and <txid>i0 would resolve to B's sat
+    const deleted = withWitnesses(reveal.tx, [[SIG], undefined]);
+    expect(deleted.txid).toBe(reveal.tx.txid);
+    const forged = oneHopBundle(
+      deleted,
+      bytesToHex(deleted.raw),
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(() => verifyCustodyBundle(forged)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(forged)).toThrow(/input 0/);
+  });
+
+  it('rejects an inserted envelope that fabricates an index', () => {
+    const commit = fundingTx(
+      [{ txid: T2, vout: 0 }],
+      [
+        { value: 10_000n, spk: tapPlain.scriptPubKey },
+        { value: 20_000n, spk: tapB.scriptPubKey },
+      ],
+    );
+    const reveal = segwitReveal(
+      [
+        { txid: commit.tx.txid, vout: 0, witness: [SIG, plainScript, tapPlain.controlBlock] },
+        { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+      ],
+      [25_000n],
+    );
+    // honest: exactly one envelope, numbered 0, on input 1; i1 does not exist
+    const honest = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(verifyCustodyBundle(honest).genesis.offset).toBe(10_000n);
+    const absent = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      1,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(() => verifyCustodyBundle(absent)).toThrow(/index 1 not present/);
+
+    // forged: junk envelope inserted on input 0 renumbers the honest one to
+    // index 1; the junk input's commitment cannot verify, and the bundle
+    // contradicts chain-committed data, so this is a plain error
+    const inserted = withWitnesses(reveal.tx, [[SIG, envA, tapA.controlBlock], undefined]);
+    expect(inserted.txid).toBe(reveal.tx.txid);
+    const forged = oneHopBundle(
+      inserted,
+      bytesToHex(inserted.raw),
+      1,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(() => verifyCustodyBundle(forged)).toThrow(/input 0 taproot commitment/);
+  });
+
+  it('refuses an unbindable prefix input as EnvelopeIndexUnprovenError, not a plain error', () => {
+    // input 0 binds correctly but only at control block depth 1, so another
+    // committed leaf could carry a different envelope count
+    const sibling = sha256(new Uint8Array([2]));
+    const tapDeep = taprootCommit(plainScript, [sibling]);
+    const commit = fundingTx(
+      [{ txid: T0, vout: 1 }],
+      [
+        { value: 10_000n, spk: tapDeep.scriptPubKey },
+        { value: 20_000n, spk: tapB.scriptPubKey },
+      ],
+    );
+    const reveal = segwitReveal(
+      [
+        { txid: commit.tx.txid, vout: 0, witness: [SIG, plainScript, tapDeep.controlBlock] },
+        { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
+      ],
+      [25_000n],
+    );
+    const bundle = oneHopBundle(
+      reveal.tx,
+      reveal.hex,
+      0,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    expect(() => verifyCustodyBundle(bundle)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/merkle depth 1/);
+  });
+
+  it('takes the prefix loop zero times on a single-input reveal', () => {
+    const commit = fundingTx([{ txid: T1, vout: 1 }], [{ value: 10_000n, spk: tapA.scriptPubKey }]);
+    const reveal = segwitReveal(
+      [{ txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] }],
+      [9_000n],
+    );
+    const bundle = oneHopBundle(reveal.tx, reveal.hex, 0, [commit.hex], `${reveal.tx.txid}:0:0`);
+    const res = verifyCustodyBundle(bundle);
+    expect(res.genesis.offset).toBe(0n);
+    expect(res.singleLeafTree).toBe(true);
   });
 });

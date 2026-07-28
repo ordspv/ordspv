@@ -15,6 +15,7 @@ import {
   inscriptionsFromTx,
   serializeFull,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   TOTAL_SATS,
   LAST_SAT,
   type SatGenealogyBundleJson,
@@ -22,10 +23,11 @@ import {
   type ParsedTx,
   bytesToHex,
   hexToBytes,
+  sha256,
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { envelopeScript, revealTx, taprootCommit } from './helpers.js';
+import { envelopeScript, revealTx, script, taprootCommit } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // local raw-tx builders (values and scripts are all the arithmetic needs)
@@ -447,5 +449,162 @@ describe('verifySatGenealogy', () => {
     const insc = inscriptionsFromTx(reveal).find((i) => i.index === 0)!;
     const keyPath = withWitness(reveal, [new Uint8Array(64).fill(7)]);
     expect(() => verifyEnvelopeBinding(keyPath, insc, [commit.hex])).toThrow(/key-path/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// envelope index binding: every input before the envelope's is bound too
+// ---------------------------------------------------------------------------
+
+describe('envelope index binding (prefix inputs)', () => {
+  const SIG = new Uint8Array(64).fill(7);
+  const envA = envelopeScript({ fields: [[1, 'text/plain']], body: ['A'] }, { checksigPrefix: true });
+  const envB = envelopeScript({ fields: [[1, 'text/plain']], body: ['B'] }, { checksigPrefix: true });
+  const tapA = taprootCommit(envA);
+  const tapB = taprootCommit(envB);
+  // a committed tapscript with no envelope in it, for honest non-envelope inputs
+  const plainScript = script(sha256(new TextEncoder().encode('key')), 0xac);
+  const tapPlain = taprootCommit(plainScript);
+
+  const cb = buildCoinbase([{ value: 3_000_000_000n }]);
+
+  /** re-serialize with some witnesses replaced; the txid cannot change */
+  function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
+    return parseTx(
+      serializeFull({
+        version: tx.version,
+        inputs: tx.inputs.map((inp, i) => (witnesses[i] ? { ...inp, witness: witnesses[i]! } : inp)),
+        outputs: tx.outputs,
+        locktime: tx.locktime,
+      }),
+    );
+  }
+
+  /** commit spending the coinbase, reveal spending both commit outputs */
+  function chain(spks: [Uint8Array, Uint8Array], witnesses: [Uint8Array[], Uint8Array[]]) {
+    const commit = buildTx(
+      [{ txid: cb.tx.txid, vout: 0 }],
+      [
+        { value: 10_000n, spk: spks[0] },
+        { value: 20_000n, spk: spks[1] },
+      ],
+    );
+    const reveal = buildSegwitTx(
+      [
+        { txid: commit.tx.txid, vout: 0, witness: witnesses[0] },
+        { txid: commit.tx.txid, vout: 1, witness: witnesses[1] },
+      ],
+      [{ value: 25_000n }],
+    );
+    return { commit, reveal };
+  }
+
+  function genealogy(
+    reveal: { hex: string; tx: ParsedTx },
+    commit: { hex: string; tx: ParsedTx },
+    index: number,
+    claimedSat: bigint,
+  ): SatGenealogyBundleJson {
+    return {
+      version: 1,
+      inscriptionId: `${reveal.tx.txid}i${index}`,
+      reveal: anchoredHop(reveal.tx.txidLE, reveal.hex, 2000, [commit.hex, commit.hex]),
+      funding: [{ tx: { hex: commit.hex }, prevTxs: [cb.hex] }],
+      coinbase: anchoredHop(cb.tx.txidLE, cb.hex, 1000, []),
+      claimedSat: claimedSat.toString(),
+    };
+  }
+
+  it('rejects an envelope moved to another input that reuses the commit script', () => {
+    const { commit, reveal } = chain(
+      [tapA.scriptPubKey, tapA.scriptPubKey],
+      [[SIG, envA, tapA.controlBlock], [SIG]],
+    );
+    const honest = genealogy(reveal, commit, 0, firstSatOfBlock(1000));
+    expect(verifySatGenealogy(honest).revealPosition).toBe(0n);
+
+    // forged: same txid, witnesses swapped, sat moved by input 0's value
+    const moved = withWitnesses(reveal.tx, [[SIG], [SIG, envA, tapA.controlBlock]]);
+    expect(moved.txid).toBe(reveal.tx.txid);
+    const forged = genealogy(
+      { hex: bytesToHex(moved.raw), tx: moved },
+      commit,
+      0,
+      firstSatOfBlock(1000) + 10_000n,
+    );
+    expect(() => verifySatGenealogy(forged)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(forged)).toThrow(/input 0/);
+  });
+
+  it('rejects a deleted earlier envelope that renumbers the survivor', () => {
+    const { commit, reveal } = chain(
+      [tapA.scriptPubKey, tapB.scriptPubKey],
+      [
+        [SIG, envA, tapA.controlBlock],
+        [SIG, envB, tapB.controlBlock],
+      ],
+    );
+    // honest: i1's prefix input is bound at depth 0, so the multi-input
+    // reveal verifies and folds to the same sat as before the fix
+    const honest1 = genealogy(reveal, commit, 1, firstSatOfBlock(1000) + 10_000n);
+    const res1 = verifySatGenealogy(honest1);
+    expect(res1.revealPosition).toBe(10_000n);
+    expect(res1.controlBlockDepth).toBe(0);
+    expect(res1.singleLeafTree).toBe(true);
+
+    // forged: envelope A's witness replaced by a key-path spend, so B would
+    // renumber from 1 to 0 and <txid>i0 would fold to B's sat
+    const deleted = withWitnesses(reveal.tx, [[SIG], undefined]);
+    expect(deleted.txid).toBe(reveal.tx.txid);
+    const forged = genealogy(
+      { hex: bytesToHex(deleted.raw), tx: deleted },
+      commit,
+      0,
+      firstSatOfBlock(1000) + 10_000n,
+    );
+    expect(() => verifySatGenealogy(forged)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(forged)).toThrow(/input 0/);
+  });
+
+  it('rejects an inserted envelope that fabricates an index', () => {
+    const { commit, reveal } = chain(
+      [tapPlain.scriptPubKey, tapB.scriptPubKey],
+      [
+        [SIG, plainScript, tapPlain.controlBlock],
+        [SIG, envB, tapB.controlBlock],
+      ],
+    );
+    // honest: one envelope, numbered 0, on input 1; i1 does not exist
+    const honest = genealogy(reveal, commit, 0, firstSatOfBlock(1000) + 10_000n);
+    expect(verifySatGenealogy(honest).revealPosition).toBe(10_000n);
+    const absent = genealogy(reveal, commit, 1, firstSatOfBlock(1000) + 10_000n);
+    expect(() => verifySatGenealogy(absent)).toThrow(/index 1 not present/);
+
+    // forged: junk envelope inserted on input 0 renumbers the honest one to
+    // index 1; the junk commitment contradicts chain data, a plain error
+    const inserted = withWitnesses(reveal.tx, [[SIG, envA, tapA.controlBlock], undefined]);
+    expect(inserted.txid).toBe(reveal.tx.txid);
+    const forged = genealogy(
+      { hex: bytesToHex(inserted.raw), tx: inserted },
+      commit,
+      1,
+      firstSatOfBlock(1000) + 10_000n,
+    );
+    expect(() => verifySatGenealogy(forged)).toThrow(/input 0 taproot commitment/);
+  });
+
+  it('refuses an unbindable prefix input as EnvelopeIndexUnprovenError, not a plain error', () => {
+    const sibling = sha256(new Uint8Array([2]));
+    const tapDeep = taprootCommit(plainScript, [sibling]);
+    const { commit, reveal } = chain(
+      [tapDeep.scriptPubKey, tapB.scriptPubKey],
+      [
+        [SIG, plainScript, tapDeep.controlBlock],
+        [SIG, envB, tapB.controlBlock],
+      ],
+    );
+    const bundle = genealogy(reveal, commit, 0, firstSatOfBlock(1000) + 10_000n);
+    expect(() => verifySatGenealogy(bundle)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(bundle)).toThrow(/merkle depth 1/);
   });
 });

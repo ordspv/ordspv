@@ -74,6 +74,23 @@ export class CustodyUnsupportedError extends Error {
   }
 }
 
+/**
+ * The verifier cannot prove WHICH envelope the inscription id names. An
+ * envelope's index is a running count over the envelopes of every reveal input
+ * before it, so each of those inputs must be bound to txid-committed data at
+ * control block depth 0. A reveal whose prefix input is a key-path spend,
+ * spends a non-P2TR output, or binds only at depth > 0 may be perfectly
+ * honest; the bundle simply cannot prove the numbering, which is a different
+ * fact from being forged (plain Error) or leaving v1's sat domain
+ * (CustodyUnsupportedError).
+ */
+export class EnvelopeIndexUnprovenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EnvelopeIndexUnprovenError';
+  }
+}
+
 function totalOutputSats(tx: ParsedTx): bigint {
   let total = 0n;
   for (const out of tx.outputs) total += out.value;
@@ -134,7 +151,7 @@ export interface EnvelopeBinding {
 }
 
 /**
- * Bind the envelope to txid-committed data.
+ * Bind the envelope AND its index to txid-committed data.
  *
  * A reveal's txid does not commit to its witness (BIP-141), and the envelope
  * lives in the witness. Anchoring the reveal by txid therefore says nothing
@@ -148,10 +165,22 @@ export interface EnvelopeBinding {
  * tapscript to be committed by it. Checking that commitment is what makes the
  * envelope trustworthy, and it is the same check the L2 content path runs.
  *
- * The residual is the L2 residual: a multi-leaf taptree lets a witness present
- * any leaf its author committed, so this proves the commit output's author
- * committed the observed tapscript. `singleLeafTree` reports when the taptree
- * provably held nothing else.
+ * Binding the selected envelope alone is not enough. Its index is a running
+ * count over the envelopes found in every input before it, in input order, so
+ * rewriting an EARLIER input's witness renumbers the envelopes without
+ * touching the txid or the selected input. Every input up to and including
+ * the envelope's input k is therefore held to the same standard: a
+ * script-path spend of a P2TR prevout whose tapscript verifies. Prefix inputs
+ * must additionally bind at control block depth 0, because a deeper taptree
+ * would let its author present a different committed leaf with a different
+ * envelope count. A prefix input that cannot meet this may still be honest,
+ * so it refuses with EnvelopeIndexUnprovenError rather than a plain Error.
+ * Inputs after k receive higher numbers and cannot renumber the selection.
+ *
+ * The residual at input k is the L2 residual: a multi-leaf taptree lets a
+ * witness present any leaf its author committed, so this proves the commit
+ * output's author committed the observed tapscript. `singleLeafTree` reports
+ * when the taptree provably held nothing else.
  */
 export function verifyEnvelopeBinding(
   reveal: ParsedTx,
@@ -159,62 +188,96 @@ export function verifyEnvelopeBinding(
   prevTxsHex: string[],
   label = 'reveal',
 ): EnvelopeBinding {
-  const input = reveal.inputs[inscription.input];
-  if (!input) {
-    throw new Error(`${label}: envelope input ${inscription.input} out of range`);
+  const k = inscription.input;
+  if (!reveal.inputs[k]) {
+    throw new Error(`${label}: envelope input ${k} out of range`);
   }
-  const tapscript = extractTapscript(input.witness);
-  if (!tapscript) {
-    throw new Error(
-      `${label}: envelope input ${inscription.input} is a key-path spend with no tapscript; ` +
-        `an envelope is a script-path commitment, so it cannot be carried there`,
-    );
+  let binding: EnvelopeBinding | undefined;
+  for (let i = 0; i <= k; i++) {
+    const input = reveal.inputs[i];
+    const role = i === k ? `envelope input ${i}` : `input ${i}`;
+    const prevHex = prevTxsHex[i];
+    if (prevHex === undefined || prevHex.trim() === '') {
+      throw new Error(`${label}: no prev tx for ${role}, so its commitment cannot be checked`);
+    }
+    let prev: ParsedTx;
+    try {
+      prev = parseTx(hexToBytes(prevHex.trim()));
+    } catch (e) {
+      throw new Error(`${label}: prev tx for ${role}: cannot parse: ${(e as Error).message}`);
+    }
+    if (prev.txid !== input.prevTxid) {
+      throw new Error(
+        `${label}: prev tx for ${role} hashes to ${prev.txid}, input spends ${input.prevTxid}`,
+      );
+    }
+    const spent = prev.outputs[input.vout];
+    if (!spent) {
+      throw new Error(`${label}: prev tx for ${role} has no output ${input.vout}`);
+    }
+    const tapscript = extractTapscript(input.witness);
+    if (i === k) {
+      if (!tapscript) {
+        throw new Error(
+          `${label}: envelope input ${i} is a key-path spend with no tapscript; ` +
+            `an envelope is a script-path commitment, so it cannot be carried there`,
+        );
+      }
+      if (!isP2TR(spent.scriptPubKey)) {
+        throw new Error(
+          `${label}: envelope input ${i} spends a non-P2TR output; ` +
+            `an envelope is committed in a taproot script path, so no envelope can be bound here`,
+        );
+      }
+      try {
+        verifyScriptPathCommitment({
+          script: tapscript.script,
+          controlBlock: tapscript.controlBlock,
+          scriptPubKey: spent.scriptPubKey,
+        });
+      } catch (e) {
+        throw new Error(
+          `${label}: envelope input ${i} taproot commitment: ${(e as Error).message}`,
+        );
+      }
+      const controlBlockDepth = parseControlBlock(tapscript.controlBlock).path.length;
+      binding = { controlBlockDepth, singleLeafTree: controlBlockDepth === 0 };
+    } else {
+      if (!tapscript) {
+        throw new EnvelopeIndexUnprovenError(
+          `${label}: input ${i} precedes envelope input ${k} and is a key-path spend; ` +
+            `its witness is outside the txid, so the number of envelopes before index ` +
+            `${inscription.index} cannot be proven`,
+        );
+      }
+      if (!isP2TR(spent.scriptPubKey)) {
+        throw new EnvelopeIndexUnprovenError(
+          `${label}: input ${i} precedes envelope input ${k} and spends a non-P2TR output; ` +
+            `its witness cannot be bound to txid-committed data, so the envelope index ` +
+            `cannot be proven`,
+        );
+      }
+      try {
+        verifyScriptPathCommitment({
+          script: tapscript.script,
+          controlBlock: tapscript.controlBlock,
+          scriptPubKey: spent.scriptPubKey,
+        });
+      } catch (e) {
+        throw new Error(`${label}: input ${i} taproot commitment: ${(e as Error).message}`);
+      }
+      const depth = parseControlBlock(tapscript.controlBlock).path.length;
+      if (depth > 0) {
+        throw new EnvelopeIndexUnprovenError(
+          `${label}: input ${i} precedes envelope input ${k} and its control block has ` +
+            `merkle depth ${depth}; another committed leaf could carry a different envelope ` +
+            `count, so the envelope index cannot be proven`,
+        );
+      }
+    }
   }
-  const prevHex = prevTxsHex[inscription.input];
-  if (prevHex === undefined || prevHex.trim() === '') {
-    throw new Error(
-      `${label}: no prev tx for envelope input ${inscription.input}, so its commitment cannot be checked`,
-    );
-  }
-  let prev: ParsedTx;
-  try {
-    prev = parseTx(hexToBytes(prevHex.trim()));
-  } catch (e) {
-    throw new Error(
-      `${label}: prev tx for envelope input ${inscription.input}: cannot parse: ${(e as Error).message}`,
-    );
-  }
-  if (prev.txid !== input.prevTxid) {
-    throw new Error(
-      `${label}: prev tx for envelope input ${inscription.input} hashes to ${prev.txid}, ` +
-        `input spends ${input.prevTxid}`,
-    );
-  }
-  const spent = prev.outputs[input.vout];
-  if (!spent) {
-    throw new Error(
-      `${label}: prev tx for envelope input ${inscription.input} has no output ${input.vout}`,
-    );
-  }
-  if (!isP2TR(spent.scriptPubKey)) {
-    throw new Error(
-      `${label}: envelope input ${inscription.input} spends a non-P2TR output; ` +
-        `an envelope is committed in a taproot script path, so no envelope can be bound here`,
-    );
-  }
-  try {
-    verifyScriptPathCommitment({
-      script: tapscript.script,
-      controlBlock: tapscript.controlBlock,
-      scriptPubKey: spent.scriptPubKey,
-    });
-  } catch (e) {
-    throw new Error(
-      `${label}: envelope input ${inscription.input} taproot commitment: ${(e as Error).message}`,
-    );
-  }
-  const controlBlockDepth = parseControlBlock(tapscript.controlBlock).path.length;
-  return { controlBlockDepth, singleLeafTree: controlBlockDepth === 0 };
+  /* the loop always reaches i === k, which sets the binding */
+  return binding as EnvelopeBinding;
 }
 
 /** A coinbase spends a single null outpoint; no funding transaction exists. */
