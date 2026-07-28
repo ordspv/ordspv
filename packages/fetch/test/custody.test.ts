@@ -464,6 +464,36 @@ describe('fetchCustody with multi-input reveals', () => {
     expect('witness' in needed.bundle.hops[0]).toBe(false);
   });
 
+  it('bars the raw-block server from the header vote, not just the walker', async () => {
+    // E walks the path; only E2 serves the raw block behind the witness
+    // section. Both served bytes for this bundle, so neither may vote for its
+    // header. E2 was offered as an attester and must be filtered out
+    const E4 = 'https://esplora4.test';
+    const r = routes(false);
+    const raw = serializeBlock(hexToBytes(block.headerHex), block.txs);
+    const withRaw: Record<string, Route> = {
+      ...r,
+      [`${E2}/block/${block.blockHash}/raw`]: raw,
+      [`${E2}/tx/${reveal.txid}/outspend/0`]: { spent: false },
+      [`${E4}/block-height/100`]: block.blockHash,
+      [`${E4}/blocks/tip/height`]: '120',
+    };
+    const fetchFn = stubFetch(withRaw);
+
+    // E2 and E3 attest; E2 served the raw block, so one vote is left and the
+    // default threshold of two is not met
+    const p = fetchCustody(id, { ...OPTS, fetchFn });
+    await expect(p).rejects.toThrow(/not independently anchored: 1 independent source/);
+    await expect(p).rejects.toThrow(/2 serving backend\(s\) excluded/);
+
+    // with a fourth attester that served nothing, the vote carries
+    const res = await fetchCustody(id, { ...OPTS, anchorSources: [E2, E3, E4], fetchFn });
+    expect(res.custody.indexProof).toBe('wtxid');
+    expect(res.headerTrust[0].sourcesQueried).toBe(2); // E3 and E4 only
+    expect(res.headerTrust[0].independentSources).toBe(2);
+    expect(res.headerTrust[0].builderIsSource).toBe(true);
+  });
+
   it('witnessSection always with every backend failing throws with each cause', async () => {
     const setup = inscriptionSetup();
     const r = routesForBlock(setup.block, 100, 120);

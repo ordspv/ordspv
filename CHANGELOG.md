@@ -267,6 +267,30 @@ already binds.
   ancestry on every backend to reach the same deterministic answer. It is now
   `SatStepLimitError`, a `SatBuildError` so existing catch sites still work,
   and `fetchSatIdentity` rethrows it without trying another backend.
+- **The CLI says what it did not prove, on every command that prints a
+  result.** `ord-resolve verify` carried the executed-leaf residual for
+  custody and genealogy bundles and left the proof-bundle branch with the bare
+  anchor note, so the one path a gateway alone can renumber, a multi-input
+  reveal at L2, printed the least warning. That branch now carries the same
+  residual whenever the level is below L3, and adds that the envelope
+  numbering is unproven at L2 when the reveal spends several inputs. The
+  anchor note gained a clause saying block heights are the serving backend's
+  claim until the caller anchors the hash at that height, since `verify`
+  prints heights that nothing offline binds, apart from a genealogy coinbase
+  height bound by BIP34 or an attestation. `custody --json` and `sat --json`
+  carry the note their human-readable branches print, which is where a
+  scripted caller reads it. The sentences moved into `@ordspv/core` so the
+  CLI and the extension viewer state the same residual in the same words, and
+  the viewer prints it below L3.
+- **`fetchCustody` excludes every backend that served bytes from the header
+  vote.** It passed all configured backends as candidates to serve the raw
+  block behind a witness section, and then named only the backend that walked
+  the path as the proof source, so a second backend could serve bytes for the
+  bundle and vote for its header. SPEC-VERIFICATION requires every serving
+  endpoint to be excluded, which `fetchSatIdentity` already did through the
+  pool's record of used base URLs. `buildCustodyBundle` now returns
+  `servedBaseUrls`, the walker plus whichever backend served the raw block,
+  and `fetchCustody` passes all of them as `proofSources`.
 - **Documentation correction: the proof-of-work floor's arithmetic.**
   SPEC-VERIFICATION said that with the floor in place a fabricated low-height
   header costs ~2^77 work, which overstated the floor by about 45 bits. The

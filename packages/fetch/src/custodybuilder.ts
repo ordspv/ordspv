@@ -79,6 +79,13 @@ export interface BuildCustodyResult {
   bundle: CustodyBundleJson;
   /** set when the walk stopped at an unconfirmed spend of the final satpoint */
   pendingSpendTxid?: string;
+  /**
+   * Every base URL that served bytes for this bundle: the backend that walked
+   * the path and whichever one served the raw block behind the witness
+   * section. All of them are barred from attesting to the bundle's headers,
+   * the way `PooledEsploraBackend.usedBaseUrls` is on the genealogy side.
+   */
+  servedBaseUrls: Set<string>;
 }
 
 export class CustodyBuildError extends Error {}
@@ -157,14 +164,18 @@ export async function assembleAnchoredHop(
  * `WitnessSectionUnavailableError` naming every backend and why it failed. A
  * rate limit and an unprovable reveal are different facts, and the caller has
  * to be able to tell them apart. No unverifiable bundle is emitted.
+ *
+ * Returns the base URL of the backend that served the block, so the caller can
+ * bar it from attesting to the header it just helped fill in, and undefined
+ * when no section was needed.
  */
 export async function attachRevealWitnessSection(
   backends: AnchorBackend[],
   reveal: ParsedTx,
   hop: CustodyHopJson,
   mode: WitnessSectionMode = 'when-needed',
-): Promise<void> {
-  if (mode === 'when-needed' && reveal.inputs.length === 1) return;
+): Promise<string | undefined> {
+  if (mode === 'when-needed' && reveal.inputs.length === 1) return undefined;
   const causes: string[] = [];
   for (const backend of backends) {
     if (!backend.getBlockRaw) {
@@ -194,7 +205,7 @@ export async function attachRevealWitnessSection(
         coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
         wtxidBranch: buildMerkleBranch(wtxids, pos).map(internalToDisplay),
       };
-      return;
+      return backend.baseUrl;
     } catch (e) {
       causes.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
@@ -231,12 +242,15 @@ export async function buildCustodyBundle(
   }
 
   const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
-  await attachRevealWitnessSection(
+  // the walker has served bytes by now, and the raw-block server serves more
+  const servedBaseUrls = new Set<string>([backend.baseUrl]);
+  const witnessServer = await attachRevealWitnessSection(
     options.witnessBackends ?? [backend],
     reveal,
     revealHop,
     options.witnessSection,
   );
+  if (witnessServer !== undefined) servedBaseUrls.add(witnessServer);
   const hops: CustodyHopJson[] = [revealHop];
 
   // working (unverified) satpoint to know which outpoint to walk next
@@ -286,6 +300,7 @@ export async function buildCustodyBundle(
       finalSatpoint: formatSatpoint(current),
     },
     pendingSpendTxid,
+    servedBaseUrls,
   };
 }
 
@@ -412,7 +427,11 @@ export async function fetchCustody(
       minAgreement: options.minHeaderAgreement,
       minConfirmations: options.minConfirmations,
       checkpoints: options.checkpoints ?? MAINNET_CHECKPOINTS,
-      proofSource: source.baseUrl,
+      // every backend that served bytes is barred, not just the walker: any
+      // configured backend may have served the raw block behind the witness
+      // section, and a server vouching for a header it helped build is a
+      // self-vote whichever bytes it contributed
+      proofSources: built.servedBaseUrls,
       powLimitBits: options.powLimitBits,
     });
   const headerTrust: HeaderTrustReport[] = [];

@@ -14,3 +14,4 @@ export * from './gallery.js';
 export * from './block.js';
 export * from './custody.js';
 export * from './satnumber.js';
+export * from './notes.js';

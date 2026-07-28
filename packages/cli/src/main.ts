@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
   formatSatpoint,
+  HEIGHT_IS_A_CLAIM,
+  L2_EXECUTED_LEAF_RESIDUAL,
+  L2_NUMBERING_RESIDUAL,
   verifyCustodyBundle,
   verifyProofBundle,
   verifySatGenealogy,
@@ -45,15 +48,11 @@ interface Args {
   flags: Map<string, string | boolean>;
 }
 
-/**
- * What is left unproven at every `indexProof` other than `wtxid`, in the words
- * SPEC-CUSTODY uses. Printed wherever a result carrying such a value reaches a
- * human, since a residual nobody is told about is one nobody acts on.
- */
-const RESIDUAL =
-  "the binding proves the commit output's author committed the observed " +
-  'tapscript, and only a wtxid anchor proves the presented witness is the one ' +
-  'the chain executed';
+// the sentences every surface shares live in core (notes.ts), so the CLI and
+// the extension viewer state the same residual in the same words
+const RESIDUAL = L2_EXECUTED_LEAF_RESIDUAL;
+const NUMBERING = L2_NUMBERING_RESIDUAL;
+const HEIGHT_CLAIM = HEIGHT_IS_A_CLAIM;
 
 /**
  * How firmly the envelope is bound to the commit output. A single-leaf taptree
@@ -193,6 +192,9 @@ async function main(): Promise<void> {
               singleLeafTree: res.custody.singleLeafTree,
               singleInputReveal: res.custody.singleInputReveal,
               indexProof: res.custody.indexProof,
+              // the same sentence the human branch prints; a scripted caller
+              // reads the residual here or nowhere
+              note: envelopeNote(res.custody),
               tip: res.tip,
               pendingSpendTxid: res.pendingSpendTxid,
             },
@@ -250,6 +252,9 @@ async function main(): Promise<void> {
               singleLeafTree: identity.singleLeafTree,
               singleInputReveal: identity.singleInputReveal,
               indexProof: identity.indexProof,
+              // the same sentence the human branch prints; a scripted caller
+              // reads the residual here or nowhere
+              note: envelopeNote(identity),
               headerTrust: res.headerTrust,
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
@@ -280,7 +285,9 @@ async function main(): Promise<void> {
     } catch (e) {
       fail(`verify: ${(e as Error).message}`, 2);
     }
-    const anchorNote = 'header PoW verified; anchor the block hash against your own chain view';
+    const anchorNote =
+      `header PoW verified; anchor the block hash against your own chain view; ` +
+      `${HEIGHT_CLAIM}`;
     // a bundle whose index rests on anything but a wtxid anchor carries the
     // level 2 residual, and the JSON is the only place a scripted caller sees it
     const indexNote = (indexProof: 'wtxid' | 'single-input'): string =>
@@ -340,6 +347,14 @@ async function main(): Promise<void> {
         return;
       }
       const result = verifyProofBundle(parsed as ProofBundleJson);
+      // below L3 the content path carries the same executed-leaf residual the
+      // other two branches print, and a multi-input reveal there is the one
+      // case a gateway can renumber without the inscriber
+      const proofNote = [anchorNote];
+      if (result.level !== 'L3') {
+        proofNote.push(RESIDUAL);
+        if (result.l2 && !result.l2.singleInputReveal) proofNote.push(NUMBERING);
+      }
       console.log(
         JSON.stringify(
           {
@@ -352,7 +367,7 @@ async function main(): Promise<void> {
             contentType: result.inscription.contentType,
             contentLength: result.inscription.body?.length ?? 0,
             l2Assurances: result.l2,
-            note: anchorNote,
+            note: proofNote.join('; '),
           },
           null,
           2,

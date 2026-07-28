@@ -5,6 +5,7 @@
  * verification facts, and renders the content from verified bytes only.
  */
 import { OrdResolver, type ResolveResult } from '@ordspv/fetch';
+import { L2_EXECUTED_LEAF_RESIDUAL, L2_NUMBERING_RESIDUAL } from '@ordspv/core';
 import { uriFromDnrHash, uriFromViewerHash } from './urlmap.js';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -126,6 +127,17 @@ async function main(): Promise<void> {
         `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}` +
           (result.verification.level === 'L3' ? ' (+witness commitment)' : ''),
       );
+      // below L3 the same residual the CLI prints, in the same words: the
+      // booleans above are about what was committed, and a multi-input reveal
+      // can be renumbered by a gateway alone
+      if (result.verification.level !== 'L3') {
+        fact(
+          'residual',
+          l2.singleInputReveal
+            ? L2_EXECUTED_LEAF_RESIDUAL
+            : `${L2_EXECUTED_LEAF_RESIDUAL}; ${L2_NUMBERING_RESIDUAL}`,
+        );
+      }
     }
     await render(result);
   } catch (e) {
