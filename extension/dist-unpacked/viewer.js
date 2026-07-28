@@ -3418,6 +3418,10 @@
   var TOTAL_SATS = firstSatOfBlock(FINAL_EPOCH * EPOCH_BLOCKS);
   var LAST_SAT = TOTAL_SATS - 1n;
 
+  // packages/core/src/notes.ts
+  var L2_EXECUTED_LEAF_RESIDUAL = "the binding proves the commit output's author committed the observed tapscript, and only a wtxid anchor proves the presented witness is the one the chain executed";
+  var L2_NUMBERING_RESIDUAL = "the reveal spends several inputs, so the envelope numbering is not proven at L2 and needs an L3 witness commitment";
+
   // packages/fetch/src/uri.ts
   var B64_RE = /^[A-Za-z0-9+/_-]{43}=?$/;
   var HEX64_RE = /^[0-9a-fA-F]{64}$/;
@@ -3802,6 +3806,11 @@
   var HeaderTrustError = class extends Error {
   };
   function makeHeaderTrust(options = {}) {
+    if (options.minAgreement !== void 0 && options.minAgreement < 1) {
+      throw new HeaderTrustError(
+        `minAgreement ${options.minAgreement} anchors a header on no agreeing source at all; pass 1 or more, and pair 1 with checkpoints or a synced chain`
+      );
+    }
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
     const esploras = options.esploras ?? [];
     const powLimitBits = options.powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
@@ -3827,7 +3836,10 @@
           sourcesAgreed: 0,
           independentSources: 0,
           builderIsSource,
-          anchored: true
+          anchored: true,
+          // a checkpoint is a compiled-in hash AT a height, so matching it
+          // asserts exactly hash-at-height
+          attests: "hash-at-height"
         };
       }
       const seen = /* @__PURE__ */ new Set();
@@ -3871,7 +3883,10 @@
         independentSources,
         builderIsSource,
         anchored: true,
-        tipHeight
+        tipHeight,
+        // every agreeing attester answered /block-height/<n> with this hash, so
+        // the agreement is a hash-at-height attestation
+        attests: "hash-at-height"
       };
     };
   }
@@ -4306,6 +4321,12 @@ ${errors.join("\n")}`);
           "assurances",
           `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}` + (result.verification.level === "L3" ? " (+witness commitment)" : "")
         );
+        if (result.verification.level !== "L3") {
+          fact(
+            "residual",
+            l2.singleInputReveal ? L2_EXECUTED_LEAF_RESIDUAL : `${L2_EXECUTED_LEAF_RESIDUAL}; ${L2_NUMBERING_RESIDUAL}`
+          );
+        }
       }
       await render(result);
     } catch (e) {
