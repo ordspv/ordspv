@@ -161,11 +161,15 @@ mainnet limit `0x1d00ffff`; the `powLimitBits` option overrides it for another
 chain, and `null` disables it. A header failing it is fabricated or belongs to
 another chain.
 
-With that floor in place, fabricating a low-height header costs ~2^77 work at
-mainnet difficulty, which for modern heights is economically absurd. Verifiers MUST
-still anchor, because a bundle chooses its own height and the floor says nothing
-about which chain a header sits on. Composable strategies (reference:
-`makeHeaderTrust`):
+The floor is difficulty 1, so its own bar is low: it refuses headers easier than
+`0x1d00ffff`, and fabricating a header AT that difficulty costs about 2^32 hashes,
+which dedicated hardware does in well under a second. A header at recent mainnet
+difficulty costs about 2^78 hashes, and nothing requires a bundle's header to meet
+it, since the bundle picks its own height and its own `nBits`. What the floor buys
+is the removal of the free case. Verifiers MUST still anchor the hash against their
+own view of the chain, because that is what defends against a fabricated header,
+and the floor says nothing about which chain a header sits on. Composable
+strategies (reference: `makeHeaderTrust`):
 
 - **Checkpoints** (MUST when applicable): compiled-in `height → hash` pairs; a bundle
   contradicting a checkpoint is rejected outright. Ships with genesis, 767430

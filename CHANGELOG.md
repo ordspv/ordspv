@@ -95,8 +95,9 @@ already binds.
   headers mined at `0x207fffff` in under a second each and verify offline
   with `ok: true`. The `powLimitBits` floor existed only in
   `makeHeaderTrust`, which the CLI's `verify` command does not use at all, so
-  the offline path understated the cost of fabricating a header by 76 orders
-  of magnitude. `verifyProofBundle`, `verifyCustodyBundle` and
+  the offline path accepted headers costing a few hashes each, about 30 bits
+  of work below the difficulty-1 floor. `verifyProofBundle`,
+  `verifyCustodyBundle` and
   `verifySatGenealogy` now require every header's target to be at or below
   the network proof-of-work limit before its own PoW check counts for
   anything, defaulting to the mainnet limit `0x1d00ffff`. Each takes
@@ -266,6 +267,15 @@ already binds.
   ancestry on every backend to reach the same deterministic answer. It is now
   `SatStepLimitError`, a `SatBuildError` so existing catch sites still work,
   and `fetchSatIdentity` rethrows it without trying another backend.
+- **Documentation correction: the proof-of-work floor's arithmetic.**
+  SPEC-VERIFICATION said that with the floor in place a fabricated low-height
+  header costs ~2^77 work, which overstated the floor by about 45 bits. The
+  floor is difficulty 1, a header at difficulty 1 costs about 2^32 hashes, and
+  ~2^78 is the cost at recent mainnet difficulty, which nothing requires a
+  bundle's header to meet, since the bundle picks its own height and its own
+  `nBits`. The passage now states both numbers and what each one is, and keeps
+  the rule that verifiers MUST still anchor the hash against their own chain
+  view. The floor's value and behavior are unchanged.
 
 ### Changed
 

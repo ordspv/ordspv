@@ -90,6 +90,14 @@ export function checkProofOfWork(header: BlockHeader): boolean {
  * another chain, and `null` disables the floor. The comparison is local and
  * needs no network. A header that fails is fabricated or belongs to another
  * chain, and both are forgery-class.
+ *
+ * The floor's own bar is low. Mainnet's limit is difficulty 1, and a header at
+ * difficulty 1 costs about 2^32 hashes, which dedicated hardware does in well
+ * under a second; a header at recent mainnet difficulty costs about 2^78, and
+ * nothing here requires one, since the bundle picks its own height and its own
+ * bits. This removes the free case and nothing more. Anchoring the hash against
+ * the caller's own view of the chain is what defends against a fabricated
+ * header.
  */
 export function checkPowLimit(
   header: BlockHeader,
