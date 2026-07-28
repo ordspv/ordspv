@@ -88,19 +88,34 @@ input's prevout therefore supplies a trustworthy scriptPubKey to check the
 witness against.
 
 Verifiers MUST perform the envelope binding of SPEC-CUSTODY at the reveal
-before deriving a start position, and that binding covers the envelope's index
-as well as its bytes: verifiers MUST bind every reveal input up to and
-including the envelope's input `k`, MUST require control block depth 0 on the
-inputs before `k`, and MUST refuse when an input before `k` cannot be bound,
-distinguishably from a forgery (`EnvelopeIndexUnprovenError` in the reference
-implementation). At input `k` itself the verifier MUST reject a key-path
+before deriving a start position, including its three-way index rule, and
+MUST record the way the index was proven in `indexProof`:
+
+- a reveal hop carrying a witness section MUST be verified against the
+  block's BIP-141 witness commitment as SPEC-CUSTODY specifies, with no
+  fallback past a section that fails. Success proves the envelope's bytes
+  and its index outright (`wtxid`), with no multi-leaf residual, since the
+  presented witness is the chain's witness;
+- with no section, a single-input reveal needs nothing more
+  (`single-input`);
+- with no section and more than one input, the verifier MUST apply
+  SPEC-CUSTODY's prefix rule (`prefix`): every input before the envelope's
+  bound at control block depth 0, with `EnvelopeIndexUnprovenError` the
+  refusal when one cannot be bound. A multi-input reveal with neither a
+  witness section nor a fully bound prefix is always refused.
+
+At input `k` itself, in every case, the verifier MUST reject a key-path
 spend, MUST reject a prevout scriptPubKey that is not P2TR, and MUST verify
 the BIP-341 script-path commitment, rejecting the bundle when it does not
-hold. Verifiers SHOULD report the control block depth, `singleLeafTree` and
-`singleInputReveal`, with the residual SPEC-CUSTODY states: with
-`singleLeafTree` false, the author of the commit output can present a
-different committed leaf, which can change the envelope's content and its
-index together.
+hold. The verifier MUST accept a witness section only at the reveal; the
+terminal coinbase hop carrying one is refused. Builders SHOULD emit the
+section for multi-input reveals.
+
+Verifiers SHOULD report the control block depth, `singleLeafTree` and
+`singleInputReveal`, with the residual SPEC-CUSTODY states: when
+`indexProof` is not `wtxid` and `singleLeafTree` is false, the author of the
+commit output can present a different committed leaf, which can change the
+envelope's content and its index together.
 
 Funding steps and the coinbase need no such check. Their arithmetic reads
 output values and outpoints, which the stripped serialization covers.
@@ -150,7 +165,8 @@ anchoring alone, since an attester's hash-at-height vote binds the pair.
   "reveal": {                        // a CustodyHopJson, anchored
     "block": { "height": n, "hash": "…", "header": "<160 hex>", "txCount": n },
     "tx": { "hex": "…", "pos": n, "txidBranch": ["…"] },
-    "prevTxs": ["…"]                 // inputs 0..k at minimum
+    "prevTxs": ["…"],                // inputs 0..k at minimum
+    "witness": { /* OPTIONAL: the reveal's wtxid proof, SPEC-CUSTODY shape */ }
   },
   "funding": [                       // nearest funder first; empty when the
     { "tx": { "hex": "…" },          // reveal spends a coinbase directly

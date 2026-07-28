@@ -127,6 +127,10 @@ display order (reversed) hex, matching every public API; transactions as hex.
 }
 ```
 
+The `witness` section's shape is shared beyond this format: custody and genealogy
+bundles (SPEC-CUSTODY, SPEC-SAT) accept the same section at their reveal hop, where
+it proves envelope indexing on multi-input reveals.
+
 Bundles are self-contained and offline-verifiable (`ord-resolve verify bundle.json`);
 they are also immutable and infinitely cacheable. A CBOR twin
 (`application/vnd.ord.proof+cbor`) is reserved for v2. JSON came first for

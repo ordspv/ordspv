@@ -120,6 +120,28 @@ already binds.
   both builders already emit prev txs for inputs `0..k`, and bundles written
   by earlier 0.3.0 development builds verify unchanged. Found in review before
   any release carried this code.
+- **Multi-input reveals are proven by the block's witness commitment.** The
+  prefix rule refuses a reveal whose earlier inputs are key-path spends, and
+  ordinary wallets fund reveals exactly that way, so an honest live-validated
+  inscription was refused as unprovable. Custody and genealogy bundles now
+  accept an optional witness section at the reveal hop, the L3 content
+  bundle's exact shape, and the verifier proves the reveal's whole witness
+  through the coinbase's BIP-141 witness commitment: every input's witness is
+  pinned at once, so the envelope's index is proven with no multi-leaf
+  residual. The shared checks moved out of `verifyProofBundle` into
+  `verifyWitnessAnchoring`, called by all three verifiers. Results report how
+  the index was proven in a new `indexProof` field (`'wtxid'`,
+  `'single-input'`, `'prefix'`), printed by the CLI beside the other
+  assurance fields. A present section that fails is a hard error with no
+  fallback, a section anywhere except the reveal is refused, and a
+  multi-input reveal with neither a section nor a fully bound prefix is
+  refused as unproven, so the refusal path did not weaken. Builders emit the
+  section for multi-input reveals at the cost of one raw block request;
+  single-input bundles are byte-identical to before.
+- **`EnvelopeIndexUnprovenError` passes through `fetchCustody` and
+  `fetchSatIdentity`** the way `CustodyUnsupportedError` does, instead of
+  arriving wrapped as `VERIFY_FAILED`. A bundle can be honest and still
+  unprovable, and callers have to tell that apart from a forgery.
 - **`VerifiedCustody` and `VerifiedSatIdentity` report `singleInputReveal`**,
   as `L2Assurances` has since the field existed. The CLI prints it wherever it
   prints `controlBlockDepth` and `singleLeafTree`: the `custody` and `sat`
