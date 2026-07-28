@@ -3,7 +3,6 @@ import {
   formatSatpoint,
   HEIGHT_IS_A_CLAIM,
   L2_EXECUTED_LEAF_RESIDUAL,
-  L2_NUMBERING_RESIDUAL,
   verifyCustodyBundle,
   verifyProofBundle,
   verifySatGenealogy,
@@ -12,6 +11,7 @@ import {
   type SatGenealogyBundleJson,
 } from '@ordspv/core';
 import { classifyBundle, type BundleKind } from './bundlekind.js';
+import { contentResiduals, refusalReport } from './notes.js';
 import {
   buildProofBundle,
   EsploraBackend,
@@ -51,7 +51,6 @@ interface Args {
 // the sentences every surface shares live in core (notes.ts), so the CLI and
 // the extension viewer state the same residual in the same words
 const RESIDUAL = L2_EXECUTED_LEAF_RESIDUAL;
-const NUMBERING = L2_NUMBERING_RESIDUAL;
 const HEIGHT_CLAIM = HEIGHT_IS_A_CLAIM;
 
 /**
@@ -123,6 +122,8 @@ async function main(): Promise<void> {
         '  --witness-section always|when-needed   (custody, sat; default when-needed)',
         '      always pays one raw block request so the reveal carries its wtxid',
         '      proof, which proves the envelope index and the witness the chain ran',
+        'exit codes: 0 ok  1 bundle INVALID  2 usage  3 bundle UNPROVEN offline',
+        '  4 bundle OUT OF SCOPE (well formed, path outside what v1 proves)',
       ].join('\n'),
     );
     process.exit(positional.length === 0 ? 2 : 0);
@@ -350,11 +351,7 @@ async function main(): Promise<void> {
       // below L3 the content path carries the same executed-leaf residual the
       // other two branches print, and a multi-input reveal there is the one
       // case a gateway can renumber without the inscriber
-      const proofNote = [anchorNote];
-      if (result.level !== 'L3') {
-        proofNote.push(RESIDUAL);
-        if (result.l2 && !result.l2.singleInputReveal) proofNote.push(NUMBERING);
-      }
+      const proofNote = [anchorNote, ...contentResiduals(result.level, result.l2)];
       console.log(
         JSON.stringify(
           {
@@ -375,16 +372,11 @@ async function main(): Promise<void> {
       );
       return;
     } catch (e) {
-      // an unproven sub-BIP34 coinbase height is not a forgery: the bundle may
-      // be honest and simply needs an anchor this offline command has no way
-      // to consult. Say so, and still exit nonzero
-      if ((e as Error).name === 'CoinbaseHeightUnprovenError') {
-        fail(
-          `bundle UNPROVEN offline: ${(e as Error).message}. ` +
-            `Anchor the coinbase block hash at that height against your own chain view ` +
-            `and re-run verification with that anchor supplied.`,
-        );
-      }
+      // three refusals are not claims of forgery: a bundle that cannot prove
+      // one fact offline is a different thing from a bundle that contradicts
+      // itself, and each gets its own prefix and exit code
+      const refusal = refusalReport(e);
+      if (refusal) fail(refusal.message, refusal.code);
       fail(`bundle INVALID: ${(e as Error).message}`);
     }
   }
@@ -397,6 +389,12 @@ async function main(): Promise<void> {
   const resolver = new OrdResolver({ esplora, anchorSources, ordGateways: gateways, verification });
   try {
     const result = await resolver.resolve(uri);
+    // the same residual `verify` prints, on the command that renders bytes:
+    // the booleans in `verification.l2` say what was committed, and a
+    // multi-input reveal below L3 leaves the numbering open
+    const residual = result.verification.l2
+      ? contentResiduals(result.verification.level, result.verification.l2)
+      : [];
     if (flags.has('json')) {
       console.log(
         JSON.stringify(
@@ -409,6 +407,8 @@ async function main(): Promise<void> {
             viaDelegate: result.viaDelegate,
             metadataJson: result.metadataJson,
             verification: result.verification,
+            // a scripted caller reads the residual here or nowhere
+            note: residual.length ? residual.join('; ') : undefined,
           },
           null,
           2,
@@ -423,7 +423,8 @@ async function main(): Promise<void> {
       process.stdout.write(result.body);
       console.error(
         `\n[${result.verification.level}] ${result.contentType ?? 'application/octet-stream'} ` +
-          `${result.body.length} bytes  block=${result.verification.blockHash ?? '-'}`,
+          `${result.body.length} bytes  block=${result.verification.blockHash ?? '-'}` +
+          (residual.length ? `\nresidual: ${residual.join('; ')}` : ''),
       );
     }
   } catch (e) {

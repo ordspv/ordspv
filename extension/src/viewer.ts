@@ -110,8 +110,15 @@ async function main(): Promise<void> {
     const result = await resolver.resolve(uri);
     const ms = Math.round(performance.now() - started);
 
+    // "rendered from proven bytes" is true of the body and false of the
+    // numbering: below L3 a multi-input reveal can be renumbered by a gateway
+    // alone, so the headline says that instead of claiming the stronger thing
+    const numberingOpen =
+      result.verification.level !== 'L3' && result.verification.l2?.singleInputReveal === false;
     $('status').className = 'status pass';
-    $('status').textContent = `✓ verified at ${result.verification.level} in ${ms} ms; rendered from proven bytes`;
+    $('status').textContent =
+      `✓ verified at ${result.verification.level} in ${ms} ms; ` +
+      (numberingOpen ? L2_NUMBERING_RESIDUAL : 'rendered from proven bytes');
 
     fact('inscription', result.uri.idString, true);
     fact('content-type', result.contentType ?? '(none)');
@@ -122,10 +129,11 @@ async function main(): Promise<void> {
     fact('stored sha256', result.verification.bodySha256 ?? '', true);
     const l2 = result.verification.l2;
     if (l2) {
+      // verifyProofBundle populates l2 on the L2 branch only, so this block
+      // does not run at L3 and says nothing about a witness commitment
       fact(
         'assurances',
-        `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}` +
-          (result.verification.level === 'L3' ? ' (+witness commitment)' : ''),
+        `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}`,
       );
       // below L3 the same residual the CLI prints, in the same words: the
       // booleans above are about what was committed, and a multi-input reveal
