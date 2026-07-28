@@ -172,10 +172,12 @@ export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: numb
  * 'wtxid': the reveal's whole witness is anchored in the block's BIP-141
  * witness commitment, which pins envelope bytes and numbering outright.
  * 'single-input': the reveal has one input, and the input count is
- * txid-committed, so there is nothing to renumber. This proves the numbering
- * only in the sense that no other input can contribute an envelope; whether
- * the shown leaf was the leaf executed is the residual `singleLeafTree`
- * reports on.
+ * txid-committed, so no other input can contribute an envelope and there is
+ * nothing to renumber. It says nothing about whether the observed tapscript
+ * was the script the input ran, which is the residual of SPEC-VERIFICATION
+ * level 2 and is reported by nothing: `singleLeafTree` is a statement about
+ * what the commit output's author committed, and depth 0 leaves the author
+ * free to have spent by key path and served the tapscript afterwards.
  */
 export type IndexProof = 'wtxid' | 'single-input';
 

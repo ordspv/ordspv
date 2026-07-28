@@ -46,6 +46,16 @@ interface Args {
 }
 
 /**
+ * What is left unproven at every `indexProof` other than `wtxid`, in the words
+ * SPEC-CUSTODY uses. Printed wherever a result carrying such a value reaches a
+ * human, since a residual nobody is told about is one nobody acts on.
+ */
+const RESIDUAL =
+  "the binding proves the commit output's author committed the observed " +
+  'tapscript, and only a wtxid anchor proves the presented witness is the one ' +
+  'the chain executed';
+
+/**
  * How firmly the envelope is bound to the commit output. A single-leaf taptree
  * proves nothing else was committed by the prevout's author. It does not prove
  * the leaf was executed, since the output is spendable by key path too and the
@@ -64,7 +74,7 @@ function envelopeNote(r: {
   const index =
     r.indexProof === 'wtxid'
       ? 'index proven by the block witness commitment'
-      : 'index pinned by the single input';
+      : `index pinned by the single input; ${RESIDUAL}`;
   return `${tree}, ${r.singleInputReveal ? 'single-input reveal' : 'multi-input reveal'}, ${index}`;
 }
 
@@ -271,6 +281,10 @@ async function main(): Promise<void> {
       fail(`verify: ${(e as Error).message}`, 2);
     }
     const anchorNote = 'header PoW verified; anchor the block hash against your own chain view';
+    // a bundle whose index rests on anything but a wtxid anchor carries the
+    // level 2 residual, and the JSON is the only place a scripted caller sees it
+    const indexNote = (indexProof: 'wtxid' | 'single-input'): string =>
+      indexProof === 'wtxid' ? anchorNote : `${anchorNote}; ${RESIDUAL}`;
     try {
       if (kind === 'genealogy') {
         const bundle = parsed as SatGenealogyBundleJson;
@@ -294,7 +308,7 @@ async function main(): Promise<void> {
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
-              note: anchorNote,
+              note: indexNote(result.indexProof),
             },
             null,
             2,
@@ -317,7 +331,7 @@ async function main(): Promise<void> {
               singleLeafTree: result.singleLeafTree,
               singleInputReveal: result.singleInputReveal,
               indexProof: result.indexProof,
-              note: anchorNote,
+              note: indexNote(result.indexProof),
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
             2,
