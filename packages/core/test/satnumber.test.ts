@@ -17,6 +17,7 @@ import {
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   CoinbaseHeightUnprovenError,
+  SatStepLimitError,
   TOTAL_SATS,
   LAST_SAT,
   type SatGenealogyBundleJson,
@@ -294,6 +295,24 @@ describe('verifySatGenealogy', () => {
       claimedSat: (firstSatOfBlock(1000) + 3_000_000_000n).toString(),
     };
   }
+
+  it('refuses a bundle deeper than the cap as a step limit, not as a forgery', () => {
+    // the cap bounds work on an untrusted document, so hitting it says the
+    // verifier declined to read this bundle and nothing about the bundle's
+    // honesty. A genealogy built with a raised builder cap arrives here well
+    // formed, and the caller raises the verifier's cap to read it
+    const b = bundle();
+    expect(() => verifySatGenealogy(b, { ...FIXTURE_OPTS, maxSteps: 1 })).toThrow(
+      SatStepLimitError,
+    );
+    expect(() => verifySatGenealogy(b, { ...FIXTURE_OPTS, maxSteps: 1 })).toThrow(
+      /genealogy has 2 steps, verifier cap is 1/,
+    );
+    // and the raised cap reads the same bytes through
+    expect(verifySatGenealogy(b, { ...FIXTURE_OPTS, maxSteps: 2 }).sat).toBe(
+      firstSatOfBlock(1000) + 3_000_000_000n,
+    );
+  });
 
   it('verifies a full synthetic genealogy to the coinbase', () => {
     const res = verifySatGenealogy(bundle(), FIXTURE_OPTS);

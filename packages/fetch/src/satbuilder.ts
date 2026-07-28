@@ -32,6 +32,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatStepLimitError,
   type BlockHeader,
   type GenealogyStepJson,
   type HeaderAttestation,
@@ -69,7 +70,7 @@ export class SatBuildError extends Error {}
  * therefore records it as that backend's cause and leads the next attempt with
  * another member, at the cost of a second full walk.
  */
-export class SatStepLimitError extends SatBuildError {}
+export { SatStepLimitError };
 
 /** funding steps the builder will walk before giving up (SPEC-SAT) */
 export const DEFAULT_MAX_STEPS = 4096;

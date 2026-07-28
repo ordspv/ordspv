@@ -227,19 +227,27 @@ element. A verifier-side step cap (default 10,000) bounds hostile bundles.
 Builders carry their own cap, since a walk spends a request per step against a
 live backend; the reference builder defaults to 4,096 and exposes it as
 `--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past 800
-funding steps, so a builder cap below four figures refuses real work.
+funding steps, so a builder cap below four figures refuses real work. A
+verifier that refuses a bundle for exceeding its cap MUST report that refusal
+distinguishably from a bundle it found invalid, since a bundle deeper than the
+cap may be honest and the caller may raise the cap and read it.
 
 A builder derives its start position, and therefore its walk, from an envelope
 it read out of a reveal witness nothing has bound. A refusal it raises from
 that position is one backend's claim, including a fee-tail ancestry, an
-unbound inscription, and a walk that reached the builder's own step cap. A
-builder MUST NOT treat any of them as terminal while another backend is
-configured; it MUST record the refusal as that backend's cause and walk again
-leading with the next one, and it MUST NOT be read as a fact about the chain
-until a verifier raises the same refusal on a bundle whose envelope binding
-holds. A builder that has exhausted every configured backend SHOULD report the
-refusal in the class each backend raised, and SHOULD name every backend that
-reported it.
+unbound inscription, and a walk that reached the builder's own step cap. The
+same holds of a witness section the builder could not build, since the block
+hash and the in-block position it is fetched against were named by that
+backend's own status and merkle proof. So the test is what the refusal was
+derived from. A builder MUST NOT treat a build-time refusal as terminal while
+another backend is configured unless the refusal was derived from data the
+reveal txid commits, and it MUST NOT read such a refusal as a fact about the
+chain until a verifier raises it on a bundle whose envelope binding holds. The
+reveal's input count is such data, so a refusal raised on the count of inputs
+is terminal. A builder MUST record the rest as that backend's cause and walk
+again leading with the next one. A builder that has exhausted every configured
+backend SHOULD report the refusal in the class each backend raised, and SHOULD
+name every backend that led an attempt reporting it.
 
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.

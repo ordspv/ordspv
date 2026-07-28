@@ -216,6 +216,25 @@ export class CoinbaseHeightUnprovenError extends Error {
   }
 }
 
+/**
+ * A genealogy is deeper than the step cap that was allowed for it. The cap is
+ * what bounds the work an untrusted document can demand, so hitting it is a
+ * refusal to read and not a judgement about the document. A bundle refused
+ * this way may be perfectly honest and merely have a deep ancestry, which is a
+ * different fact from being forged (plain Error) or leaving v1's sat domain
+ * (CustodyUnsupportedError). The caller raises the cap to read it.
+ *
+ * The class lives here because both the builder's walk and the verifier's read
+ * refuse on the same ground, and a caller that discriminates on the class has
+ * to see one class from both. `@ordspv/fetch` re-exports it for the builder.
+ */
+export class SatStepLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SatStepLimitError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Genealogy bundles
 // ---------------------------------------------------------------------------
@@ -294,7 +313,11 @@ export function verifySatGenealogy(
   const id = parseInscriptionId(bundle.inscriptionId);
   if (!Array.isArray(bundle.funding)) throw new Error('genealogy bundle missing funding array');
   if (bundle.funding.length > maxSteps) {
-    throw new Error(`genealogy has ${bundle.funding.length} steps, verifier cap is ${maxSteps}`);
+    // a refusal to read, not a claim that the bundle is forged: a genuinely
+    // deep ancestry built with a raised builder cap arrives here well formed
+    throw new SatStepLimitError(
+      `genealogy has ${bundle.funding.length} steps, verifier cap is ${maxSteps}`,
+    );
   }
 
   // ---- reveal: anchored, envelope located, start position derived ----

@@ -286,6 +286,20 @@ async function main(): Promise<void> {
     } catch (e) {
       fail(`verify: ${(e as Error).message}`, 2);
     }
+    // the verifier's own step bound, raisable for a bundle whose ancestry
+    // really is that deep; it bounds work on an untrusted document, so the
+    // caller has to ask for the extra work by name
+    const verifyMaxStepsArg = str(flags.get('max-steps'));
+    let verifyMaxSteps: number | undefined;
+    if (verifyMaxStepsArg !== undefined) {
+      if (kind !== 'genealogy') {
+        fail(`verify: --max-steps applies to sat genealogy bundles, this is a ${kind} bundle`, 2);
+      }
+      verifyMaxSteps = Number(verifyMaxStepsArg);
+      if (!Number.isInteger(verifyMaxSteps) || verifyMaxSteps < 1) {
+        fail('verify: --max-steps must be a positive integer', 2);
+      }
+    }
     const anchorNote =
       `header PoW verified; anchor the block hash against your own chain view; ` +
       `${HEIGHT_CLAIM}`;
@@ -296,7 +310,7 @@ async function main(): Promise<void> {
     try {
       if (kind === 'genealogy') {
         const bundle = parsed as SatGenealogyBundleJson;
-        const result = verifySatGenealogy(bundle);
+        const result = verifySatGenealogy(bundle, { maxSteps: verifyMaxSteps });
         console.log(
           JSON.stringify(
             {
