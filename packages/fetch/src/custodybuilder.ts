@@ -409,16 +409,21 @@ export async function fetchCustody(
       source = backend;
       break;
     } catch (e) {
-      // every backend was already tried for the raw block, and the caller has
-      // to see that this was availability and not an unprovable reveal
-      if (e instanceof WitnessSectionUnavailableError) throw e;
-      // the verifier's refusal, which is about the bundle and not the server
+      // a build-time refusal is terminal only when it was derived from data
+      // the txid commits. This one is: the reveal's input count is inside the
+      // txid, so every backend serving that reveal reports the same thing
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
-      // a v1-domain refusal raised HERE came out of a witness nothing has
-      // bound, so it is this backend's claim about the path and not the
-      // chain's. Record it and ask the next backend; the verifier's own
-      // refusal, after the bundle proved its witness, stays terminal
-      if (e instanceof CustodyUnsupportedError) refusals.push({ baseUrl: backend.baseUrl, error: e });
+      // the rest came out of bytes nothing has bound. A v1-domain refusal is
+      // read out of the served witness, and an unavailable witness section is
+      // read out of the block hash and the position this backend's own status
+      // and merkle proof named, either of which a hostile backend can point at
+      // a real but wrong block. Record it and ask the next backend; the
+      // verifier's own refusal, after the bundle proved its witness, stays
+      // terminal
+      if (e instanceof CustodyUnsupportedError || e instanceof WitnessSectionUnavailableError) {
+        refusals.push({ baseUrl: backend.baseUrl, error: e });
+      }
+      lastCause = e as Error;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }

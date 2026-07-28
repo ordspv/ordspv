@@ -18,6 +18,7 @@ import {
   CustodyError,
   WitnessSectionUnavailableError,
   type AnchorBackend,
+  type AttemptInfo,
 } from '../src/index.js';
 import { CustodyUnsupportedError, EnvelopeIndexUnprovenError } from '@ordspv/core';
 import { EsploraBackend, type FetchFn } from '../src/backends.js';
@@ -79,6 +80,15 @@ function routesForBlock(block: TestBlock, height: number, tipHeight: number): Re
     };
   });
   return routes;
+}
+
+/** copy every route registered for `from` onto `to` */
+function mirror(routes: Record<string, Route>, from: string, to: string): Record<string, Route> {
+  const out = { ...routes };
+  for (const [url, route] of Object.entries(routes)) {
+    if (url.startsWith(from)) out[to + url.slice(from.length)] = route;
+  }
+  return out;
 }
 
 function u32le(n: number): Uint8Array {
@@ -353,15 +363,6 @@ describe('fetchCustody build-time domain refusals', () => {
     return [new Uint8Array(64).fill(7), script, taprootCommit(script).controlBlock];
   }
 
-  /** copy every route registered for `from` onto `to` */
-  function mirror(routes: Record<string, Route>, from: string, to: string): Record<string, Route> {
-    const out = { ...routes };
-    for (const [url, route] of Object.entries(routes)) {
-      if (url.startsWith(from)) out[to + url.slice(from.length)] = route;
-    }
-    return out;
-  }
-
   /** E serves a reveal whose envelope is unbound; E2 serves the honest one */
   function poisonedSetup() {
     const { commit, reveal, block, id } = inscriptionSetup();
@@ -413,6 +414,8 @@ describe('fetchCustody build-time domain refusals', () => {
 });
 
 describe('fetchCustody with multi-input reveals', () => {
+  // attesters that serve no bytes, so a build through either backend anchors
+  const E4 = 'https://esplora4.test';
   // key-path funding leg on input 0, the envelope on input 1: an ordinary
   // wallet-funded reveal, and the shape the wtxid proof exists for
   const env = envelopeScript({ fields: [[1, 'text/plain']], body: ['multi'] }, { checksigPrefix: true });
@@ -488,17 +491,67 @@ describe('fetchCustody with multi-input reveals', () => {
     expect(res.custody.genesis.offset).toBe(10_000n);
   });
 
-  it('passes WitnessSectionUnavailableError through, naming the backend cause', async () => {
-    // no raw-block route: the builder emits no unverifiable bundle, and the
-    // failure reaches the caller as itself the way CustodyUnsupportedError
-    // does. It is availability, so it is NOT the verifier's refusal class
-    const p = fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(false)) });
+  it('surfaces WitnessSectionUnavailableError once every backend led an attempt into it', async () => {
+    // no raw-block route anywhere: the builder emits no unverifiable bundle,
+    // every attempt ends the same way, and the failure reaches the caller as
+    // itself. It is availability, so it is NOT the verifier's refusal class
+    const p = fetchCustody(id, {
+      ...OPTS,
+      anchorSources: [E3, E4],
+      fetchFn: stubFetch(mirror(routes(false), E, E2)),
+    });
     await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
     await expect(p).rejects.not.toThrow(EnvelopeIndexUnprovenError);
     await expect(p).rejects.toThrow(/spends 2 input/);
     // the real cause is a backend failure, not an unprovable reveal
     await expect(p).rejects.toThrow(/HTTP 404/);
-    await expect(p).rejects.toThrow(new RegExp(E));
+    await expect(p).rejects.toThrow(new RegExp(`${E},.*${E2}`));
+  });
+
+  it('walks again on the next backend when one names a wrong block for the reveal', async () => {
+    // E's own status names a real but WRONG block for the reveal, so the raw
+    // block is unusable at every backend and the section cannot be built. The
+    // trigger is E's word, not the chain's, so the refusal is not terminal:
+    // E2 walks honestly and the bundle verifies through its block
+    const decoy = buildBlock([commit]);
+    const r = mirror(routes(true), E, E2);
+    r[`${E}/tx/${reveal.txid}/status`] = {
+      confirmed: true,
+      block_height: 100,
+      block_hash: decoy.blockHash,
+    };
+    r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex.trim();
+    r[`${E}/block/${decoy.blockHash}`] = { id: decoy.blockHash, height: 100, tx_count: decoy.txCount };
+    r[`${E}/block/${decoy.blockHash}/raw`] = serializeBlock(hexToBytes(decoy.headerHex), decoy.txs);
+    r[`${E4}/block-height/100`] = block.blockHash;
+    r[`${E4}/blocks/tip/height`] = '120';
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...OPTS,
+      anchorSources: [E3, E4],
+      witnessSection: 'always',
+      fetchFn: stubFetch(r),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.hops).toBe(1);
+    expect(res.custody.indexProof).toBe('wtxid');
+    // one line per attempt, and the second says what ended the first
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect(attempts[0].cause).toBeUndefined();
+    expect(attempts[1].cause).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(attempts[1].total).toBe(2);
+
+    // and with E alone there is nothing to move on to
+    const p = fetchCustody(id, {
+      ...OPTS,
+      esplora: [E],
+      anchorSources: [E3, E4],
+      witnessSection: 'always',
+      fetchFn: stubFetch(r),
+    });
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.toThrow(/position -1 in the served block/);
   });
 
   it('names a backend that exposes no getBlockRaw as its own cause', async () => {

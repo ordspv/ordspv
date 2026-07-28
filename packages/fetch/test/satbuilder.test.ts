@@ -28,6 +28,7 @@ import {
   perHeaderAttestation,
   SatStepLimitError,
   WitnessSectionUnavailableError,
+  type AttemptInfo,
 } from '../src/index.js';
 import {
   buildBlock,
@@ -742,6 +743,58 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     const again = verifySatGenealogy(JSON.parse(JSON.stringify(res.bundle)), NO_POW_FLOOR);
     expect(again.indexProof).toBe('wtxid');
     expect(again.sat).toBe(SAT);
+  });
+
+  it('walks again on the next lead member when one names a wrong block for the reveal', async () => {
+    // a member's own status names a real but WRONG block for the reveal, so
+    // the raw block is unusable however the pool rotates and the section
+    // cannot be built. The trigger is that member's word, not the chain's, so
+    // the refusal is not terminal: the build leads with the other member and
+    // reads the status from an honest one. Which member answers a given
+    // request is the pool's own rotation, and rotating the LEAD is what puts a
+    // different member on the status request the second time around.
+    const decoy = mineBlock([coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY + 1n }]).tx]);
+    const r = routes(true);
+    r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex;
+    r[`${E}/block/${decoy.blockHash}`] = {
+      id: decoy.blockHash,
+      height: REVEAL_HEIGHT,
+      tx_count: decoy.txCount,
+    };
+    r[`${E}/block/${decoy.blockHash}/raw`] = serializeBlock(hexToBytes(decoy.headerHex), decoy.txs);
+    const base = stubFetch(r);
+    const fetchFn: FetchFn = (url, init) => {
+      // EB mirrors E, except that it points the reveal at the decoy block
+      if (url === `${EB}/tx/${reveal.tx.txid}/status`) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              confirmed: true,
+              block_height: REVEAL_HEIGHT,
+              block_hash: decoy.blockHash,
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      return base(url.replace(EB, E), init);
+    };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.indexProof).toBe('wtxid');
+    expect(res.identity.sat).toBe(SAT);
+    expect(res.bundle.reveal.block.hash).toBe(revealBlock.blockHash);
+    // one report per attempt, and the second says what ended the first
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[0].cause).toBeUndefined();
+    expect(attempts[1].cause).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(attempts[1].total).toBe(2);
   });
 
   it('passes WitnessSectionUnavailableError through, naming the backend cause', async () => {

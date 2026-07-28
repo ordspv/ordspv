@@ -372,21 +372,40 @@ export async function fetchSatIdentity(
       pool = attempt;
       break;
     } catch (e) {
-      // no backend served the raw block, with each cause named; retrying later
-      // may succeed, which is why this is not the verifier's refusal class
-      if (e instanceof WitnessSectionUnavailableError) throw e;
-      // a reveal whose numbering no backend could prove, with each cause named
+      // a build-time refusal is terminal only when it was derived from data
+      // the txid commits. This one is: the reveal's input count is inside the
+      // txid, so leading with another member cannot change the answer
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
-      // a v1-domain refusal raised HERE is derived from the served envelope,
-      // which nothing has bound yet, so it is this backend's claim about the
-      // ancestry. Record it and lead the next attempt with another member
-      if (e instanceof CustodyUnsupportedError || e instanceof SatStepLimitError) {
+      // the rest came out of bytes nothing has bound. A v1-domain refusal and
+      // a step cap are read out of the served envelope, and an unavailable
+      // witness section is read out of the block hash and the position the
+      // leading member's own status and merkle proof named, either of which a
+      // hostile member can point at a real but wrong block, making the raw
+      // block unusable on every member. Record it and lead the next attempt
+      // with another member
+      if (
+        e instanceof CustodyUnsupportedError ||
+        e instanceof SatStepLimitError ||
+        e instanceof WitnessSectionUnavailableError
+      ) {
         refusals.push({ baseUrl: members[i].baseUrl, error: e });
+        lastCause = e as Error;
         buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
         continue;
       }
-      // every member already failed the request that ended this walk, so
-      // leading with another member repeats thousands of steps for nothing
+      // a transport failure ends the whole build here, and the reason is
+      // structural. This walk runs through a PooledEsploraBackend whose `run`
+      // throws only after every member failed that request (backends.ts), so
+      // the throw already means the pool failed, and a fresh lead member would
+      // walk to the same wall. The custody side builds through one
+      // EsploraBackend per attempt, where a transport failure is one backend's
+      // and advancing is right.
+      //
+      // What the pool does not rotate on is a content failure: a member
+      // serving bytes that hash wrong is caught outside `run`, at the txid
+      // check below the walk's getTxHex and inside provenInputValues, so one
+      // member serving garbage for one mid-walk request ends the build. That
+      // is availability only, because that check is what makes the walk sound.
       buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
       break;
     }
