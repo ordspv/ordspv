@@ -4306,8 +4306,9 @@ ${errors.join("\n")}`);
       const started = performance.now();
       const result = await resolver.resolve(uri);
       const ms = Math.round(performance.now() - started);
+      const numberingOpen = result.verification.level !== "L3" && result.verification.l2?.singleInputReveal === false;
       $("status").className = "status pass";
-      $("status").textContent = `\u2713 verified at ${result.verification.level} in ${ms} ms; rendered from proven bytes`;
+      $("status").textContent = `\u2713 verified at ${result.verification.level} in ${ms} ms; ` + (numberingOpen ? L2_NUMBERING_RESIDUAL : "rendered from proven bytes");
       fact("inscription", result.uri.idString, true);
       fact("content-type", result.contentType ?? "(none)");
       fact("bytes", String(result.body.length) + (result.decoded ? " (decoded)" : ""));
@@ -4319,7 +4320,7 @@ ${errors.join("\n")}`);
       if (l2) {
         fact(
           "assurances",
-          `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}` + (result.verification.level === "L3" ? " (+witness commitment)" : "")
+          `singleLeafTree=${l2.singleLeafTree} singleInputReveal=${l2.singleInputReveal}`
         );
         if (result.verification.level !== "L3") {
           fact(
