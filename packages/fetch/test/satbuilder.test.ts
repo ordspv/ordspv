@@ -552,8 +552,8 @@ describe('fetchSatIdentity', () => {
 });
 
 describe('fetchSatIdentity with multi-input reveals', () => {
-  // key-path funding leg on input 0, the envelope on input 1: the shape the
-  // prefix rule cannot prove and the wtxid proof exists for
+  // key-path funding leg on input 0, the envelope on input 1: an ordinary
+  // wallet-funded reveal, and the shape the wtxid proof exists for
   const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
   const commit = buildTx(
     [{ txid: coinbase.tx.txid, vout: 0 }],

@@ -313,8 +313,8 @@ describe('fetchCustody', () => {
 });
 
 describe('fetchCustody with multi-input reveals', () => {
-  // key-path funding leg on input 0, the envelope on input 1: the shape the
-  // prefix rule cannot prove and the wtxid proof exists for
+  // key-path funding leg on input 0, the envelope on input 1: an ordinary
+  // wallet-funded reveal, and the shape the wtxid proof exists for
   const env = envelopeScript({ fields: [[1, 'text/plain']], body: ['multi'] }, { checksigPrefix: true });
   const tap = taprootCommit(env);
 
