@@ -1,6 +1,6 @@
 import { bytesEqual, displayToInternal, hexToBytes } from './bytes.js';
 import { inscriptionsFromTx, type Inscription } from './envelope.js';
-import { parseHeader, checkProofOfWork, type BlockHeader } from './header.js';
+import { parseHeader, checkProofOfWork, checkPowLimit, type BlockHeader } from './header.js';
 import { parseInscriptionId } from './inscriptionId.js';
 import { treeHeight, verifyMerkleBranch } from './merkle.js';
 import { extractTapscript, parseControlBlock, verifyScriptPathCommitment } from './taproot.js';
@@ -92,6 +92,12 @@ export interface VerifyOptions {
    * settings: a single header's work is cheap relative to valuable content).
    */
   trustHeader?: (header: BlockHeader, height: number) => void;
+  /**
+   * Compact-bits proof-of-work floor applied to the bundle's header before its
+   * own PoW check counts for anything. Defaults to the mainnet limit
+   * (0x1d00ffff); pass another chain's limit, or null to disable it.
+   */
+  powLimitBits?: number | null;
 }
 
 function parseHexTx(hex: string, label: string): ParsedTx {
@@ -119,6 +125,7 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   if (header.hash !== bundle.block.hash.toLowerCase()) {
     throw new Error(`header hashes to ${header.hash}, bundle claims ${bundle.block.hash}`);
   }
+  checkPowLimit(header, opts.powLimitBits);
   if (!checkProofOfWork(header)) throw new Error('header fails proof of work');
   if (!Number.isInteger(bundle.block.txCount) || bundle.block.txCount < 1) {
     throw new Error('bundle missing valid txCount');

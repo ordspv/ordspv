@@ -208,7 +208,7 @@ export class OrdResolver {
     );
     let verified: VerifiedInscription;
     try {
-      verified = verifyProofBundle(bundle);
+      verified = verifyProofBundle(bundle, { powLimitBits: this.options.powLimitBits });
     } catch (e) {
       throw new OrdResolveError('VERIFY_FAILED', (e as Error).message);
     }

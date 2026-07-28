@@ -193,6 +193,12 @@ export interface SidecarOptions {
   cacheMaxBytes?: number;
   /** largest single cacheable bundle (default 4 MiB) */
   cacheMaxEntryBytes?: number;
+  /**
+   * Compact-bits proof-of-work floor for the self-check below. Defaults to the
+   * mainnet limit (0x1d00ffff); a sidecar fronting a regtest or signet node
+   * passes that chain's limit, or null to disable the floor.
+   */
+  powLimitBits?: number | null;
 }
 
 const IMMUTABLE = 'public, max-age=1209600, immutable';
@@ -276,7 +282,8 @@ export function createSidecar(options: SidecarOptions): Server {
       }
       try {
         const bundle = await buildProofBundle(backend, parseInscriptionId(id), level);
-        verifyProofBundle(bundle); // never relay a bundle we cannot verify
+        // never relay a bundle we cannot verify
+        verifyProofBundle(bundle, { powLimitBits: options.powLimitBits });
         const body = new TextEncoder().encode(JSON.stringify(bundle));
         const headers = {
           'access-control-allow-origin': '*',

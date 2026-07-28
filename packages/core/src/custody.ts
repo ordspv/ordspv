@@ -33,7 +33,7 @@
 import { ParsedTx, parseTx } from './tx.js';
 import { Inscription, inscriptionsFromTx } from './envelope.js';
 import { parseInscriptionId } from './inscriptionId.js';
-import { parseHeader, checkProofOfWork, BlockHeader } from './header.js';
+import { parseHeader, checkProofOfWork, checkPowLimit, BlockHeader } from './header.js';
 import { verifyMerkleBranch, treeHeight } from './merkle.js';
 import { hexToBytes, bytesEqual, displayToInternal } from './bytes.js';
 import {
@@ -419,6 +419,12 @@ export interface CustodyBundleJson {
 export interface CustodyVerifyOptions {
   /** Anchor each hop's header to a trusted view of the chain; throw to reject. */
   trustHeader?: (header: BlockHeader, height: number) => void;
+  /**
+   * Compact-bits proof-of-work floor applied to every hop header before its own
+   * PoW check counts for anything. Defaults to the mainnet limit (0x1d00ffff);
+   * pass another chain's limit, or null to disable it.
+   */
+  powLimitBits?: number | null;
 }
 
 export interface VerifiedCustody {
@@ -461,6 +467,7 @@ export function verifyAnchoredHop(hop: CustodyHopJson, tx: ParsedTx, label: stri
   if (header.hash !== hop.block.hash.toLowerCase()) {
     throw new Error(`${label}: header hashes to ${header.hash}, bundle claims ${hop.block.hash}`);
   }
+  checkPowLimit(header, opts.powLimitBits, label);
   if (!checkProofOfWork(header)) throw new Error(`${label}: header fails proof of work`);
   if (!Number.isInteger(hop.block.txCount) || hop.block.txCount < 1) {
     throw new Error(`${label}: missing valid txCount`);

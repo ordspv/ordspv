@@ -27,7 +27,15 @@ import {
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { buildBlock, envelopeScript, revealTx, script, taprootCommit, type TestBlock } from './helpers.js';
+import {
+  buildBlock,
+  envelopeScript,
+  revealTx,
+  script,
+  taprootCommit,
+  NO_POW_FLOOR,
+  type TestBlock,
+} from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // local raw-tx builders (values and scripts are all the arithmetic needs)
@@ -273,7 +281,7 @@ describe('verifySatGenealogy', () => {
   }
 
   it('verifies a full synthetic genealogy to the coinbase', () => {
-    const res = verifySatGenealogy(bundle());
+    const res = verifySatGenealogy(bundle(), NO_POW_FLOOR);
     expect(res.sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
     expect(res.coinbaseHeight).toBe(1000);
     expect(res.depth).toBe(2);
@@ -283,28 +291,38 @@ describe('verifySatGenealogy', () => {
     expect(TOTAL_SATS > res.sat).toBe(true);
   });
 
+  it('refuses a header easier than the proof-of-work floor by default', () => {
+    // the reveal hop is anchored and its branch folds; the floor objects to
+    // the header's target alone
+    const b = bundle();
+    expect(() => verifySatGenealogy(b)).toThrow(/reveal: target \(bits 0x207fffff\)/);
+    expect(() => verifySatGenealogy(b)).toThrow(/proof-of-work limit 0x1d00ffff/);
+    expect(verifySatGenealogy(b, { powLimitBits: 0x207fffff }).coinbaseHeight).toBe(1000);
+    expect(verifySatGenealogy(b, NO_POW_FLOOR).coinbaseHeight).toBe(1000);
+  });
+
   it('rejects a wrong claimed sat', () => {
     const b = bundle();
     b.claimedSat = (firstSatOfBlock(1000) + 1n).toString();
-    expect(() => verifySatGenealogy(b)).toThrow(/folds to/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/folds to/);
   });
 
   it('rejects a broken hash chain', () => {
     const b = bundle();
     b.funding = [b.funding[1], b.funding[0]];
-    expect(() => verifySatGenealogy(b)).toThrow(/chain expects/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/chain expects/);
   });
 
   it('rejects a coinbase claimed at nonzero position', () => {
     const b = bundle();
     b.coinbase.tx.pos = 1;
-    expect(() => verifySatGenealogy(b)).toThrow(/position 0/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/position 0/);
   });
 
   it('requires a BIP34 height for modern blocks', () => {
     const b = bundle();
     b.coinbase.block.height = 240_000;
-    expect(() => verifySatGenealogy(b)).toThrow(/BIP34/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/BIP34/);
   });
 
   it('refuses fee-tail ancestries as CustodyUnsupportedError', () => {
@@ -335,8 +353,8 @@ describe('verifySatGenealogy', () => {
       coinbase: anchoredHop(cbFees.tx.txidLE, cbFees.hex, 1000, []),
       claimedSat: '0',
     };
-    expect(() => verifySatGenealogy(b)).toThrow(CustodyUnsupportedError);
-    expect(() => verifySatGenealogy(b)).toThrow(/fee sats in block 1000/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(CustodyUnsupportedError);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/fee sats in block 1000/);
   });
 
   it('accepts prev txs past the envelope input when a pointer needs them', () => {
@@ -387,14 +405,14 @@ describe('verifySatGenealogy', () => {
       claimedSat: (firstSatOfBlock(1000) + 1500n).toString(),
     };
 
-    const res = verifySatGenealogy(b);
+    const res = verifySatGenealogy(b, NO_POW_FLOOR);
     expect(res.revealPosition).toBe(1500n);
     expect(res.sat).toBe(firstSatOfBlock(1000) + 1500n);
     expect(res.depth).toBe(1);
 
     // and a bundle that stops at the envelope input cannot locate the sat
     const short = { ...b, reveal: { ...b.reveal, prevTxs: [fA.hex] } };
-    expect(() => verifySatGenealogy(short)).toThrow(/more are needed/);
+    expect(() => verifySatGenealogy(short, NO_POW_FLOOR)).toThrow(/more are needed/);
   });
 
   // -------------------------------------------------------------------------
@@ -415,7 +433,7 @@ describe('verifySatGenealogy', () => {
   }
 
   it('reports the taptree assurance alongside the sat', () => {
-    const res = verifySatGenealogy(bundle());
+    const res = verifySatGenealogy(bundle(), NO_POW_FLOOR);
     expect(res.controlBlockDepth).toBe(0);
     expect(res.singleLeafTree).toBe(true);
     expect(res.singleInputReveal).toBe(true);
@@ -438,9 +456,9 @@ describe('verifySatGenealogy', () => {
 
     const b = bundle();
     b.reveal.tx.hex = bytesToHex(forged.raw);
-    expect(() => verifySatGenealogy(b)).toThrow(/taproot commitment/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/taproot commitment/);
     // the honest bundle it came from still folds to its sat
-    expect(verifySatGenealogy(bundle()).sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
+    expect(verifySatGenealogy(bundle(), NO_POW_FLOOR).sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
   });
 
   it('refuses an envelope input that spends a non-P2TR output', () => {
@@ -454,7 +472,7 @@ describe('verifySatGenealogy', () => {
     const b = bundle();
     b.inscriptionId = `${bareReveal.txid}i0`;
     b.reveal = anchoredHop(bareReveal.txidLE, bytesToHex(bareReveal.raw), 2000, [bareCommit.hex]);
-    expect(() => verifySatGenealogy(b)).toThrow(/non-P2TR/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/non-P2TR/);
   });
 
   it('refuses a key-path envelope input', () => {
@@ -546,11 +564,11 @@ describe('envelope index binding (multi-input reveals)', () => {
       1,
       firstSatOfBlock(1000) + 10_000n,
     );
-    expect(() => verifySatGenealogy(bundle)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
     // the message names the input count, the envelope's input, and the cause
-    expect(() => verifySatGenealogy(bundle)).toThrow(/reveal spends 2 inputs/);
-    expect(() => verifySatGenealogy(bundle)).toThrow(/envelope on input 1/);
-    expect(() => verifySatGenealogy(bundle)).toThrow(/no witness section/);
+    expect(() => verifySatGenealogy(bundle, NO_POW_FLOOR)).toThrow(/reveal spends 2 inputs/);
+    expect(() => verifySatGenealogy(bundle, NO_POW_FLOOR)).toThrow(/envelope on input 1/);
+    expect(() => verifySatGenealogy(bundle, NO_POW_FLOOR)).toThrow(/no witness section/);
   });
 
   it('refuses the key-path prefix forgery the prefix rule used to accept', () => {
@@ -578,7 +596,7 @@ describe('envelope index binding (multi-input reveals)', () => {
         0,
         honestSat,
       );
-      expect(() => verifySatGenealogy(bundle)).toThrow(EnvelopeIndexUnprovenError);
+      expect(() => verifySatGenealogy(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
     }
 
     // with the block's witness commitment the honest reveal verifies and the
@@ -603,11 +621,11 @@ describe('envelope index binding (multi-input reveals)', () => {
         claimedSat: sat.toString(),
       };
     }
-    const res = verifySatGenealogy(anchored(bytesToHex(reveal.tx.raw), honestSat));
+    const res = verifySatGenealogy(anchored(bytesToHex(reveal.tx.raw), honestSat), NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.revealPosition).toBe(10_000n);
     expect(res.sat).toBe(honestSat);
-    expect(() => verifySatGenealogy(anchored(bytesToHex(forgedTx.raw), firstSatOfBlock(1000)))).toThrow(
+    expect(() => verifySatGenealogy(anchored(bytesToHex(forgedTx.raw), firstSatOfBlock(1000)), NO_POW_FLOOR)).toThrow(
       /witness commitment mismatch/,
     );
   });
@@ -698,7 +716,7 @@ describe('wtxid-anchored reveals (genealogy)', () => {
 
   it('verifies an honest witness-anchored multi-input bundle, and refuses it without the section', () => {
     const withSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
-    const res = verifySatGenealogy(withSection);
+    const res = verifySatGenealogy(withSection, NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.revealPosition).toBe(10_000n);
     expect(res.sat).toBe(firstSatOfBlock(1000) + 10_000n);
@@ -706,16 +724,16 @@ describe('wtxid-anchored reveals (genealogy)', () => {
 
     const noSection = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
     delete noSection.reveal.witness;
-    expect(() => verifySatGenealogy(noSection)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
   });
 
   it('proves the index of a reveal whose earlier input is a key-path spend', () => {
     const noSection = wtxidGenealogy(blockKey, bytesToHex(revealKey.tx.raw), commitKey.hex, 0, firstSatOfBlock(1000) + 10_000n);
     delete noSection.reveal.witness;
-    expect(() => verifySatGenealogy(noSection)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifySatGenealogy(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
 
     const withSection = wtxidGenealogy(blockKey, bytesToHex(revealKey.tx.raw), commitKey.hex, 0, firstSatOfBlock(1000) + 10_000n);
-    const res = verifySatGenealogy(withSection);
+    const res = verifySatGenealogy(withSection, NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.sat).toBe(firstSatOfBlock(1000) + 10_000n);
   });
@@ -730,14 +748,14 @@ describe('wtxid-anchored reveals (genealogy)', () => {
       const forged = withWitnesses(reveal.tx, witnesses);
       expect(forged.txid).toBe(reveal.tx.txid);
       const b = wtxidGenealogy(block, bytesToHex(forged.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
-      expect(() => verifySatGenealogy(b)).toThrow(/witness commitment mismatch/);
+      expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
     }
   });
 
   it('refuses a witness section on the terminal coinbase hop', () => {
     const b = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
     b.coinbase.witness = { coinbaseHex: '00', coinbaseTxidBranch: [], wtxidBranch: [] };
-    expect(() => verifySatGenealogy(b)).toThrow(/witness section is only accepted at the reveal/);
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(/witness section is only accepted at the reveal/);
   });
 
   it('refuses a witness section on a funding step', () => {
@@ -749,7 +767,7 @@ describe('wtxid-anchored reveals (genealogy)', () => {
       coinbaseTxidBranch: [],
       wtxidBranch: [],
     };
-    expect(() => verifySatGenealogy(b)).toThrow(
+    expect(() => verifySatGenealogy(b, NO_POW_FLOOR)).toThrow(
       /funding\[0\]: witness section is only accepted at the reveal/,
     );
   });
@@ -760,29 +778,29 @@ describe('wtxid-anchored reveals (genealogy)', () => {
 
     const noHex = base();
     (noHex.reveal.witness as { coinbaseHex: unknown }).coinbaseHex = undefined;
-    expect(() => verifySatGenealogy(noHex)).toThrow(
+    expect(() => verifySatGenealogy(noHex, NO_POW_FLOOR)).toThrow(
       /witness section: coinbaseHex must be a non-empty hex string/,
     );
 
     const emptyHex = base();
     emptyHex.reveal.witness!.coinbaseHex = '';
-    expect(() => verifySatGenealogy(emptyHex)).toThrow(/witness section: coinbaseHex/);
+    expect(() => verifySatGenealogy(emptyHex, NO_POW_FLOOR)).toThrow(/witness section: coinbaseHex/);
 
     const notArray = base();
     (notArray.reveal.witness as { wtxidBranch: unknown }).wtxidBranch = 'deadbeef';
-    expect(() => verifySatGenealogy(notArray)).toThrow(
+    expect(() => verifySatGenealogy(notArray, NO_POW_FLOOR)).toThrow(
       /witness section: wtxidBranch must be an array of 32-byte hex strings/,
     );
 
     const shortNode = base();
     shortNode.reveal.witness!.coinbaseTxidBranch = ['00'];
-    expect(() => verifySatGenealogy(shortNode)).toThrow(
+    expect(() => verifySatGenealogy(shortNode, NO_POW_FLOOR)).toThrow(
       /witness section: coinbaseTxidBranch\[0\] must be a 32-byte hex string/,
     );
 
     const nonString = base();
     (nonString.reveal.witness!.wtxidBranch as unknown[])[0] = 7;
-    expect(() => verifySatGenealogy(nonString)).toThrow(
+    expect(() => verifySatGenealogy(nonString, NO_POW_FLOOR)).toThrow(
       /witness section: wtxidBranch\[0\] must be a 32-byte hex string/,
     );
   });

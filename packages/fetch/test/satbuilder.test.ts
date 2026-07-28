@@ -26,7 +26,12 @@ import {
   SatIdentityError,
   SatStepLimitError,
 } from '../src/index.js';
-import { buildBlock, envelopeScript, taprootCommit } from '../../core/test/helpers.js';
+import {
+  buildBlock,
+  envelopeScript,
+  taprootCommit,
+  NO_POW_FLOOR,
+} from '../../core/test/helpers.js';
 
 /**
  * Sat genealogy building driven against a mock esplora. The backend here is
@@ -292,7 +297,7 @@ describe('fetchSatIdentity', () => {
     expect(res.headerTrust.coinbase.anchored).toBe(true);
 
     // the bundle stands alone: re-verifying it offline yields the same identity
-    expect(verifySatGenealogy(res.bundle).sat).toBe(res.identity.sat);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
     expect(res.bundle.funding).toHaveLength(1);
     expect(res.bundle.coinbase.tx.pos).toBe(0);
   });
@@ -365,7 +370,7 @@ describe('fetchSatIdentity', () => {
     expect(res.identity.depth).toBe(1);
     // both reveal inputs are funded by the same transaction: identical hexes
     expect(res.bundle.reveal.prevTxs).toEqual([fA.hex, fA.hex]);
-    expect(verifySatGenealogy(res.bundle).sat).toBe(res.identity.sat);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
   });
 
   it('rejects a backend that serves different bytes on a second request', async () => {
@@ -600,7 +605,7 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(res.identity.sat).toBe(SAT);
     expect(res.bundle.reveal.witness).toBeDefined();
     // the bundle stands alone offline
-    const again = verifySatGenealogy(JSON.parse(JSON.stringify(res.bundle)));
+    const again = verifySatGenealogy(JSON.parse(JSON.stringify(res.bundle)), NO_POW_FLOOR);
     expect(again.indexProof).toBe('wtxid');
     expect(again.sat).toBe(SAT);
   });

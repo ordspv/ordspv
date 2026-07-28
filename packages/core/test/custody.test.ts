@@ -28,7 +28,14 @@ import {
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
-import { buildBlock, envelopeScript, script, taprootCommit, type TestBlock } from './helpers.js';
+import {
+  buildBlock,
+  envelopeScript,
+  script,
+  taprootCommit,
+  NO_POW_FLOOR,
+  type TestBlock,
+} from './helpers.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
 const revealHex = readFileSync(join(FIXTURES, 'reveal.hex'), 'utf8').trim();
@@ -357,7 +364,7 @@ describe('verifyCustodyBundle', () => {
       prevTxs: [revealHex],
     });
     bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
-    const res = verifyCustodyBundle(bundle);
+    const res = verifyCustodyBundle(bundle, NO_POW_FLOOR);
     expect(res.hops).toBe(2);
     expect(res.satpoint.txid).toBe(spend.tx.txid);
     expect(res.path).toHaveLength(2);
@@ -374,7 +381,7 @@ describe('verifyCustodyBundle', () => {
       prevTxs: [revealHex],
     });
     bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/chain order/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/chain order/);
   });
 
   it('surfaces fee-spillover paths as CustodyUnsupportedError', () => {
@@ -389,7 +396,7 @@ describe('verifyCustodyBundle', () => {
       prevTxs: [revealHex],
     });
     bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
-    expect(() => verifyCustodyBundle(bundle)).toThrow(CustodyUnsupportedError);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(CustodyUnsupportedError);
     expect(outValue > 0n).toBe(true);
   });
 
@@ -407,7 +414,7 @@ describe('verifyCustodyBundle', () => {
     // before chain order or spend linkage can object
     bundle.hops.push(hop, { ...hop, block: { ...hop.block, height: hop.block.height + 1 } });
     bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/duplicate transaction/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/duplicate transaction/);
   });
 
   it('refuses a coinbase as a later hop with CustodyUnsupportedError', () => {
@@ -420,8 +427,8 @@ describe('verifyCustodyBundle', () => {
       prevTxs: [],
     });
     bundle.finalSatpoint = `${coinbase.tx.txid}:0:0`;
-    expect(() => verifyCustodyBundle(bundle)).toThrow(CustodyUnsupportedError);
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/coinbase/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(CustodyUnsupportedError);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/coinbase/);
   });
 
   it('rejects hop txs whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
@@ -688,11 +695,11 @@ describe('envelope index binding (multi-input reveals)', () => {
       [commit.hex, commit.hex],
       `${reveal.tx.txid}:0:10000`,
     );
-    expect(() => verifyCustodyBundle(bundle)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
     // the message names the input count, the envelope's input, and the cause
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/reveal spends 2 inputs/);
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/envelope on input 1/);
-    expect(() => verifyCustodyBundle(bundle)).toThrow(/no witness section/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/reveal spends 2 inputs/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/envelope on input 1/);
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(/no witness section/);
   });
 
   it('refuses the key-path prefix forgery the prefix rule used to accept', () => {
@@ -727,7 +734,7 @@ describe('envelope index binding (multi-input reveals)', () => {
         [commit.hex, commit.hex],
         `${reveal.tx.txid}:0:10000`,
       );
-      expect(() => verifyCustodyBundle(bundle)).toThrow(EnvelopeIndexUnprovenError);
+      expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
     }
 
     // with the block's witness commitment the honest reveal verifies and the
@@ -750,11 +757,11 @@ describe('envelope index binding (multi-input reveals)', () => {
       ],
       finalSatpoint,
     });
-    const res = verifyCustodyBundle(anchored(reveal.hex, `${reveal.tx.txid}:0:10000`));
+    const res = verifyCustodyBundle(anchored(reveal.hex, `${reveal.tx.txid}:0:10000`), NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.genesis.offset).toBe(10_000n);
     expect(() =>
-      verifyCustodyBundle(anchored(bytesToHex(forgedTx.raw), `${reveal.tx.txid}:0:0`)),
+      verifyCustodyBundle(anchored(bytesToHex(forgedTx.raw), `${reveal.tx.txid}:0:0`), NO_POW_FLOOR),
     ).toThrow(/witness commitment mismatch/);
   });
 
@@ -765,7 +772,7 @@ describe('envelope index binding (multi-input reveals)', () => {
       [9_000n],
     );
     const bundle = oneHopBundle(reveal.tx, reveal.hex, 0, [commit.hex], `${reveal.tx.txid}:0:0`);
-    const res = verifyCustodyBundle(bundle);
+    const res = verifyCustodyBundle(bundle, NO_POW_FLOOR);
     expect(res.genesis.offset).toBe(0n);
     expect(res.singleLeafTree).toBe(true);
     expect(res.singleInputReveal).toBe(true);
@@ -840,6 +847,22 @@ describe('wtxid-anchored reveals (custody)', () => {
     };
   }
 
+  it('refuses a header easier than the proof-of-work floor by default', () => {
+    const bundle = wtxidBundle(
+      block,
+      reveal.hex,
+      1,
+      [commit.hex, commit.hex],
+      `${reveal.tx.txid}:0:10000`,
+    );
+    // hop 0's merkle proof folds and the header satisfies its own target; the
+    // floor is what says that target cost nothing
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/hop 0 \(reveal\): target/);
+    expect(() => verifyCustodyBundle(bundle)).toThrow(/proof-of-work limit 0x1d00ffff/);
+    expect(verifyCustodyBundle(bundle, { powLimitBits: 0x207fffff }).indexProof).toBe('wtxid');
+    expect(verifyCustodyBundle(bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
+  });
+
   it('verifies an honest witness-anchored multi-input bundle, and refuses it without the section', () => {
     const withSection = wtxidBundle(
       block,
@@ -848,7 +871,7 @@ describe('wtxid-anchored reveals (custody)', () => {
       [commit.hex, commit.hex],
       `${reveal.tx.txid}:0:10000`,
     );
-    const res = verifyCustodyBundle(withSection);
+    const res = verifyCustodyBundle(withSection, NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.genesis.offset).toBe(10_000n);
     expect(res.controlBlockDepth).toBe(0);
@@ -857,7 +880,7 @@ describe('wtxid-anchored reveals (custody)', () => {
 
     const noSection = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
     delete noSection.hops[0].witness;
-    expect(() => verifyCustodyBundle(noSection)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
   });
 
   it('proves the index of a reveal whose earlier input is a key-path spend', () => {
@@ -871,7 +894,7 @@ describe('wtxid-anchored reveals (custody)', () => {
       `${revealKey.tx.txid}:0:10000`,
     );
     delete noSection.hops[0].witness;
-    expect(() => verifyCustodyBundle(noSection)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyCustodyBundle(noSection, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
 
     const withSection = wtxidBundle(
       blockKey,
@@ -880,7 +903,7 @@ describe('wtxid-anchored reveals (custody)', () => {
       [commitKey.hex, commitKey.hex],
       `${revealKey.tx.txid}:0:10000`,
     );
-    const res = verifyCustodyBundle(withSection);
+    const res = verifyCustodyBundle(withSection, NO_POW_FLOOR);
     expect(res.indexProof).toBe('wtxid');
     expect(res.genesis.offset).toBe(10_000n);
   });
@@ -903,7 +926,7 @@ describe('wtxid-anchored reveals (custody)', () => {
         [commit.hex, commit.hex],
         `${reveal.tx.txid}:0:10000`,
       );
-      expect(() => verifyCustodyBundle(b)).toThrow(/witness commitment mismatch/);
+      expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
     }
   });
 
@@ -913,21 +936,21 @@ describe('wtxid-anchored reveals (custody)', () => {
 
     const notCoinbase = base();
     notCoinbase.hops[0].witness!.coinbaseHex = reveal.hex;
-    expect(() => verifyCustodyBundle(notCoinbase)).toThrow(/not a coinbase transaction/);
+    expect(() => verifyCustodyBundle(notCoinbase, NO_POW_FLOOR)).toThrow(/not a coinbase transaction/);
 
     const badCbDepth = base();
     badCbDepth.hops[0].witness!.coinbaseTxidBranch = [
       ...badCbDepth.hops[0].witness!.coinbaseTxidBranch,
       '11'.repeat(32),
     ];
-    expect(() => verifyCustodyBundle(badCbDepth)).toThrow(/coinbase branch depth/);
+    expect(() => verifyCustodyBundle(badCbDepth, NO_POW_FLOOR)).toThrow(/coinbase branch depth/);
 
     const badWtxidDepth = base();
     badWtxidDepth.hops[0].witness!.wtxidBranch = [
       ...badWtxidDepth.hops[0].witness!.wtxidBranch,
       '11'.repeat(32),
     ];
-    expect(() => verifyCustodyBundle(badWtxidDepth)).toThrow(/wtxid branch depth/);
+    expect(() => verifyCustodyBundle(badWtxidDepth, NO_POW_FLOOR)).toThrow(/wtxid branch depth/);
 
     // tampering the reserved value leaves the coinbase's txid intact but
     // changes the commitment preimage
@@ -943,7 +966,7 @@ describe('wtxid-anchored reveals (custody)', () => {
     expect(tampered.txid).toBe(cb.txid);
     const badReserved = base();
     badReserved.hops[0].witness!.coinbaseHex = bytesToHex(tampered.raw);
-    expect(() => verifyCustodyBundle(badReserved)).toThrow(/witness commitment mismatch/);
+    expect(() => verifyCustodyBundle(badReserved, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
   });
 
   it('rejects a coinbase with no commitment output through the shared function', () => {
@@ -995,6 +1018,6 @@ describe('wtxid-anchored reveals (custody)', () => {
       witness: { coinbaseHex: '00', coinbaseTxidBranch: [], wtxidBranch: [] },
     });
     b.finalSatpoint = `${spend.tx.txid}:0:10000`;
-    expect(() => verifyCustodyBundle(b)).toThrow(/witness section is only accepted at the reveal/);
+    expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow(/witness section is only accepted at the reveal/);
   });
 });

@@ -68,6 +68,34 @@ export function checkProofOfWork(header: BlockHeader): boolean {
 }
 
 /**
+ * Proof-of-work floor. `checkProofOfWork` compares a header's hash against the
+ * target the header itself declares, so a header that declares an easy target
+ * passes it for a few milliseconds of work. A bundle chooses its own headers,
+ * so a verifier that checks only the self-declared target proves nothing about
+ * the cost of fabricating one.
+ *
+ * `powLimitBits` is the network's easiest allowed target. `undefined` means
+ * mainnet (MAINNET_CHAIN_PARAMS.powLimitBits), a number overrides it for
+ * another chain, and `null` disables the floor. The comparison is local and
+ * needs no network. A header that fails is fabricated or belongs to another
+ * chain, and both are forgery-class.
+ */
+export function checkPowLimit(
+  header: BlockHeader,
+  powLimitBits: number | null | undefined,
+  label = 'header',
+): void {
+  const limit = powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : powLimitBits;
+  if (limit === null) return;
+  if (bitsToTarget(header.bits) > bitsToTarget(limit)) {
+    throw new Error(
+      `${label}: target (bits 0x${header.bits.toString(16)}) is easier than the ` +
+        `proof-of-work limit 0x${limit.toString(16)}; set powLimitBits for non-mainnet chains`,
+    );
+  }
+}
+
+/**
  * Compress a target into compact "bits": exact port of arith_uint256::GetCompact
  * (round-trips consensus semantics: retarget comparisons happen in compact form,
  * so precision loss here is consensus-correct, not a bug).

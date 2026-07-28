@@ -88,6 +88,23 @@ already binds.
 
 ### Fixed
 
+- **Security: all three verifiers floor a bundle's proof of work, and this
+  also affects 0.2.x users on the content path.** `checkProofOfWork` compares
+  a header's hash against the target the header itself declares, and nothing
+  in `verifyProofBundle` constrained that target, so a bundle could carry
+  headers mined at `0x207fffff` in under a second each and verify offline
+  with `ok: true`. The `powLimitBits` floor existed only in
+  `makeHeaderTrust`, which the CLI's `verify` command does not use at all, so
+  the offline path understated the cost of fabricating a header by 76 orders
+  of magnitude. `verifyProofBundle`, `verifyCustodyBundle` and
+  `verifySatGenealogy` now require every header's target to be at or below
+  the network proof-of-work limit before its own PoW check counts for
+  anything, defaulting to the mainnet limit `0x1d00ffff`. Each takes
+  `powLimitBits` with the same meaning `makeHeaderTrust` gives it: a number
+  overrides, `null` disables, undefined means mainnet. The check is local and
+  costs no request. `@ordspv/sidecar` gained the same option for operators
+  fronting a non-mainnet node. Bundles built from real chain data are
+  unaffected.
 - **Custody and sat identity verification bind the envelope to the taproot
   commitment.** Both anchored the reveal by its txid and then read the
   pointer and the envelope's input index out of the reveal's witness, which

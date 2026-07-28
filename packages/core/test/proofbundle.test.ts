@@ -20,6 +20,7 @@ import {
   revealTx,
   taprootCommit,
   DUMMY_CONTROL_BLOCK,
+  NO_POW_FLOOR,
 } from './helpers.js';
 
 const te = new TextEncoder();
@@ -52,16 +53,30 @@ describe('L3 proof bundles (synthetic blocks)', () => {
     const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
     const block = buildBlock([reveal]);
     const bundle = l3Bundle(block, 1, `${reveal.txid}i0`);
-    const result = verifyProofBundle(bundle);
+    const result = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(result.level).toBe('L3');
     expect(new TextDecoder().decode(result.inscription.body)).toBe('hello L3');
+  });
+
+  it('refuses a header easier than the proof-of-work floor by default', () => {
+    // the block's merkle structure and the header's own PoW are both valid;
+    // what the floor objects to is how little that PoW cost
+    const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
+    const block = buildBlock([reveal]);
+    const bundle = l3Bundle(block, 1, `${reveal.txid}i0`);
+    expect(() => verifyProofBundle(bundle)).toThrow(/proof-of-work limit/);
+    expect(() => verifyProofBundle(bundle)).toThrow(/0x207fffff/);
+    expect(() => verifyProofBundle(bundle)).toThrow(/0x1d00ffff/);
+    // an explicit floor of the chain's own limit accepts it, as does null
+    expect(verifyProofBundle(bundle, { powLimitBits: 0x207fffff }).level).toBe('L3');
+    expect(verifyProofBundle(bundle, NO_POW_FLOOR).level).toBe('L3');
   });
 
   it('verifies a reveal deeper in a larger block', () => {
     const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
     const block = buildBlock([dummyTx(), reveal, dummyTx(), dummyTx()]);
     const bundle = l3Bundle(block, 2, `${reveal.txid}i0`);
-    const result = verifyProofBundle(bundle);
+    const result = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(result.level).toBe('L3');
     expect(result.inscription.contentType).toBe('text/plain');
   });
@@ -91,14 +106,14 @@ describe('L3 proof bundles (synthetic blocks)', () => {
 
     const bundle = l3Bundle(block, 2, `${reveal.txid}i0`);
     bundle.reveal.hex = bytesToHex(forged.raw);
-    expect(() => verifyProofBundle(bundle)).toThrow(/witness commitment mismatch/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
   });
 
   it('rejects a bundle claiming a nonexistent envelope index', () => {
     const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
     const block = buildBlock([reveal]);
     const bundle = l3Bundle(block, 1, `${reveal.txid}i5`);
-    expect(() => verifyProofBundle(bundle)).toThrow(/index 5 not present/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/index 5 not present/);
   });
 
   it('rejects wrong txCount (depth hardening)', () => {
@@ -106,7 +121,7 @@ describe('L3 proof bundles (synthetic blocks)', () => {
     const block = buildBlock([dummyTx(), reveal, dummyTx()]);
     const bundle = l3Bundle(block, 2, `${reveal.txid}i0`);
     bundle.block.txCount = 100;
-    expect(() => verifyProofBundle(bundle)).toThrow(/branch depth|tree height/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/branch depth|tree height/);
   });
 
   it('rejects reveals whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
@@ -151,9 +166,9 @@ describe('L3 proof bundles (synthetic blocks)', () => {
     const block = buildBlock([reveal]);
     const bundle = l3Bundle(block, 1, `${reveal.txid}i0`);
     bundle.reveal.hex = bytesToHex(raw);
-    expect(() => verifyProofBundle(bundle)).toThrow(/64-byte/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/64-byte/);
     bundle.reveal.hex = bytesToHex(stripped);
-    expect(() => verifyProofBundle(bundle)).toThrow(/64-byte/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/64-byte/);
   });
 
   it('invokes the header trust hook', () => {
@@ -162,6 +177,7 @@ describe('L3 proof bundles (synthetic blocks)', () => {
     const bundle = l3Bundle(block, 1, `${reveal.txid}i0`);
     expect(() =>
       verifyProofBundle(bundle, {
+        ...NO_POW_FLOOR,
         trustHeader: () => {
           throw new Error('header not on my chain');
         },
@@ -193,7 +209,7 @@ describe('L2 proof bundles (tapscript commitment)', () => {
 
   it('verifies a single-leaf commit (strongest L2 assurance)', () => {
     const { bundle } = l2Setup();
-    const result = verifyProofBundle(bundle);
+    const result = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(result.level).toBe('L2');
     expect(result.l2).toEqual({
       controlBlockDepth: 0,
@@ -206,7 +222,7 @@ describe('L2 proof bundles (tapscript commitment)', () => {
   it('verifies but downgrades assurance for multi-leaf trees', () => {
     const sibling = tapLeafHash(envelopeScript({ fields: [[1, 'text/plain']], body: ['other leaf'] }), 0xc0);
     const { bundle } = l2Setup([sibling]);
-    const result = verifyProofBundle(bundle);
+    const result = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(result.l2?.singleLeafTree).toBe(false);
     expect(result.l2?.controlBlockDepth).toBe(1);
   });
@@ -250,20 +266,20 @@ describe('L2 proof bundles (tapscript commitment)', () => {
       reveal: { hex: bytesToHex(revealB.raw), pos: 1, txidBranch: block.txidBranch(1) },
       commit: { hex: bytesToHex(commit.raw) },
     };
-    const forged = verifyProofBundle(l2);
+    const forged = verifyProofBundle(l2, NO_POW_FLOOR);
     expect(new TextDecoder().decode(forged.inscription.body)).toBe('fake'); // L2 accepts...
     expect(forged.l2?.singleLeafTree).toBe(false); // ...but flags the multi-leaf tree
 
     // ...while L3 rejects it: the block's witness commitment pins revealA's witness
     const l3 = l3Bundle(block, 1, `${revealA.txid}i0`);
     l3.reveal.hex = bytesToHex(revealB.raw);
-    expect(() => verifyProofBundle(l3)).toThrow(/witness commitment mismatch/);
+    expect(() => verifyProofBundle(l3, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
   });
 
   it('rejects a commit tx that does not match the spent outpoint', () => {
     const { bundle } = l2Setup();
     const wrongCommit = commitTx(new Uint8Array([0x51, 0x20, ...sha256(te.encode('other'))]));
     bundle.commit = { hex: bytesToHex(wrongCommit.raw) };
-    expect(() => verifyProofBundle(bundle)).toThrow(/commit tx hashes to/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/commit tx hashes to/);
   });
 });

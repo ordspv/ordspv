@@ -20,6 +20,15 @@ import {
   type ProofBundleJson,
 } from '../src/index.js';
 
+/**
+ * Verify options for fixtures built on `buildBlock`, whose headers are mined at
+ * regtest difficulty (0x207fffff) so a test finishes in milliseconds. The
+ * verifiers apply the mainnet proof-of-work floor by default and refuse such a
+ * header, which is the point of the floor; the floor itself is exercised by its
+ * own tests, and by every bundle built from real chain data.
+ */
+export const NO_POW_FLOOR = { powLimitBits: null } as const;
+
 /** minimal push encoding */
 export function push(data: Uint8Array | string): Uint8Array {
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;

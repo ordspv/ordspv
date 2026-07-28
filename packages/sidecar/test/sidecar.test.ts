@@ -11,6 +11,7 @@ import {
   envelopeScript,
   revealTx,
   taprootCommit,
+  NO_POW_FLOOR,
   type TestBlock,
 } from '../../core/test/helpers.js';
 import { serializeBlock } from '@ordspv/core';
@@ -93,7 +94,7 @@ function hexToBytesLocal(hex: string): Uint8Array {
 
 describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
   const { rpc, inscriptionId, height, block } = makeChain();
-  const server = createSidecar({ rpc });
+  const server = createSidecar({ rpc, ...NO_POW_FLOOR });
   let base = '';
 
   beforeAll(async () => {
@@ -118,7 +119,7 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
     expect(res.headers.get('cache-control')).toContain('immutable');
     const bundle = (await res.json()) as ProofBundleJson;
     expect(bundle.level).toBe('L2');
-    const verified = verifyProofBundle(bundle);
+    const verified = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(new TextDecoder().decode(verified.inscription.body)).toBe('sidecar proof');
     expect(verified.height).toBe(height);
   });
@@ -129,7 +130,7 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
     const bundle = (await res.json()) as ProofBundleJson;
     expect(bundle.level).toBe('L3');
     expect(bundle.witness).toBeDefined();
-    const verified = verifyProofBundle(bundle);
+    const verified = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(verified.level).toBe('L3');
     expect(new TextDecoder().decode(verified.inscription.body)).toBe('sidecar proof');
   });
@@ -141,7 +142,7 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
   });
 
   it('caches immutable bundles: MISS then HIT (canonical key ignores junk params)', async () => {
-    const cached = createSidecar({ rpc, rateLimitPerSec: 0 });
+    const cached = createSidecar({ rpc, rateLimitPerSec: 0, ...NO_POW_FLOOR });
     await new Promise<void>((resolve) => cached.listen(0, () => resolve()));
     const cbase = `http://127.0.0.1:${(cached.address() as AddressInfo).port}`;
     const miss = await fetch(`${cbase}/ord/v1/proof/${inscriptionId}?level=l2`);
@@ -159,7 +160,7 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
   });
 
   it('rate limits per client with 429 + retry-after (healthz included)', async () => {
-    const limited = createSidecar({ rpc, rateLimitPerSec: 1, rateBurst: 2, cacheMaxBytes: 0 });
+    const limited = createSidecar({ rpc, rateLimitPerSec: 1, rateBurst: 2, cacheMaxBytes: 0, ...NO_POW_FLOOR });
     await new Promise<void>((resolve) => limited.listen(0, () => resolve()));
     const lbase = `http://127.0.0.1:${(limited.address() as AddressInfo).port}`;
     const statuses: number[] = [];
@@ -182,7 +183,7 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
       }
       return rpc(method, params);
     };
-    const lying = createSidecar({ rpc: lyingRpc });
+    const lying = createSidecar({ rpc: lyingRpc, ...NO_POW_FLOOR });
     await new Promise<void>((resolve) => lying.listen(0, () => resolve()));
     const lyingBase = `http://127.0.0.1:${(lying.address() as AddressInfo).port}`;
     const res = await fetch(`${lyingBase}/ord/v1/proof/${inscriptionId}`);

@@ -26,6 +26,7 @@ import {
   envelopeScript,
   revealTx,
   taprootCommit,
+  NO_POW_FLOOR,
   type TestBlock,
 } from '../../core/test/helpers.js';
 
@@ -380,7 +381,7 @@ describe('fetchCustody with multi-input reveals', () => {
   it('builds the reveal wtxid proof and verifies through it', async () => {
     const built = await buildCustodyBundle(id, new EsploraBackend(E, stubFetch(routes(true))));
     expect(built.bundle.hops[0].witness).toBeDefined();
-    expect(verifyCustodyBundle(built.bundle).indexProof).toBe('wtxid');
+    expect(verifyCustodyBundle(built.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
 
     const res = await fetchCustody(id, { ...OPTS, fetchFn: stubFetch(routes(true)) });
     expect(res.custody.indexProof).toBe('wtxid');
@@ -434,6 +435,6 @@ describe('fetchCustody with multi-input reveals', () => {
     );
     const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(r)));
     expect('witness' in built.bundle.hops[0]).toBe(false);
-    expect(verifyCustodyBundle(built.bundle).indexProof).toBe('single-input');
+    expect(verifyCustodyBundle(built.bundle, NO_POW_FLOOR).indexProof).toBe('single-input');
   });
 });

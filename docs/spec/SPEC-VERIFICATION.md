@@ -147,11 +147,25 @@ raw block (~1.6 MB typical), branches built locally (`buildProofBundle` does bot
 ## 4. Header anchoring
 
 `verifyProofBundle` establishes internal consistency and embedded PoW; it cannot know
-the header is on the canonical most-work chain. One header's honest work is enormous,
-but an attacker reorging nothing and *fabricating* a low-height header entirely fails
-the embedded `nBits` check only if they can't grind ~2^77+ work. For modern heights
-this is economically absurd, but verifiers MUST still anchor because bundles choose
-their own height. Composable strategies (reference: `makeHeaderTrust`):
+the header is on the canonical most-work chain.
+
+A header's embedded target is worth nothing on its own, because the bundle chooses
+the target too: a header declaring `nBits` `0x207fffff` satisfies its own PoW check
+in milliseconds. Verifiers MUST therefore hold every header in a bundle to the
+network's proof-of-work limit: `bitsToTarget(header.bits)` MUST be at or below
+`bitsToTarget(powLimitBits)`, checked before the header's own PoW check counts for
+anything. The check is local and needs no network. The reference implementation
+applies it by default in all three verifiers (`verifyProofBundle`,
+`verifyCustodyBundle`, `verifySatGenealogy`) and in `makeHeaderTrust`, with the
+mainnet limit `0x1d00ffff`; the `powLimitBits` option overrides it for another
+chain, and `null` disables it. A header failing it is fabricated or belongs to
+another chain.
+
+With that floor in place, fabricating a low-height header costs ~2^77 work at
+mainnet difficulty, which for modern heights is economically absurd. Verifiers MUST
+still anchor, because a bundle chooses its own height and the floor says nothing
+about which chain a header sits on. Composable strategies (reference:
+`makeHeaderTrust`):
 
 - **Checkpoints** (MUST when applicable): compiled-in `height → hash` pairs; a bundle
   contradicting a checkpoint is rejected outright. Ships with genesis, 767430

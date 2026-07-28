@@ -19,6 +19,7 @@ import {
   l3Bundle,
   revealTx,
   taprootCommit,
+  NO_POW_FLOOR,
 } from './helpers.js';
 
 /**
@@ -245,11 +246,20 @@ const MUTATORS: Mutator[] = [
 
 describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, iters=${FUZZ_ITERS})`, () => {
   const synthetic = syntheticL3();
-  const baselines: ProofBundleJson[] = [insc0Bundle(), ...extendedBundles(), synthetic.bundle];
+  const realBaselines: ProofBundleJson[] = [insc0Bundle(), ...extendedBundles()];
+  const baselines: ProofBundleJson[] = [...realBaselines, synthetic.bundle];
 
   it('all baselines verify (fuzz preconditions)', () => {
-    for (const bundle of baselines) expect(() => verifyProofBundle(bundle)).not.toThrow();
+    for (const bundle of baselines) expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).not.toThrow();
     expect(baselines.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it('every real-data baseline verifies under the default proof-of-work floor', () => {
+    // the synthetic L3 is mined at regtest difficulty and is excluded here; the
+    // vendored bundles carry real mainnet headers and MUST clear the floor with
+    // no option passed at all
+    expect(realBaselines.length).toBeGreaterThanOrEqual(8);
+    for (const bundle of realBaselines) expect(() => verifyProofBundle(bundle)).not.toThrow();
   });
 
   it('no mutation ever changes the attestation without being rejected', () => {
@@ -257,7 +267,7 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
     let thrown = 0;
     let applied = 0;
     for (const baseline of baselines) {
-      const expected = attestation(verifyProofBundle(baseline));
+      const expected = attestation(verifyProofBundle(baseline, NO_POW_FLOOR));
       for (const mutator of MUTATORS) {
         for (let variant = 0; variant < iters(8); variant++) {
           const clone = structuredClone(baseline);
@@ -266,7 +276,7 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
           applied++;
           let result: VerifiedInscription | undefined;
           try {
-            result = verifyProofBundle(clone);
+            result = verifyProofBundle(clone, NO_POW_FLOOR);
           } catch {
             thrown++;
             continue;
@@ -289,14 +299,14 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
       if (a.inscriptionId === b.inscriptionId) continue;
       const spliced = structuredClone(a);
       spliced.block = structuredClone(b.block);
-      expect(() => verifyProofBundle(spliced), `block of ${b.inscriptionId} into ${a.inscriptionId}`).toThrow();
+      expect(() => verifyProofBundle(spliced, NO_POW_FLOOR), `block of ${b.inscriptionId} into ${a.inscriptionId}`).toThrow();
     }
   });
 
   it('non-bundle garbage always throws', () => {
     const garbage: unknown[] = [null, undefined, 0, 42, 'bundle', [], {}, { version: 1 }, { version: 2 }, () => {}];
     for (const g of garbage) {
-      expect(() => verifyProofBundle(g as ProofBundleJson)).toThrow();
+      expect(() => verifyProofBundle(g as ProofBundleJson, NO_POW_FLOOR)).toThrow();
     }
   });
 
@@ -304,16 +314,16 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
     // the multi-envelope vendored bundle (23 envelopes in the reveal tx)
     const base = baselines.find((b) => b.inscriptionId.endsWith('012500bi1'))!;
     const reveal = parseTx(hexToBytes(base.reveal.hex));
-    const all = verifyProofBundle(base).allInscriptions;
+    const all = verifyProofBundle(base, NO_POW_FLOOR).allInscriptions;
     for (const index of [0, 2, 22, 23, 1000]) {
       const clone = structuredClone(base);
       clone.inscriptionId = `${clone.inscriptionId.slice(0, 64)}i${index}`;
       const expected = all.find((i) => i.index === index);
       if (!expected) {
-        expect(() => verifyProofBundle(clone), `i${index} absent`).toThrow(/not present/);
+        expect(() => verifyProofBundle(clone, NO_POW_FLOOR), `i${index} absent`).toThrow(/not present/);
         continue;
       }
-      const result = verifyProofBundle(clone);
+      const result = verifyProofBundle(clone, NO_POW_FLOOR);
       expect(result.inscription.index).toBe(index);
       expect(result.revealTx.txid).toBe(reveal.txid);
       expect(bytesToHex(result.inscription.body ?? new Uint8Array(0))).toBe(
@@ -324,9 +334,9 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
 
   it('height is NOT integrity-bound (trustHeader owns it): attestation is unchanged', () => {
     const bundle = structuredClone(insc0Bundle());
-    const expected = attestation(verifyProofBundle(bundle));
+    const expected = attestation(verifyProofBundle(bundle, NO_POW_FLOOR));
     bundle.block.height = 999999;
-    const result = verifyProofBundle(bundle);
+    const result = verifyProofBundle(bundle, NO_POW_FLOOR);
     expect(attestation(result)).toBe(expected);
     expect(result.height).toBe(999999); // caller-visible, checkpoint check would reject it
   });
@@ -349,14 +359,14 @@ describe(`verifyProofBundle malformed-bundle fuzz (seed=0x${SEED.toString(16)}, 
 
     // L2: verifies, attestation identical (content untouched; known, documented gap)
     const l2 = structuredClone(insc0Bundle());
-    const expected = attestation(verifyProofBundle(l2));
+    const expected = attestation(verifyProofBundle(l2, NO_POW_FLOOR));
     l2.reveal.hex = flipSig(l2.reveal.hex);
-    expect(attestation(verifyProofBundle(l2))).toBe(expected);
+    expect(attestation(verifyProofBundle(l2, NO_POW_FLOOR))).toBe(expected);
 
     // L3: the same flip must be rejected by the witness commitment
     const { bundle } = syntheticL3();
     const l3 = structuredClone(bundle);
     l3.reveal.hex = flipSig(l3.reveal.hex);
-    expect(() => verifyProofBundle(l3)).toThrow(/witness commitment/);
+    expect(() => verifyProofBundle(l3, NO_POW_FLOOR)).toThrow(/witness commitment/);
   });
 });

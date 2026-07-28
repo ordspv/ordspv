@@ -290,7 +290,7 @@ export async function fetchSatIdentity(
 
   let identity: VerifiedSatIdentity;
   try {
-    identity = verifySatGenealogy(built.bundle);
+    identity = verifySatGenealogy(built.bundle, { powLimitBits: options.powLimitBits });
   } catch (e) {
     if (e instanceof CustodyUnsupportedError) throw e;
     // an unprovable index is a property of the reveal, not a forged bundle

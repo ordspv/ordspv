@@ -114,7 +114,9 @@ describe('adversarial: forged low-difficulty header + matching merkle', () => {
       checkpoints: new Map(), // no checkpoint to lean on
       // powLimitBits left at the mainnet default: the floor must catch this
     });
-    await expect(resolver.resolve(`ord:${id}`)).rejects.toMatchObject({ code: 'HEADER_TRUST' });
+    // the core verifier applies the floor itself, so the refusal now lands
+    // before anchoring is reached; makeHeaderTrust would refuse the same header
+    await expect(resolver.resolve(`ord:${id}`)).rejects.toMatchObject({ code: 'VERIFY_FAILED' });
     await expect(resolver.resolve(`ord:${id}`)).rejects.toThrow(/proof-of-work limit/);
   });
 

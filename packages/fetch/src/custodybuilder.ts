@@ -342,7 +342,7 @@ export async function fetchCustody(
   // structural verification (sync, trustless)
   let custody: VerifiedCustody;
   try {
-    custody = verifyCustodyBundle(built.bundle);
+    custody = verifyCustodyBundle(built.bundle, { powLimitBits: options.powLimitBits });
   } catch (e) {
     // an unprovable index is a property of the reveal, not a forged bundle;
     // callers distinguish it the way they distinguish CustodyUnsupportedError
