@@ -301,7 +301,7 @@ describe('fetchCustody', () => {
     const p = fetchCustody(id, { ...OPTS, fetchFn });
     await expect(p).rejects.toThrow(CustodyUnsupportedError);
     await expect(p).rejects.toThrow(/does not track sats through fees/);
-    await expect(p).rejects.toThrow(/every configured backend reported this/);
+    await expect(p).rejects.toThrow(/each configured backend led an attempt/);
     await expect(p).rejects.toThrow(new RegExp(`${E},.*${E2}`));
   });
 
@@ -393,7 +393,7 @@ describe('fetchCustody build-time domain refusals', () => {
     const p = fetchCustody(id, { ...OPTS, ...ANCHORS, esplora: [E], fetchFn: stubFetch(routes) });
     await expect(p).rejects.toThrow(CustodyUnsupportedError);
     await expect(p).rejects.toThrow(/unbound at reveal/);
-    await expect(p).rejects.toThrow(new RegExp(`every configured backend reported this.*${E}`));
+    await expect(p).rejects.toThrow(new RegExp(`each configured backend led an attempt.*${E}`));
   });
 
   it('reports mixed failures as BUILD_FAILED with every cause', async () => {

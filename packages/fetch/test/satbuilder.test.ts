@@ -440,7 +440,7 @@ describe('fetchSatIdentity', () => {
     const one = counting();
     const single = fetchSatIdentity(id, { ...OPTS, esplora: [E], maxSteps: 1, fetchFn: one.fetchFn });
     await expect(single).rejects.toThrow(SatStepLimitError);
-    await expect(single).rejects.toThrow(new RegExp(`every configured backend reported this.*${E}`));
+    await expect(single).rejects.toThrow(new RegExp(`each configured backend led an attempt.*${E}`));
 
     const two = counting();
     const pair = fetchSatIdentity(id, { ...OPTS, esplora: [E, EB], maxSteps: 1, fetchFn: two.fetchFn });

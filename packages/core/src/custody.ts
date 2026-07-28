@@ -547,10 +547,14 @@ export function verifyCustodyBundle(
   // witness through the block's BIP-141 commitment, and a single-input reveal
   // has nothing to renumber. A multi-input reveal without a section cannot
   // prove the numbering at all (EnvelopeIndexUnprovenError)
-  const indexProof: IndexProof = revealHop.witness ? 'wtxid' : 'single-input';
-  if (revealHop.witness) {
+  // presence, not truth: a bundle is untrusted JSON, so `"witness": 0` must be
+  // read as a section and refused by the shape check, not quietly downgraded
+  const revealWitness = (revealHop as { witness?: unknown }).witness;
+  const indexProof: IndexProof =
+    revealWitness !== undefined ? 'wtxid' : 'single-input';
+  if (revealWitness !== undefined) {
     verifyWitnessAnchoring({
-      witness: revealHop.witness,
+      witness: revealWitness as WitnessSectionJson,
       header: parseHeader(hexToBytes(revealHop.block.header)),
       txCount: revealHop.block.txCount,
       reveal,

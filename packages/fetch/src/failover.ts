@@ -47,9 +47,9 @@ export interface DomainRefusal {
 }
 
 /**
- * The refusal to rethrow when every configured backend reported the same one,
- * so a caller still discriminates on the class it discriminates on today. The
- * message gains the fact that every backend agreed, and their names.
+ * The refusal to rethrow when every configured backend led an attempt that
+ * ended in the same one, so a caller still discriminates on the class it
+ * discriminates on today. The message gains that fact, and their names.
  *
  * Returns undefined when the failures were mixed or did not cover every
  * backend; the caller's own build-failure path handles that case with every
@@ -63,8 +63,12 @@ export function sharedDomainRefusal(
   const first = refusals[0].error;
   if (!refusals.every((r) => r.error.constructor === first.constructor)) return undefined;
   const names = refusals.map((r) => r.baseUrl).join(', ');
+  // what the loop establishes is one attempt per configured backend, each led
+  // by that backend and each ending this way. On the sat side the attempt runs
+  // through a pool, so the deciding bytes may have come from another member,
+  // and claiming every backend reported the condition would overstate it
   first.message =
-    `${first.message} (every configured backend reported this, so it is not one ` +
-    `server's word: ${names})`;
+    `${first.message} (each configured backend led an attempt that ended this way, ` +
+    `so it is not one server's word: ${names})`;
   return first;
 }

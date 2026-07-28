@@ -24,7 +24,7 @@ import { inscriptionsFromTx } from './envelope.js';
 import { parseInscriptionId } from './inscriptionId.js';
 import { hexToBytes } from './bytes.js';
 import { parseHeader } from './header.js';
-import { verifyWitnessAnchoring } from './witnesscommit.js';
+import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
 import {
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
@@ -331,10 +331,14 @@ export function verifySatGenealogy(
   // witness through the block's BIP-141 commitment, and a single-input reveal
   // has nothing to renumber. A multi-input reveal without a section cannot
   // prove the numbering at all (EnvelopeIndexUnprovenError)
-  const indexProof: IndexProof = bundle.reveal.witness ? 'wtxid' : 'single-input';
-  if (bundle.reveal.witness) {
+  // presence, not truth: a bundle is untrusted JSON, so `"witness": 0` must be
+  // read as a section and refused by the shape check, not quietly downgraded
+  const revealWitness = (bundle.reveal as { witness?: unknown }).witness;
+  const indexProof: IndexProof =
+    revealWitness !== undefined ? 'wtxid' : 'single-input';
+  if (revealWitness !== undefined) {
     verifyWitnessAnchoring({
-      witness: bundle.reveal.witness,
+      witness: revealWitness as WitnessSectionJson,
       header: parseHeader(hexToBytes(bundle.reveal.block.header)),
       txCount: bundle.reveal.block.txCount,
       reveal,
