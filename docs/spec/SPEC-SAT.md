@@ -162,8 +162,12 @@ whose claimed height contradicts it.
 
 Below 230,000 no such push is required, so nothing inside the bundle binds the
 claim. A verifier MUST refuse a bundle whose terminal coinbase claims a height
-below 230,000 unless the caller supplied a header trust hook, which is what
-attests the block hash at the claimed height and so binds the pair. The refusal
+below 230,000 unless the caller's header trust hook attested the block hash at
+that height, which is what binds the pair. A verifier MUST NOT accept such a
+height on the hook's presence alone: a hook that runs and returns without
+objecting may have checked nothing at all, so the hook MUST say what it
+checked, and the verifier MUST read acceptance only from that statement (the
+reference implementation's hook returns `'hash-at-height'`). The refusal
 MUST be distinguishable from a forgery (`CoinbaseHeightUnprovenError` in the
 reference implementation), since such a bundle can be honest and merely
 unprovable offline, and the refusal MUST name the claimed height and the

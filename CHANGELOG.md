@@ -111,9 +111,20 @@ already binds.
   server's word, and it flows straight into the sat arithmetic, so a hostile
   bundle could choose the sat number, the ordinal name and the rarity,
   including sat 0 at mythic. Such a coinbase is now refused with the new
-  `CoinbaseHeightUnprovenError` unless the caller's options carry a
-  `trustHeader` hook, whose hash-at-height attestation is what binds the
-  height to the header. The class is separate from `CustodyUnsupportedError`
+  `CoinbaseHeightUnprovenError` unless the caller's `trustHeader` hook
+  attested this header at this height, which is what binds the height to the
+  header. The hook says so by returning `'hash-at-height'`; the core hook's
+  return type is `void | 'hash-at-height'`, and returning nothing keeps a hook
+  rejection-only as before. Acceptance rested on the hook's presence during
+  development, which enforced the rule against a convention nothing checked,
+  and a consumer copying the reference caller's no-op hook without its
+  anchoring would have got a server-chosen sat number, name and rarity. The
+  anchors in `@ordspv/fetch` report what they attested in the new
+  `HeaderTrustReport.attests` field, and `fetchSatIdentity` passes the
+  coinbase anchor's own verdict to the verifier. Relatedly,
+  `makeHeaderTrust` now throws at construction for `minAgreement` below 1,
+  which reported a header as anchored with no agreeing source at all.
+  The class is separate from `CustodyUnsupportedError`
   because the bundle may be honest and merely unprovable offline.
   `ord-resolve verify` has no anchor to consult, so it reports the bundle as
   unproven offline and exits nonzero rather than printing a sat and a rarity.

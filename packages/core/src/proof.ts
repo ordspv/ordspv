@@ -1,6 +1,12 @@
 import { bytesEqual, displayToInternal, hexToBytes } from './bytes.js';
 import { inscriptionsFromTx, type Inscription } from './envelope.js';
-import { parseHeader, checkProofOfWork, checkPowLimit, type BlockHeader } from './header.js';
+import {
+  parseHeader,
+  checkProofOfWork,
+  checkPowLimit,
+  type BlockHeader,
+  type HeaderAttestation,
+} from './header.js';
 import { parseInscriptionId } from './inscriptionId.js';
 import { treeHeight, verifyMerkleBranch } from './merkle.js';
 import { extractTapscript, parseControlBlock, verifyScriptPathCommitment } from './taproot.js';
@@ -90,8 +96,14 @@ export interface VerifyOptions {
    * tip cross-check, header sync...). Throw to reject. When omitted the caller
    * accepts embedded-PoW-only anchoring (NOT recommended for adversarial
    * settings: a single header's work is cheap relative to valuable content).
+   *
+   * Returning `'hash-at-height'` asserts that this block hash is the chain's
+   * hash at this height, which binds the header to the height. Returning
+   * nothing keeps the hook rejection-only, which is all this verifier needs:
+   * content proofs read no height out of the hook. `verifySatGenealogy` does,
+   * and refuses a sub-BIP34 coinbase height without the assertion.
    */
-  trustHeader?: (header: BlockHeader, height: number) => void;
+  trustHeader?: (header: BlockHeader, height: number) => HeaderAttestation;
   /**
    * Compact-bits proof-of-work floor applied to the bundle's header before its
    * own PoW check counts for anything. Defaults to the mainnet limit

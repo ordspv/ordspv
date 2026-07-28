@@ -60,6 +60,17 @@ export function bitsToTarget(bits: number): bigint {
   return target;
 }
 
+/**
+ * What a caller's `trustHeader` hook asserted about a header it did not reject.
+ *
+ * `'hash-at-height'` says the hook checked this block hash against its own view
+ * of the chain at this height and they agree, so the header and the height are
+ * bound together. Returning nothing (`void`) leaves the hook rejection-only:
+ * it rejects by throwing, and a verifier reads nothing positive out of a hook
+ * that returned quietly.
+ */
+export type HeaderAttestation = void | 'hash-at-height';
+
 /** Proof-of-work check: header hash (as 256-bit LE integer) must be <= target from bits. */
 export function checkProofOfWork(header: BlockHeader): boolean {
   const target = bitsToTarget(header.bits);

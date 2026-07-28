@@ -43,9 +43,14 @@ import {
  * blocks are mined at regtest difficulty, which the default proof-of-work
  * floor refuses, and their terminal coinbases sit below the BIP34 boundary,
  * where the verifier requires the claimed height attested through the
- * caller's hook. Both refusals have tests of their own below.
+ * caller's hook. The hook here stands in for a caller that checked the hash
+ * at that height, which is what the marker asserts. Both refusals have tests
+ * of their own below.
  */
-const FIXTURE_OPTS = { ...NO_POW_FLOOR, trustHeader: () => {} };
+const FIXTURE_OPTS = {
+  ...NO_POW_FLOOR,
+  trustHeader: (): 'hash-at-height' => 'hash-at-height',
+};
 
 // ---------------------------------------------------------------------------
 // local raw-tx builders (values and scripts are all the arithmetic needs)
@@ -356,18 +361,79 @@ describe('verifySatGenealogy', () => {
     expect(thrown).not.toBeInstanceOf(CustodyUnsupportedError);
   });
 
-  it('accepts the same bundle when the options supply a trust hook', () => {
+  it('refuses a sub-BIP34 coinbase height when the hook attests nothing', () => {
+    // the hole this closes: a hook that runs and returns quietly checked
+    // nothing, and its mere presence must not unlock the height
+    const seen: number[] = [];
+    let thrown: unknown;
+    try {
+      verifySatGenealogy(bundle(), {
+        ...NO_POW_FLOOR,
+        trustHeader: (_header, height) => {
+          seen.push(height);
+        },
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as Error).name).toBe('CoinbaseHeightUnprovenError');
+    expect((thrown as Error).message).toMatch(/hash-at-height/);
+    // the hook still ran on every hop, coinbase included
+    expect(seen).toContain(1000);
+  });
+
+  it('accepts the same bundle when the hook attests hash-at-height', () => {
     const seen: { height: number; hash: string }[] = [];
     const res = verifySatGenealogy(bundle(), {
       ...NO_POW_FLOOR,
-      trustHeader: (header, height) => seen.push({ height, hash: header.hash }),
+      trustHeader: (header, height) => {
+        seen.push({ height, hash: header.hash });
+        return 'hash-at-height';
+      },
     });
     expect(res.coinbaseHeight).toBe(1000);
     expect(res.sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
-    // the hook saw the coinbase header at the claimed height, which is the
-    // attestation the rule asks for
+    // the hook saw the coinbase header at the claimed height, which is what
+    // the marker asserts it checked
     const b = bundle();
     expect(seen).toContainEqual({ height: 1000, hash: b.coinbase.block.hash });
+  });
+
+  it('is unchanged at or above the boundary by what the hook returns', () => {
+    // above 230,000 the coinbase's own BIP34 push binds the height, so a
+    // rejection-only hook is enough and the marker adds nothing. 240000 is
+    // 0x03a980, pushed little-endian
+    // the subsidy has halved by 240000, so the values stay inside it
+    const cb34 = buildCoinbase(
+      [{ value: 1_000_000_000n }, { value: 1_000_000_000n }],
+      new Uint8Array([0x03, 0x80, 0xa9, 0x03]),
+    );
+    const f = buildTx(
+      [{ txid: cb34.tx.txid, vout: 1 }],
+      [{ value: 500_000_000n }, { value: 400_000_000n }],
+    );
+    const c = buildTx([{ txid: f.tx.txid, vout: 0 }], [{ value: 10_000n, spk: tap.scriptPubKey }]);
+    const r = revealTx([{ script, controlBlock: tap.controlBlock }], {
+      prevTxidLE: c.tx.txidLE,
+      vout: 0,
+    });
+    const b: SatGenealogyBundleJson = {
+      version: 1,
+      inscriptionId: `${r.txid}i0`,
+      reveal: anchoredHop(r.txidLE, bytesToHex(r.raw), 250_000, [c.hex]),
+      funding: [
+        { tx: { hex: c.hex }, prevTxs: [f.hex] },
+        { tx: { hex: f.hex }, prevTxs: [cb34.hex] },
+      ],
+      coinbase: anchoredHop(cb34.tx.txidLE, cb34.hex, 240_000, []),
+      claimedSat: (firstSatOfBlock(240_000) + 1_000_000_000n).toString(),
+    };
+    const quiet = verifySatGenealogy(b, { ...NO_POW_FLOOR, trustHeader: () => {} });
+    const marked = verifySatGenealogy(b, FIXTURE_OPTS);
+    expect(quiet.coinbaseHeight).toBe(240_000);
+    expect(marked.sat).toBe(quiet.sat);
+    // and with no hook at all
+    expect(verifySatGenealogy(b, NO_POW_FLOOR).sat).toBe(quiet.sat);
   });
 
   it('rejects the bundle when the hook attests a different hash at that height', () => {

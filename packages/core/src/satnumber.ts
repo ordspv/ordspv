@@ -202,7 +202,9 @@ export const BIP34_ENFORCED_FROM = 230_000;
  * scriptSig carries the height and the bundle's claim is checked against it.
  * Below that boundary no such push is required, and the only thing binding
  * the pair is an attestation of the block hash at that height, which the
- * caller supplies through the `trustHeader` hook. A bundle refused this way
+ * caller's `trustHeader` hook makes by returning `'hash-at-height'`. The
+ * presence of a hook proves nothing on its own, since a hook that returns
+ * quietly may have checked nothing. A bundle refused this way
  * may be perfectly honest; it simply cannot prove its height offline, which
  * is a different fact from being forged (plain Error) or leaving v1's sat
  * domain (CustodyUnsupportedError).
@@ -411,7 +413,7 @@ export function verifySatGenealogy(
   if (bundle.coinbase.tx.pos !== 0) {
     throw new Error(`coinbase must be at position 0, bundle says ${bundle.coinbase.tx.pos}`);
   }
-  verifyAnchoredHop(bundle.coinbase, coinbase, 'coinbase', opts);
+  const coinbaseAttestation = verifyAnchoredHop(bundle.coinbase, coinbase, 'coinbase', opts);
   const height = bundle.coinbase.block.height;
   if (height >= BIP34_ENFORCED_FROM) {
     const embedded = bip34Height(coinbase);
@@ -421,16 +423,18 @@ export function verifySatGenealogy(
     if (embedded !== height) {
       throw new Error(`BIP34 height ${embedded} contradicts claimed height ${height}`);
     }
-  } else if (!opts.trustHeader) {
-    // verifyAnchoredHop already called the hook on this header when one was
-    // supplied, and a hook that attests hash-at-height binds the pair. With no
-    // hook the claimed height is the server's word alone, and it decides the
-    // sat number, the name and the rarity
+  } else if (coinbaseAttestation !== 'hash-at-height') {
+    // verifyAnchoredHop ran the hook on this header already. Only a hook that
+    // returned the attestation marker checked the hash against the chain at
+    // this height, and that check is the whole binding. A missing hook and a
+    // hook that returned nothing leave the claimed height as the server's word
+    // alone, and it decides the sat number, the name and the rarity
     throw new CoinbaseHeightUnprovenError(
       `coinbase claims height ${height}, below the BIP34 boundary ${BIP34_ENFORCED_FROM}, ` +
         `so the coinbase carries no height push to check the claim against; supply a ` +
-        `trustHeader hook that attests the block hash at that height, since the height ` +
-        `is what numbers the sat`,
+        `trustHeader hook that returns 'hash-at-height' for this header, which asserts ` +
+        `the block hash is the chain's hash at that height, since the height is what ` +
+        `numbers the sat`,
     );
   }
 

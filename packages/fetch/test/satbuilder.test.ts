@@ -4,6 +4,7 @@ import {
   buildMerkleBranch,
   checkProofOfWork,
   computeMerkleRoot,
+  CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   firstSatOfBlock,
@@ -543,6 +544,51 @@ describe('fetchSatIdentity', () => {
     const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
     await expect(p).rejects.toThrow(SatIdentityError);
     await expect(p).rejects.toThrow(/BIP34 height 700001 contradicts claimed height 700000/);
+  });
+
+  it('carries the anchor attestation into a sub-BIP34 coinbase height', async () => {
+    // below 230,000 the coinbase carries no height push, so acceptance rests
+    // on the anchoring this wrapper did before verifying, reported to the core
+    // verifier as the hook's return value
+    const low = 100_000;
+    const coinbase = coinbaseTx(low, [{ value: 5_000_000_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit], { cbHeight: low });
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(routes),
+    });
+    expect(res.identity.coinbaseHeight).toBe(low);
+    expect(res.identity.sat).toBe(firstSatOfBlock(low));
+    expect(res.headerTrust.coinbase.attests).toBe('hash-at-height');
+
+    // the same build with an anchor that only rejects: it cannot attest the
+    // height, so the identity is refused rather than reported on the server's
+    // word about which block mined the sat
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(routes),
+      trustHeader: async () => ({
+        checkpointHit: false,
+        sourcesQueried: 0,
+        sourcesAgreed: 0,
+        independentSources: 0,
+        builderIsSource: false,
+        anchored: true,
+        attests: undefined,
+      }),
+    });
+    // the wrapper reports it as a verification failure, with the core
+    // refusal's own words carried through
+    await expect(p).rejects.toThrow(SatIdentityError);
+    await expect(p).rejects.toThrow(/below the BIP34 boundary 230000/);
+    await expect(p).rejects.toThrow(/hash-at-height/);
+    // and the core class itself is what refused
+    expect(() =>
+      verifySatGenealogy(res.bundle, { ...NO_POW_FLOOR, trustHeader: () => {} }),
+    ).toThrow(CoinbaseHeightUnprovenError);
   });
 
   it('refuses an unbound inscription rather than inventing a sat', async () => {

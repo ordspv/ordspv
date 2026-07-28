@@ -250,6 +250,13 @@ export interface FetchSatIdentityOptions {
   minConfirmations?: number;
   checkpoints?: Map<number, string>;
   powLimitBits?: number | null;
+  /**
+   * Anchor both endpoint headers instead of `makeHeaderTrust`. Throw to
+   * reject. The report's `attests` field is passed to the core verifier, so a
+   * hook that returns `'hash-at-height'` there lets a terminal coinbase below
+   * the BIP34 boundary be accepted, and a rejection-only hook leaves such a
+   * bundle refused with `CoinbaseHeightUnprovenError`.
+   */
   trustHeader?: (
     header: import('@ordspv/core').BlockHeader,
     height: number,
@@ -343,7 +350,7 @@ export async function fetchSatIdentity(
   // coinbase below the BIP34 boundary has its claimed height attested by the
   // time verifySatGenealogy asks. The core hook is synchronous and cannot
   // await an attesting round trip, so the hook it receives reports the work
-  // this function already did.
+  // the two anchor() calls below already did.
   const headerTrust = {
     reveal: await anchor(built.bundle.reveal, 'reveal'),
     coinbase: await anchor(built.bundle.coinbase, 'coinbase'),
@@ -353,7 +360,12 @@ export async function fetchSatIdentity(
   try {
     identity = verifySatGenealogy(built.bundle, {
       powLimitBits: options.powLimitBits,
-      trustHeader: () => {},
+      // the marker is the coinbase anchor's own verdict, reported back to the
+      // core verifier: `anchor('coinbase')` ran just above and threw unless the
+      // header was pinned, and its report says whether that pinning compared
+      // the hash at the claimed height. A hook that only rejects reports
+      // nothing here, and a sub-BIP34 coinbase is refused as it should be
+      trustHeader: () => headerTrust.coinbase.attests,
     });
   } catch (e) {
     if (e instanceof CustodyUnsupportedError) throw e;

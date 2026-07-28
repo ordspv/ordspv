@@ -65,7 +65,10 @@ export interface ResolverOptions {
   /**
    * Replace checkpoint/M-of-N anchoring entirely with a custom header anchor
    * (e.g. headerSyncTrust over a locally synced chain; see
-   * `@ordspv/fetch/headersync`). Throw to reject the header.
+   * `@ordspv/fetch/headersync`). Throw to reject the header. The report's
+   * `attests` field states whether the anchor compared the hash at the claimed
+   * height; content resolution reads no height out of it, and the sat
+   * genealogy path does.
    */
   trustHeader?: (header: BlockHeader, height: number) => Promise<HeaderTrustReport>;
   fetchFn?: FetchFn;

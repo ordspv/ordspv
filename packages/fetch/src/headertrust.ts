@@ -1,4 +1,9 @@
-import { bitsToTarget, MAINNET_CHAIN_PARAMS, type BlockHeader } from '@ordspv/core';
+import {
+  bitsToTarget,
+  MAINNET_CHAIN_PARAMS,
+  type BlockHeader,
+  type HeaderAttestation,
+} from '@ordspv/core';
 import { normalizeBaseUrl, type EsploraBackend } from './backends.js';
 
 /**
@@ -50,7 +55,9 @@ export interface HeaderTrustOptions {
    * height (default 2). Backends that served the bundle are excluded from the
    * vote and add nothing to the count. Lowering this to 1 leaves a single
    * outside source able to anchor a header; do that only when a covering
-   * checkpoint set or headerSyncTrust provides the anchor instead.
+   * checkpoint set or headerSyncTrust provides the anchor instead. Values
+   * below 1 are rejected at construction: a threshold of 0 anchors a header
+   * on nobody's word, which is the same as not anchoring at all.
    */
   minAgreement?: number;
   checkpoints?: ReadonlyMap<number, string>;
@@ -96,6 +103,14 @@ export interface HeaderTrustReport {
   builderIsSource: boolean;
   /** the header is pinned by a checkpoint, a synced chain, or enough independent sources */
   anchored: boolean;
+  /**
+   * What the anchor asserted, in the core `trustHeader` hook's vocabulary.
+   * `'hash-at-height'` means this block hash was compared against a view of
+   * the chain AT this height and agreed, which is what binds a sub-BIP34
+   * coinbase height (see `CoinbaseHeightUnprovenError`). A caller adapting
+   * this async anchor into the core hook returns this value from it.
+   */
+  attests: HeaderAttestation;
   tipHeight?: number;
   /** set when the anchor was a locally validated header chain (headersync) */
   anchoredBySync?: boolean;
@@ -108,6 +123,12 @@ export class HeaderTrustError extends Error {}
  * Throws HeaderTrustError when the header cannot be anchored.
  */
 export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
+  if (options.minAgreement !== undefined && options.minAgreement < 1) {
+    throw new HeaderTrustError(
+      `minAgreement ${options.minAgreement} anchors a header on no agreeing source at all; ` +
+        `pass 1 or more, and pair 1 with checkpoints or a synced chain`,
+    );
+  }
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
   const esploras = options.esploras ?? [];
   const powLimitBits = options.powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
@@ -139,6 +160,9 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
         independentSources: 0,
         builderIsSource,
         anchored: true,
+        // a checkpoint is a compiled-in hash AT a height, so matching it
+        // asserts exactly hash-at-height
+        attests: 'hash-at-height',
       };
     }
 
@@ -200,6 +224,9 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
       builderIsSource,
       anchored: true,
       tipHeight,
+      // every agreeing attester answered /block-height/<n> with this hash, so
+      // the agreement is a hash-at-height attestation
+      attests: 'hash-at-height',
     };
   };
 }

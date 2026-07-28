@@ -314,6 +314,12 @@ export interface FetchCustodyOptions {
   minConfirmations?: number;
   checkpoints?: Map<number, string>;
   powLimitBits?: number | null;
+  /**
+   * Anchor every hop header instead of `makeHeaderTrust`. Throw to reject.
+   * Custody verification reads no height out of the hook, so a rejection-only
+   * anchor is enough here; the `attests` field matters to `fetchSatIdentity`,
+   * where a sub-BIP34 coinbase height rests on it.
+   */
   trustHeader?: (header: import('@ordspv/core').BlockHeader, height: number) => Promise<HeaderTrustReport>;
 }
 

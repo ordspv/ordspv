@@ -699,6 +699,8 @@ export function headerSyncTrust(
       anchored: true,
       tipHeight: chain.tipHeight,
       anchoredBySync: true,
+      // the synced chain was asked for its hash AT this height and agreed
+      attests: 'hash-at-height',
     };
   };
 }

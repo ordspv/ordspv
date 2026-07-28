@@ -85,6 +85,35 @@ describe('fail-closed header anchoring', () => {
     await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/--anchor-source/);
   });
 
+  it('refuses to build an anchor that needs no agreeing source', async () => {
+    // `agreed.length < 0` is never true, so a zero threshold reported a header
+    // as anchored on nobody's word at all
+    expect(() => makeHeaderTrust({ minAgreement: 0 })).toThrow(HeaderTrustError);
+    expect(() => makeHeaderTrust({ minAgreement: 0 })).toThrow(/pass 1 or more/);
+    expect(() => makeHeaderTrust({ minAgreement: -1 })).toThrow(HeaderTrustError);
+    // 1 is thin and allowed, and the default stands
+    expect(() => makeHeaderTrust({ minAgreement: 1 })).not.toThrow();
+    expect(() => makeHeaderTrust({})).not.toThrow();
+  });
+
+  it('reports hash-at-height as what an anchor attested', async () => {
+    // the marker the core verifier reads before accepting a sub-BIP34
+    // coinbase height; both anchor kinds compare the hash AT the height
+    const a1 = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));
+    const a2 = esplora('https://h2.test', agreeRoutes('https://h2.test', HEADER.hash));
+    const voted = await makeHeaderTrust({ esploras: [a1, a2], checkpoints: new Map() })(
+      HEADER,
+      HEIGHT,
+    );
+    expect(voted.attests).toBe('hash-at-height');
+    const checkpointed = await makeHeaderTrust({
+      esploras: [],
+      checkpoints: new Map([[HEIGHT, HEADER.hash]]),
+    })(HEADER, HEIGHT);
+    expect(checkpointed.checkpointHit).toBe(true);
+    expect(checkpointed.attests).toBe('hash-at-height');
+  });
+
   it('accepts two agreeing attesters that did not serve the bundle', async () => {
     const builder = esplora('https://builder.test', agreeRoutes('https://builder.test', HEADER.hash));
     const a1 = esplora('https://h1.test', agreeRoutes('https://h1.test', HEADER.hash));

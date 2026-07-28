@@ -33,7 +33,13 @@
 import { ParsedTx, parseTx } from './tx.js';
 import { Inscription, inscriptionsFromTx } from './envelope.js';
 import { parseInscriptionId } from './inscriptionId.js';
-import { parseHeader, checkProofOfWork, checkPowLimit, BlockHeader } from './header.js';
+import {
+  parseHeader,
+  checkProofOfWork,
+  checkPowLimit,
+  BlockHeader,
+  type HeaderAttestation,
+} from './header.js';
 import { verifyMerkleBranch, treeHeight } from './merkle.js';
 import { hexToBytes, bytesEqual, displayToInternal } from './bytes.js';
 import {
@@ -425,8 +431,17 @@ export interface CustodyBundleJson {
 }
 
 export interface CustodyVerifyOptions {
-  /** Anchor each hop's header to a trusted view of the chain; throw to reject. */
-  trustHeader?: (header: BlockHeader, height: number) => void;
+  /**
+   * Anchor each hop's header to a trusted view of the chain; throw to reject.
+   *
+   * The return value states what the hook checked. `'hash-at-height'` asserts
+   * that this block hash IS the chain's hash at this height, which binds the
+   * header to the height and is what a sub-BIP34 coinbase height rests on
+   * (see `CoinbaseHeightUnprovenError`). Returning nothing keeps the hook
+   * rejection-only: it may reject whatever it likes by throwing, and a
+   * verifier reads no positive assertion out of its silence.
+   */
+  trustHeader?: (header: BlockHeader, height: number) => HeaderAttestation;
   /**
    * Compact-bits proof-of-work floor applied to every hop header before its own
    * PoW check counts for anything. Defaults to the mainnet limit (0x1d00ffff);
@@ -470,7 +485,18 @@ function parseHopTx(hex: string, label: string): ParsedTx {
   return tx;
 }
 
-export function verifyAnchoredHop(hop: CustodyHopJson, tx: ParsedTx, label: string, opts: CustodyVerifyOptions): void {
+/**
+ * Anchor one hop: header, proof-of-work floor, txCount, caller's trust hook,
+ * txid merkle branch. Returns what the trust hook asserted, so a caller that
+ * needs the height bound to the header (the terminal coinbase below BIP34) can
+ * read it; every other caller ignores it.
+ */
+export function verifyAnchoredHop(
+  hop: CustodyHopJson,
+  tx: ParsedTx,
+  label: string,
+  opts: CustodyVerifyOptions,
+): HeaderAttestation {
   const header = parseHeader(hexToBytes(hop.block.header));
   if (header.hash !== hop.block.hash.toLowerCase()) {
     throw new Error(`${label}: header hashes to ${header.hash}, bundle claims ${hop.block.hash}`);
@@ -480,7 +506,7 @@ export function verifyAnchoredHop(hop: CustodyHopJson, tx: ParsedTx, label: stri
   if (!Number.isInteger(hop.block.txCount) || hop.block.txCount < 1) {
     throw new Error(`${label}: missing valid txCount`);
   }
-  opts.trustHeader?.(header, hop.block.height);
+  const attestation = opts.trustHeader?.(header, hop.block.height);
 
   const branch = hop.tx.txidBranch.map(displayToInternal);
   const expected = treeHeight(hop.block.txCount);
@@ -491,6 +517,7 @@ export function verifyAnchoredHop(hop: CustodyHopJson, tx: ParsedTx, label: stri
   if (!bytesEqual(root, header.merkleRootLE)) {
     throw new Error(`${label}: txid merkle proof does not match header merkle root`);
   }
+  return attestation;
 }
 
 /**
