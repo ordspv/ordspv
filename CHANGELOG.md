@@ -7,17 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **A recorded refusal rests on reveal bytes the named backend served.**
-  `fetchSatIdentity` fetches the reveal's tx hex, its status and its merkle
-  proof from the member leading the attempt rather than through the pool,
-  which could fall over to another member on the one request whose answer
-  decides every domain refusal the walk can raise from the reveal. A refusal
-  recorded under a backend's name is now that backend's word, and `unanimous`
-  is computed over members that each served their own reveal bytes. A
-  transport failure on one of the three deciding requests is one member's
-  failure, recorded as producing no usable answer, and the build leads the
-  next attempt with the next member; pool exhaustion on any pooled request
-  still ends the build. SPEC-SAT states the rule.
+- **Every recorded refusal rests on data the named backend served, with no
+  remainder.** `fetchSatIdentity` fetches the reveal's tx hex, its status,
+  its merkle proof and the terminal coinbase's status from the member
+  leading the attempt rather than through the pool, which could fall over to
+  another member on a request whose answer decides a domain refusal: the
+  reveal's bytes decide every refusal the walk can raise from the reveal,
+  and the coinbase's claimed height decides the subsidy boundary and with it
+  the fee-tail refusal. A refusal recorded under a backend's name is now
+  that backend's word, and `unanimous` is computed over members that each
+  served their own deciding data. A transport failure on one of the four
+  deciding requests is one member's failure, recorded as producing no usable
+  answer, and the build leads the next attempt with the next member; pool
+  exhaustion on any pooled request still ends the build. SPEC-SAT states the
+  rule.
 - **The refusal taxonomy is one table that every command and both output
   channels read.** The refusal classes, whether a build rotates on each, and
   the exit-code category each reports live in two `Record`s keyed on unions
