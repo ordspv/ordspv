@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A recorded refusal rests on reveal bytes the named backend served.**
+  `fetchSatIdentity` fetches the reveal's tx hex, its status and its merkle
+  proof from the member leading the attempt rather than through the pool,
+  which could fall over to another member on the one request whose answer
+  decides every domain refusal the walk can raise from the reveal. A refusal
+  recorded under a backend's name is now that backend's word, and `unanimous`
+  is computed over members that each served their own reveal bytes. A
+  transport failure on one of the three deciding requests is one member's
+  failure, recorded as producing no usable answer, and the build leads the
+  next attempt with the next member; pool exhaustion on any pooled request
+  still ends the build. SPEC-SAT states the rule.
 - **The refusal taxonomy is one table that every command and both output
   channels read.** The refusal classes, whether a build rotates on each, and
   the exit-code category each reports live in two `Record`s keyed on unions
@@ -22,7 +33,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   witness-section remedy now names `--esplora`, since the table requires
   every remedy to name the flag that changes the outcome where one exists.
   Exit codes, `verify` output, and rotation behavior for everything a caller
-  can reach are unchanged.
+  can reach are unchanged. Two presentation fixes on the same reporting
+  surface: a `"witness": null` section in a custody or genealogy bundle is
+  refused as a bad section instead of surfacing as a raw TypeError, and
+  `ord-resolve verify` reports a file it cannot read as one usage line at
+  exit 2 and bytes that do not parse as JSON as one document line at exit 1,
+  with no stack trace on either.
 
 ## [0.3.0] - 2026-07-26
 
