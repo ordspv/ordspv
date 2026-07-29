@@ -57,7 +57,11 @@ import {
   type NoAnswer,
   type OnAttempt,
 } from './failover.js';
-import { WitnessSectionUnavailableError, type WrapperCode } from './taxonomy.js';
+import {
+  isRecordableBuildRefusal,
+  WitnessSectionUnavailableError,
+  type WrapperCode,
+} from './taxonomy.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -414,21 +418,20 @@ export async function fetchCustody(
       // and it stays so the next reader does not read its absence as an
       // oversight
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
-      // the rest came out of bytes nothing has bound. A v1-domain refusal is
-      // read out of the served witness, and an unavailable witness section is
-      // read out of the block hash and the position this backend's own status
-      // and merkle proof named, either of which a hostile backend can point at
-      // a real but wrong block. Record it and ask the next backend; the
-      // verifier's own refusal, after the bundle proved its witness, stays
-      // terminal
-      // `SatPositionError` is listed so both build loops classify the same
-      // condition the same way. The custody walk computes no sat-space
-      // position of its own, so nothing in it raises the class today
-      if (
-        e instanceof CustodyUnsupportedError ||
-        e instanceof SatPositionError ||
-        e instanceof WitnessSectionUnavailableError
-      ) {
+      // the rest came out of bytes nothing has bound, and which classes those
+      // are is the taxonomy table's committedAtBuild answer rather than a
+      // list kept here: a v1-domain refusal is read out of the served
+      // witness, and an unavailable witness section out of the block hash
+      // and the position this backend's own status and merkle proof named,
+      // either of which a hostile backend can point at a real but wrong
+      // block. Record it and ask the next backend; the verifier's own
+      // refusal, after the bundle proved its witness, stays terminal.
+      // `SatPositionError` stays beside the predicate by name so both build
+      // loops classify the same condition the same way; the CLI table
+      // excludes it because a verifier raising it is a forgery. The custody
+      // walk computes no sat-space position of its own, so nothing in it
+      // raises the class today
+      if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
       } else {
         noAnswer.push({ baseUrl: backend.baseUrl, error: e as Error });

@@ -116,7 +116,7 @@ export const REFUSAL_CLASS_FACTS: Record<RefusalClassName, RefusalClassFacts> = 
  * the terminal rethrow for `EnvelopeIndexUnprovenError`, the by-name rotate
  * for `SatPositionError`, and the no-usable-answer accounting for the rest.
  */
-export function isRecordableBuildRefusal(e: unknown): boolean {
+export function isRecordableBuildRefusal(e: unknown): e is Error {
   for (const facts of Object.values(REFUSAL_CLASS_FACTS)) {
     if (!facts.committedAtBuild && e instanceof facts.ctor) return true;
   }

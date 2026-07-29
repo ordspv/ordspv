@@ -53,7 +53,7 @@ import {
   type AnchorBackend,
   type WitnessSectionMode,
 } from './custodybuilder.js';
-import { WitnessSectionUnavailableError, type WrapperCode } from './taxonomy.js';
+import { isRecordableBuildRefusal, type WrapperCode } from './taxonomy.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 import {
@@ -417,20 +417,18 @@ export async function fetchSatIdentity(
       // and it stays so the next reader does not read its absence as an
       // oversight
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
-      // the rest came out of bytes nothing has bound. A v1-domain refusal and
-      // a step cap are read out of the served envelope, a start position that
-      // lands outside the reveal's sat space comes from the pointer and the
-      // envelope input in that same witness, and an unavailable witness section
-      // is read out of the block hash and the position the leading member's own
-      // status and merkle proof named, either of which a hostile member can
-      // point at a real but wrong block, making the raw block unusable on every
-      // member. Record it and lead the next attempt with another member
-      if (
-        e instanceof CustodyUnsupportedError ||
-        e instanceof SatStepLimitError ||
-        e instanceof SatPositionError ||
-        e instanceof WitnessSectionUnavailableError
-      ) {
+      // the rest came out of bytes nothing has bound, and which classes those
+      // are is the taxonomy table's committedAtBuild answer rather than a
+      // list kept here: a v1-domain refusal and a step cap are read out of
+      // the served envelope, and an unavailable witness section out of the
+      // block hash and the position the leading member's own status and
+      // merkle proof named, which a hostile member can point at a real but
+      // wrong block. `SatPositionError` stays beside the predicate by name:
+      // the CLI table excludes it because a verifier raising it is a
+      // forgery, and at build it comes from the pointer and the envelope
+      // input in that same unbound witness, so the loop rotates on it too.
+      // Record the refusal and lead the next attempt with another member
+      if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {
         refusals.push({ baseUrl: members[i].baseUrl, error: e });
         lastCause = e as Error;
         buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
