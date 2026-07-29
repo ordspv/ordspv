@@ -66,17 +66,18 @@ import {
 export class SatBuildError extends Error {}
 
 /**
- * A deciding reveal request failed at the backend leading the attempt.
+ * A lead-only deciding request failed at the backend leading the attempt.
  *
- * The reveal's tx hex, its status and its merkle proof are the requests whose
- * answers decide every domain refusal the walk can raise from the reveal, so
- * `fetchSatIdentity` makes them against the leading member alone instead of
- * through the pool: a refusal recorded under a backend's name has to rest on
- * reveal bytes that backend served itself. A transport failure on one of them
- * is therefore one member's failure, and the wrapper records it as that
- * member's cause and leads the next attempt with the next member. Pool
- * exhaustion on a pooled request still ends the whole build, because that
- * throw already means every member failed the request.
+ * Four requests decide the domain refusals the walk can raise: the reveal's
+ * tx hex, its status, its merkle proof, and the terminal coinbase's status,
+ * whose block_height is the height that places the traced position against
+ * the subsidy boundary. `fetchSatIdentity` makes them against the leading
+ * member alone instead of through the pool: a refusal recorded under a
+ * backend's name has to rest on data that backend served itself. A transport
+ * failure on one of them is therefore one member's failure, and the wrapper
+ * records it as that member's cause and leads the next attempt with the next
+ * member. Pool exhaustion on a pooled request still ends the whole build,
+ * because that throw already means every member failed the request.
  */
 export class RevealSourceError extends SatBuildError {}
 
@@ -179,15 +180,16 @@ export async function buildSatGenealogyBundle(
     witnessBackends?: AnchorBackend[];
     witnessSection?: WitnessSectionMode;
     /**
-     * The backend the reveal's deciding requests are made against: its tx
-     * hex, its status, and its merkle proof, whose answers decide every
-     * domain refusal the walk can raise from the reveal. Everything checked
-     * against the reveal's own bytes (prev txs, headers, block info, the
-     * funding walk) stays on `backend`, where pool fallover cannot change a
-     * domain decision, and the raw block keeps its deliberate rotation
-     * through `witnessBackends`. A failure of one of the three requests
-     * throws `RevealSourceError` so the caller can tell one member's failure
-     * from pool exhaustion. Defaults to `backend`, unwrapped.
+     * The backend the walk's deciding requests are made against: the
+     * reveal's tx hex, its status, its merkle proof, and the terminal
+     * coinbase's status, whose answers decide every domain refusal the walk
+     * can raise. Everything checked against bytes a txid already fixes
+     * (prev txs, headers, block info, the funding walk) stays on `backend`,
+     * where pool fallover cannot change a domain decision, and the raw block
+     * keeps its deliberate rotation through `witnessBackends`. A failure of
+     * one of the four requests throws `RevealSourceError` so the caller can
+     * tell one member's failure from pool exhaustion. Defaults to `backend`,
+     * unwrapped.
      */
     revealSource?: AnchorBackend;
   } = {},
@@ -285,7 +287,24 @@ export async function buildSatGenealogyBundle(
     }
 
     if (isCoinbaseTx(tx)) {
-      const coinbaseHop = await assembleAnchoredHop(backend, tx, hex, -1);
+      // the terminal coinbase's status is the fourth lead-only deciding
+      // request: its block_height is the height coinbaseSatAt reads below,
+      // which decides the subsidy boundary and with it the fee-tail refusal.
+      // The hop's other requests stay pooled, since the header, the block
+      // info, the merkle proof and the coinbase bytes themselves are bound
+      // by the anchoring the verifier re-checks, and none of them moves a
+      // domain decision
+      const coinbaseAnchor: AnchorBackend = lead
+        ? {
+            baseUrl: backend.baseUrl,
+            getTxHex: (t) => backend.getTxHex(t),
+            getTxStatus: (t) => leadOnly(`coinbase status ${t}`, (m) => m.getTxStatus(t)),
+            getMerkleProof: (t) => backend.getMerkleProof(t),
+            getHeaderHex: (h) => backend.getHeaderHex(h),
+            getBlockInfo: (h) => backend.getBlockInfo(h),
+          }
+        : backend;
+      const coinbaseHop = await assembleAnchoredHop(coinbaseAnchor, tx, hex, -1);
       const pos = outputSpacePosition(tx, expectVout, offset);
       // throws CustodyUnsupportedError for fee-tail positions, before the
       // caller spends anything on verification
@@ -423,10 +442,10 @@ export async function fetchSatIdentity(
   // reveal. A domain refusal is the one failure rotation cannot answer,
   // because it comes out of a reveal witness nothing has bound rather than out
   // of a failed request, so each attempt leads with a different member and
-  // pays for the whole walk again. The reveal's deciding requests go to
-  // member i alone (`revealSource` below), so a refusal recorded under member
-  // i's name rests on reveal bytes that member served itself rather than on
-  // whatever the pool fell over to.
+  // pays for the whole walk again. The deciding requests go to member i
+  // alone (`revealSource` below), so a refusal recorded under member i's
+  // name rests on data that member served itself rather than on whatever
+  // the pool fell over to.
   let built: BuildSatGenealogyResult | undefined;
   let pool: PooledEsploraBackend | undefined;
   const buildErrors: string[] = [];
@@ -457,8 +476,9 @@ export async function fetchSatIdentity(
         // the pool already rotates every member for the raw block request and
         // names each one's cause, so it is the whole witness-backend list
         witnessBackends: [attempt],
-        // the deciding reveal requests come from the leading member alone, so
-        // a refusal recorded under members[i] is members[i]'s word
+        // the deciding requests, the reveal's three and the terminal
+        // coinbase's status, come from the leading member alone, so a
+        // refusal recorded under members[i] is members[i]'s word
         revealSource: members[i],
       });
       pool = attempt;

@@ -957,6 +957,150 @@ describe('fetchSatIdentity', () => {
     expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
   });
 
+  it('refuses unanimity over a coinbase height one member alone served', async () => {
+    // the seventh review's priority 2 on the one deciding request its fix did
+    // not reach: the terminal coinbase's status names the height coinbaseSatAt
+    // reads, which decides the subsidy boundary and with it the fee-tail
+    // refusal. E fails exactly that request; EB answers it with a height deep
+    // enough past the true one (900,000, one more halving) to flip the traced
+    // position into the fee tail. Before the fix the pool fell over to EB
+    // inside E's attempt, the doctored answer decided it, the refusal was
+    // recorded under E's name, and the build called it unanimous at exit 4.
+    // After the fix the request is lead-only: E lands in noAnswer with its own
+    // transport cause, EB's attempt decides on its own answers, and the
+    // refusal is one server's word
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
+    const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
+    const fetchFn: FetchFn = (url, init) => {
+      if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
+        return Promise.resolve(new Response('no coinbase status', { status: 404 }));
+      }
+      if (url === `${EB}/tx/${coinbase.tx.txid}/status`) {
+        return Promise.resolve(
+          new Response(JSON.stringify(doctored), { headers: { 'content-type': 'application/json' } }),
+        );
+      }
+      return honest(url.replace(EB, E), init);
+    };
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/fee sats in block 900000/);
+    expect(e.message).toMatch(
+      new RegExp(`1 of 2 configured backends led an attempt that ended this way: ${EB}`),
+    );
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${E}: `));
+    expect(e.message).toMatch(/coinbase status .* failed at the leading backend/);
+    expect(e.message).not.toMatch(/each configured backend led an attempt/);
+  });
+
+  it('keeps unanimity when each member served the fee-tail coinbase status itself', async () => {
+    // a genuinely fee-tail ancestry with both members honest: each attempt's
+    // refusal now rests on the coinbase status its own lead served, so the
+    // refusal stays unanimous and the CLI's OUT OF SCOPE reading stands
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 500_000_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 700_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => honest(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(true);
+    expect(e.message).toMatch(/fee sats in block 700000/);
+    expect(e.message).toMatch(/each configured backend led an attempt that ended this way/);
+  });
+
+  it('still builds from the second member when the lead fails the coinbase status alone', async () => {
+    // the availability half: a lead that cannot answer its own coinbase-status
+    // request is one member's failure, recorded as that, and the next attempt
+    // completes the build from its own lead's answers
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => {
+      if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
+        return Promise.resolve(new Response('no coinbase status', { status: 404 }));
+      }
+      return honest(url.replace(EB, E), init);
+    };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT) + 400_000_000n);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect((attempts[1].cause as Error).message).toMatch(/coinbase status/);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
+  it('sums the groups over three members when a served height decided two attempts', async () => {
+    // three configured members: E fails its own coinbase-status request, EB
+    // and EC each serve the doctored height themselves. Two refusals and one
+    // no-answer account for all three, so the refusal is reported over them
+    // and stays short of unanimity
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
+    const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
+    const fetchFn: FetchFn = (url, init) => {
+      if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
+        return Promise.resolve(new Response('no coinbase status', { status: 404 }));
+      }
+      if (
+        url === `${EB}/tx/${coinbase.tx.txid}/status` ||
+        url === `${EC}/tx/${coinbase.tx.txid}/status`
+      ) {
+        return Promise.resolve(
+          new Response(JSON.stringify(doctored), { headers: { 'content-type': 'application/json' } }),
+        );
+      }
+      return honest(url.replace(EB, E).replace(EC, E), init);
+    };
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB, EC], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/fee sats in block 900000/);
+    expect(e.message).toMatch(
+      new RegExp(`2 of 3 configured backends led an attempt that ended this way: ${EB}, ${EC}`),
+    );
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${E}: `));
+    expect(e.message).not.toMatch(/never led an attempt/);
+  });
+
   it('answers the header marker per header, and throws on one it never anchored', async () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
