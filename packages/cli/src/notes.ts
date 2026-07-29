@@ -2,20 +2,25 @@
  * What the CLI prints beside a result, and how it classifies a refusal.
  *
  * The sentences themselves live in `@ordspv/core` (notes.ts) so every surface
- * says the same thing in the same words. What lives here is which of them a
- * given result carries, and which refusals are something other than a forgery.
- * Both `verify` and `resolve` call these, so the two commands cannot drift.
+ * says the same thing in the same words, and the class-to-code mapping lives
+ * in the taxonomy table (`taxonomy.ts` here, facts in `@ordspv/fetch`), so a
+ * refusal class without a row fails to compile. What lives in this module is
+ * the rendering: which sentences a given result carries, and how a table row
+ * becomes one report object that both output channels read. Both `verify` and
+ * `resolve` call these, so the two commands cannot drift.
  */
 
+import { L2_EXECUTED_LEAF_RESIDUAL, L2_NUMBERING_RESIDUAL } from '@ordspv/core';
+import { CustodyError, SatIdentityError } from '@ordspv/fetch';
 import {
-  CoinbaseHeightUnprovenError,
-  CustodyUnsupportedError,
-  EnvelopeIndexUnprovenError,
-  SatStepLimitError,
-  L2_EXECUTED_LEAF_RESIDUAL,
-  L2_NUMBERING_RESIDUAL,
-} from '@ordspv/core';
-import { CustodyError, SatIdentityError, WitnessSectionUnavailableError } from '@ordspv/fetch';
+  CATEGORY_EXIT_CODES,
+  REFUSAL_TABLE,
+  WRAPPER_TABLE,
+  type RefusalCategory,
+  type RefusalContext,
+} from './taxonomy.js';
+
+export type { RefusalContext } from './taxonomy.js';
 
 /**
  * The residual sentences a content-path result carries. Below L3 the binding
@@ -33,7 +38,13 @@ export function contentResiduals(
   return out;
 }
 
-/** How a command reports a refusal that is not a forgery. */
+/**
+ * How a command reports a refusal that is not a forgery. One object serves
+ * both output channels: the human channel prints `message` and exits `code`,
+ * and the JSON channel is the typed projection `refusalJson` makes of the
+ * same fields, so the two channels cannot disagree about the code, the class
+ * name, or the note.
+ */
 export interface RefusalReport {
   /** the whole line, prefix included, as `fail()` takes it */
   message: string;
@@ -43,15 +54,9 @@ export interface RefusalReport {
   name: string;
   /** the remedy sentence on its own, for the JSON channel */
   note: string;
+  /** the error's own message, no prefix and no note, which the JSON channel prints */
+  detail: string;
 }
-
-/**
- * Which command is reporting. The class-to-code mapping is the same on both,
- * so a refusal keeps its exit code whether the caller read a bundle back or
- * resolved the same inscription live. Only the prefix and the remedy vary,
- * because reading a file and walking a chain are answered differently.
- */
-export type RefusalContext = 'verify' | 'live';
 
 /**
  * The sentence a refusal short of every configured backend carries. A build
@@ -65,149 +70,86 @@ const PARTIAL_ANSWER =
   `--esplora names others.`;
 
 /**
- * Classify what a verification or a live build threw.
+ * The prefix a category renders in each context. Only the offline UNPROVEN
+ * form carries the word offline, because that is the one case where the same
+ * fact might still be provable live.
+ */
+function refusalPrefix(category: RefusalCategory, context: RefusalContext, command: string): string {
+  if (context === 'live') return `${command} ${category}: `;
+  return category === 'UNPROVEN' ? 'bundle UNPROVEN offline: ' : `bundle ${category}: `;
+}
+
+/**
+ * Classify what a verification or a live build threw, by reading the taxonomy
+ * table. A row's category decides the prefix and the exit code together, the
+ * row's note is the remedy sentence for the reporting context, and the
+ * wrapper errors go through the second table keyed on their code string.
  *
- * Five refusals are not claims that the bundle is forged. An unanchored
- * sub-BIP34 coinbase height and an unprovable envelope numbering are both
- * bundles that may be perfectly honest and cannot prove one fact offline, a
- * path outside v1's sat domain is a well-formed bundle whose ancestry this
- * version does not follow, a step cap is a refusal to read work that was never
- * bounded, and an unavailable witness section is a block no backend served.
- * Each gets its own prefix and its own exit code, so a script can tell them
- * apart from a forgery without reading the message.
+ * How far a refusal reaches decides between a row's two categories. A build
+ * loop marks the refusal it rethrows with `unanimous`, and a refusal that
+ * only the backends that answered stand behind reports `nonUnanimousCategory`
+ * and carries the partial-answer sentence. A missing marker, which is every
+ * refusal a verifier raises, counts as unanimous and reports `category`.
  *
- * How far a refusal reaches decides one of the codes. A build loop marks the
- * refusal it rethrows with `unanimous`, and a `CustodyUnsupportedError` that
- * only the backends that answered stand behind is reported as unproven rather
- * than as out of scope: it is a claim about the chain that the build cannot
- * make on that strength. The other classes assert nothing about the chain and
- * keep their code either way. A missing marker, which is every refusal a
- * verifier raises, counts as unanimous and is proven.
- *
- * Two more failures are not claims about a bundle at all. A build no backend
- * completed and a build whose headers could not be anchored both leave the
- * caller with nothing verified, which is a different thing from a document that
- * contradicts itself, and they carry their own codes for that reason.
- *
- * Returns undefined for everything else, which the caller reports as invalid.
+ * Returns undefined for everything else, the wrapper VERIFY_FAILED code
+ * included: a document that failed verification is the caller's own invalid
+ * path at exit 1, which each command prefixes for itself.
  */
 export function refusalReport(
   e: unknown,
   context: RefusalContext,
   command = '',
 ): RefusalReport | undefined {
-  const message = (e as Error).message;
-  const live = context === 'live';
-  const unproven = live ? `${command} UNPROVEN: ` : 'bundle UNPROVEN offline: ';
-  const outOfScope = live ? `${command} OUT OF SCOPE: ` : 'bundle OUT OF SCOPE: ';
-  const incomplete = live ? `${command} INCOMPLETE: ` : 'bundle INCOMPLETE: ';
   const unanimous = (e as { unanimous?: boolean }).unanimous !== false;
-  const report = (prefix: string, note: string, code: number): RefusalReport => {
-    const full = unanimous ? note : `${note} ${PARTIAL_ANSWER}`;
-    return {
-      message: `${prefix}${message}. ${full}`,
-      code,
-      name: (e as Error).name,
-      note: full,
-    };
+  let category: RefusalCategory | undefined;
+  let note: string | undefined;
+  for (const row of Object.values(REFUSAL_TABLE)) {
+    if (e instanceof row.ctor) {
+      category = unanimous ? row.category : row.nonUnanimousCategory;
+      note =
+        !unanimous && row.nonUnanimousNote !== undefined
+          ? row.nonUnanimousNote
+          : row.note[context];
+      break;
+    }
+  }
+  if (category === undefined || note === undefined) {
+    if (!(e instanceof CustodyError || e instanceof SatIdentityError)) return undefined;
+    const row = WRAPPER_TABLE[e.code];
+    if (row.category === 'INVALID') return undefined;
+    category = row.category;
+    note = row.note;
+  }
+  const detail = (e as Error).message;
+  const full = unanimous ? note : `${note} ${PARTIAL_ANSWER}`;
+  return {
+    message: `${refusalPrefix(category, context, command)}${detail}. ${full}`,
+    code: CATEGORY_EXIT_CODES[category],
+    name: (e as Error).name,
+    note: full,
+    detail,
   };
-  if (e instanceof CoinbaseHeightUnprovenError) {
-    return report(
-      unproven,
-      live
-        ? `Below the BIP34 boundary the claimed height rests on an attestation of the ` +
-            `block hash at that height, and no configured anchor source gave one; ` +
-            `--anchor-source names others.`
-        : `Anchor the coinbase block hash at that height against your own chain view ` +
-            `and re-run verification with that anchor supplied.`,
-      3,
-    );
-  }
-  if (e instanceof EnvelopeIndexUnprovenError) {
-    return report(
-      unproven,
-      live
-        ? `The reveal's envelope numbering needs a witness section; --witness-section always ` +
-            `against a backend that serves raw blocks supplies one.`
-        : `The reveal's envelope numbering needs a witness section; rebuilding with ` +
-            `--witness-section always against a backend that serves raw blocks supplies one.`,
-      3,
-    );
-  }
-  if (e instanceof SatStepLimitError) {
-    return report(
-      unproven,
-      live
-        ? `The ancestry is deeper than the walk's cap; --max-steps N raises it.`
-        : `The bundle is deeper than the verifier's cap; --max-steps N raises it.`,
-      3,
-    );
-  }
-  if (e instanceof WitnessSectionUnavailableError) {
-    return report(
-      unproven,
-      `No backend that answered served the raw block the reveal's witness section is ` +
-        `built from; retrying later or naming another backend may serve it.`,
-      3,
-    );
-  }
-  if (e instanceof CustodyUnsupportedError) {
-    // the class says the path leaves what v1 proves, which is a statement
-    // about the chain; on the strength of the backends that answered it is a
-    // claim the build cannot make, so it reports as unproven
-    if (!unanimous) {
-      return report(
-        unproven,
-        `The path is well formed and leaves what v1 proves, which is more than this ` +
-          `build can establish about the chain.`,
-        3,
-      );
-    }
-    return report(
-      outOfScope,
-      live
-        ? `The path is well formed and leaves what v1 proves.`
-        : `The bundle is well formed and the path leaves what v1 proves.`,
-      4,
-    );
-  }
-  // a build that could not be completed and a document that failed
-  // verification were one report, so a network outage read as a forgery. What
-  // separates them is whether anything was ever verified: these two codes say
-  // the build never got that far
-  if (e instanceof CustodyError || e instanceof SatIdentityError) {
-    if (e.code === 'BUILD_FAILED') {
-      return report(
-        incomplete,
-        `No configured backend produced a usable answer, so nothing was verified; ` +
-          `--esplora names others.`,
-        5,
-      );
-    }
-    if (e.code === 'HEADER_TRUST') {
-      return report(
-        unproven,
-        `The headers could not be anchored to the agreement this build required; ` +
-          `--anchor-source names others.`,
-        3,
-      );
-    }
-  }
-  return undefined;
 }
 
 /**
- * The one-line JSON a `--json` caller reads on a refusal, so the machine
- * channel discriminates on the same facts the human channel prints. A failure
- * with no mapping carries the same shape, so a caller parses one thing, and it
- * reports the class's own name rather than the literal `Error`: the name costs
- * nothing and is strictly more than a caller had before.
+ * What the JSON channel prints: a typed projection of the same report the
+ * human channel renders, so a field here must name a `RefusalReport` field or
+ * fail to compile, and the two channels cannot disagree. A failure with no
+ * mapping carries the same shape, so a caller parses one thing, and it
+ * reports the class's own name rather than the literal `Error`: the name
+ * costs nothing and is strictly more than a caller had before.
  */
+interface RefusalJsonBody {
+  ok: false;
+  error: RefusalReport['name'];
+  message: RefusalReport['detail'];
+  note: RefusalReport['note'] | undefined;
+}
+
+/** The one-line JSON a `--json` caller reads on a refusal. */
 export function refusalJson(e: unknown, report: RefusalReport | undefined): string {
-  return JSON.stringify({
-    ok: false,
-    error: report ? report.name : (e as Error).name,
-    message: (e as Error).message,
-    note: report?.note,
-  });
+  const body: RefusalJsonBody = report
+    ? { ok: false, error: report.name, message: report.detail, note: report.note }
+    : { ok: false, error: (e as Error).name, message: (e as Error).message, note: undefined };
+  return JSON.stringify(body);
 }

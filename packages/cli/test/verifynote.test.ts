@@ -184,6 +184,22 @@ describe('shared CLI notes', () => {
     expect(refusalReport(new Error('merkle proof does not match'), 'verify')).toBeUndefined();
   });
 
+  it('derives the JSON channel from the same object the human channel prints', () => {
+    // one report serves both channels, so they cannot disagree about the
+    // code, the class name, or the note; the JSON message is the error's own
+    // message, which the report carries as `detail`
+    const e = new CustodyUnsupportedError('fees x');
+    const report = refusalReport(e, 'live', 'custody');
+    expect(report?.detail).toBe('fees x');
+    expect(report?.message).toBe(`custody OUT OF SCOPE: fees x. ${report?.note}`);
+    expect(JSON.parse(refusalJson(e, report))).toEqual({
+      ok: false,
+      error: report?.name,
+      message: report?.detail,
+      note: report?.note,
+    });
+  });
+
   it('carries the executed-leaf residual below L3 and the numbering one on multi-input', () => {
     expect(contentResiduals('L3', { singleInputReveal: false })).toEqual([]);
     const single = contentResiduals('L2', { singleInputReveal: true });
