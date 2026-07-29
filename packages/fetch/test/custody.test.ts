@@ -389,11 +389,17 @@ describe('fetchCustody build-time domain refusals', () => {
   });
 
   it('surfaces the refusal when the poisoning backend is the only one', async () => {
+    // one configured backend agreeing with itself is one server's word, and
+    // the message says that rather than claiming every backend reached it
     const { id, routes } = poisonedSetup();
     const p = fetchCustody(id, { ...OPTS, ...ANCHORS, esplora: [E], fetchFn: stubFetch(routes) });
     await expect(p).rejects.toThrow(CustodyUnsupportedError);
     await expect(p).rejects.toThrow(/unbound at reveal/);
-    await expect(p).rejects.toThrow(new RegExp(`each configured backend led an attempt.*${E}`));
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(new RegExp(`the single configured backend reported it: ${E}`));
+    expect(e.message).toMatch(/a second configured backend is what would make it more/);
+    expect(e.message).not.toMatch(/each configured backend led an attempt/);
   });
 
   /** every route the given backend serves, dropped */

@@ -251,8 +251,10 @@ backend SHOULD report the refusal in the class each backend raised, and SHOULD
 name every backend that led an attempt reporting it. A builder MUST report
 whether every configured backend reached that same refusal, and MUST name the
 backends that produced no usable answer and the backends that led no attempt
-when they did not. A caller MUST NOT read a domain refusal short of every
-configured backend as proof about the chain.
+when they did not. A builder MUST report a refusal as reaching every
+configured backend only when at least two backends were configured, since one
+backend agreeing with itself is one server's word. A caller MUST NOT read a
+domain refusal short of every configured backend as proof about the chain.
 
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.

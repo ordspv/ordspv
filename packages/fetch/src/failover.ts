@@ -60,12 +60,13 @@ export type NoAnswer = DomainRefusal;
 /**
  * A refusal a build loop rethrows on its backends' behalf.
  *
- * `unanimous` says how far it reaches. True means every configured backend led
- * an attempt that ended in this refusal, which is as close to the chain's own
- * answer as a builder gets. False means some configured backend never stood
- * behind it, which covers an attempt that produced no usable answer and an
- * attempt that was never led. A caller MUST NOT read a non-unanimous refusal
- * as proof about the chain.
+ * `unanimous` says how far it reaches. True means at least two configured
+ * backends were configured and every one of them led an attempt that ended in
+ * this refusal, which is as close to the chain's own answer as a builder gets.
+ * False means some configured backend never stood behind it, which covers a
+ * single configured backend agreeing with itself, an attempt that produced no
+ * usable answer, and an attempt that was never led. A caller MUST NOT read a
+ * non-unanimous refusal as proof about the chain.
  *
  * A refusal a verifier raises carries no marker at all, and callers treat that
  * as unanimous: the bundle it refused had already bound its witness.
@@ -86,6 +87,11 @@ export interface SharedRefusalError extends Error {
  * one that succeeded is the answer, and this is not called in that case. When
  * no backend succeeded, the refusal is the most informative thing the build
  * has, and reporting it while saying what it rests on is honest.
+ *
+ * `unanimous` needs at least two configured backends. One backend agreeing with
+ * itself is one server's word however the loop ran, and a caller reading a
+ * `CustodyUnsupportedError` as a proven statement about the chain on that
+ * strength is the reading SPEC-CUSTODY forbids.
  *
  * Returns undefined when nothing was refused, when the refusals were of
  * different classes, or when the three groups do not account for every
@@ -110,11 +116,16 @@ export function sharedDomainRefusal(
   // attempt runs through a pool, so the deciding bytes may have come from
   // another member, and claiming every backend reported the condition would
   // overstate it
-  const unanimous = noAnswer.length === 0 && neverLed.length === 0;
+  const unanimous = backendCount >= 2 && noAnswer.length === 0 && neverLed.length === 0;
   if (unanimous) {
     first.message =
       `${first.message} (each configured backend led an attempt that ended this way, ` +
       `so it is not one server's word: ${names})`;
+  } else if (backendCount === 1) {
+    first.message =
+      `${first.message} (the single configured backend reported it: ${names}; ` +
+      `one server's word is what this rests on, and a second configured backend is ` +
+      `what would make it more)`;
   } else {
     const rest = [
       noAnswer.length ? `${noAnswer.length} produced no usable answer: ${withCause(noAnswer)}` : '',

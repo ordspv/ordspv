@@ -20,7 +20,15 @@ const refusal = (baseUrl: string): { baseUrl: string; error: Error } => ({
 });
 
 describe('sharedDomainRefusal', () => {
-  it('is unanimous when every configured backend led an attempt into it', () => {
+  it('says one configured backend is one server\'s word', () => {
+    const e = sharedDomainRefusal([refusal(A)], 1);
+    expect(e?.unanimous).toBe(false);
+    expect(e?.message).toMatch(new RegExp(`the single configured backend reported it: ${A}`));
+    expect(e?.message).toMatch(/a second configured backend is what would make it more/);
+    expect(e?.message).not.toMatch(/each configured backend/);
+  });
+
+  it('is unanimous only when two or more all reached it', () => {
     const both = sharedDomainRefusal([refusal(A), refusal(B)], 2);
     expect(both?.unanimous).toBe(true);
     expect(both?.message).toMatch(/each configured backend led an attempt that ended this way/);

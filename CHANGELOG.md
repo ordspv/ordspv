@@ -451,6 +451,16 @@ already binds.
   containing a member that led nothing is marked as reaching less than all of
   them, so `custody` and `sat` report one class and one exit code for the same
   inscription where they used to differ.
+- **One configured backend is not unanimity.** A refusal rethrown over a single
+  configured backend said that each configured backend had led an attempt
+  ending that way, so it is not one server's word, when it was exactly one
+  server's word, and a `CustodyUnsupportedError` on that strength carried exit
+  code 4 as a proven statement about the chain, which SPEC-CUSTODY forbids a
+  caller from reading it as. A refusal now reaches every configured backend
+  only when at least two were configured and all of them stood behind it. With
+  one, the message names it and says a second backend is what would make it
+  more, and the existing non-unanimous routing carries the refusal to exit code
+  3.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

@@ -56,11 +56,13 @@ export type RefusalContext = 'verify' | 'live';
 /**
  * The sentence a refusal short of every configured backend carries. A build
  * that no backend answered with a bundle reports the refusal it does have, and
- * the reader has to be told what stood behind it.
+ * the reader has to be told what stood behind it. One configured backend is
+ * that case too: a single server agreeing with itself is one server's word.
  */
 const PARTIAL_ANSWER =
-  `Some configured backends produced no usable answer, so this rests on the ones ` +
-  `that did; --esplora names others.`;
+  `A refusal is the chain's answer only when two or more configured backends all ` +
+  `reach it, which did not happen here; the message says what each one did, and ` +
+  `--esplora names others.`;
 
 /**
  * Classify what a verification or a live build threw.

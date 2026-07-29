@@ -153,8 +153,11 @@ every configured backend SHOULD report the refusal in the class each backend
 raised, and SHOULD name every backend that led an attempt reporting it. A
 builder MUST report whether every configured backend reached that same
 refusal, and MUST name the backends that produced no usable answer and the
-backends that led no attempt when they did not. A caller MUST NOT read a
-domain refusal short of every configured backend as proof about the chain.
+backends that led no attempt when they did not. A builder MUST report a
+refusal as reaching every configured backend only when at least two backends
+were configured, since one backend agreeing with itself is one server's word.
+A caller MUST NOT read a domain refusal short of every configured backend as
+proof about the chain.
 
 Verifiers SHOULD report the control block's merkle path depth at input `k`,
 whether it is zero (`singleLeafTree`), and whether the reveal has a single

@@ -443,7 +443,10 @@ describe('fetchSatIdentity', () => {
     const one = counting();
     const single = fetchSatIdentity(id, { ...OPTS, esplora: [E], maxSteps: 1, fetchFn: one.fetchFn });
     await expect(single).rejects.toThrow(SatStepLimitError);
-    await expect(single).rejects.toThrow(new RegExp(`each configured backend led an attempt.*${E}`));
+    // one configured backend is one server's word, whatever the loop did
+    await expect(single).rejects.toThrow(
+      new RegExp(`the single configured backend reported it: ${E}`),
+    );
 
     const two = counting();
     const pair = fetchSatIdentity(id, { ...OPTS, esplora: [E, EB], maxSteps: 1, fetchFn: two.fetchFn });
@@ -1032,11 +1035,11 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     // message says so rather than blaming the reveal
     await expect(p).rejects.toThrow(/HTTP 404/);
     await expect(p).rejects.toThrow(new RegExp(E));
-    // the one configured backend reached it, so the sentence is unchanged
+    // one configured backend reached it, which is one server's word
     const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
-    expect(e.unanimous).toBe(true);
-    expect(e.message).toMatch(/each configured backend led an attempt that ended this way/);
-    expect(e.message).not.toMatch(/could not be reached/);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(new RegExp(`the single configured backend reported it: ${E}`));
+    expect(e.message).not.toMatch(/each configured backend led an attempt/);
   });
 
   it('emits no witness section for a single-input reveal even with the block available', async () => {
