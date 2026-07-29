@@ -3,6 +3,27 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The refusal taxonomy is one table that every command and both output
+  channels read.** The refusal classes, whether a build rotates on each, and
+  the exit-code category each reports live in two `Record`s keyed on unions
+  of the class names and the wrapper code strings (`@ordspv/fetch`
+  `taxonomy.ts` for the build-time facts, `@ordspv/cli` `taxonomy.ts` for the
+  presentation), so a class added without a row is a compile-time error
+  rather than a gap. Both build loops read one rotate predicate from the
+  table, the reporter renders the prefix and the exit code from one category
+  per class, and the `--json` channel is a typed projection of the same
+  report object the human channel prints. A coverage test walks every error
+  class both packages export and requires each to appear in a table or in an
+  explicitly reasoned excluded list. One live-channel sentence changed: the
+  witness-section remedy now names `--esplora`, since the table requires
+  every remedy to name the flag that changes the outcome where one exists.
+  Exit codes, `verify` output, and rotation behavior for everything a caller
+  can reach are unchanged.
+
 ## [0.3.0] - 2026-07-26
 
 Sat provenance in both directions, on the same fail-closed trust model as
