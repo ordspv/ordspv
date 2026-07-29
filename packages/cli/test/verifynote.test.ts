@@ -12,6 +12,7 @@ import {
   hexToBytes,
   parseTx,
 } from '@ordspv/core';
+import { WitnessSectionUnavailableError } from '@ordspv/fetch';
 import { contentResiduals, refusalJson, refusalReport } from '../src/notes.js';
 
 /**
@@ -303,6 +304,56 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
       expect(asLive?.message).toMatch(/^custody (UNPROVEN|OUT OF SCOPE): /);
     }
     expect(refusalReport(new Error('merkle proof does not match'), 'live', 'sat')).toBeUndefined();
+  });
+
+  it('reports a refusal only some backends reached as unproven, not as out of scope', () => {
+    // a domain refusal from the one backend that answered says nothing about
+    // the chain, so it cannot carry the code that means the path really does
+    // leave what v1 proves
+    const partial = Object.assign(new CustodyUnsupportedError('fees x'), { unanimous: false });
+    const live = refusalReport(partial, 'live', 'sat');
+    expect(live?.code).toBe(3);
+    expect(live?.message).toMatch(/^sat UNPROVEN: fees x\./);
+    expect(live?.note).toMatch(/--esplora names others/);
+    expect(JSON.parse(refusalJson(partial, live))).toMatchObject({
+      ok: false,
+      error: 'CustodyUnsupportedError',
+      note: expect.stringMatching(/--esplora names others/),
+    });
+
+    // and the unanimous refusal keeps the code and the sentence it had
+    const all = Object.assign(new CustodyUnsupportedError('fees x'), { unanimous: true });
+    expect(refusalReport(all, 'live', 'sat')).toMatchObject({
+      code: 4,
+      message: expect.stringMatching(/^sat OUT OF SCOPE: fees x\. The path is well formed/),
+    });
+    // a verifier raises the class with no marker at all, and that is proven
+    expect(refusalReport(new CustodyUnsupportedError('fees x'), 'verify')?.code).toBe(4);
+  });
+
+  it('gives the witness-section refusal its own unproven code on both channels', () => {
+    for (const unanimous of [true, false]) {
+      const e = Object.assign(new WitnessSectionUnavailableError('no raw block'), { unanimous });
+      const report = refusalReport(e, 'live', 'custody');
+      expect(report?.code).toBe(3);
+      expect(report?.message).toMatch(/^custody UNPROVEN: no raw block\./);
+      expect(JSON.parse(refusalJson(e, report))).toMatchObject({
+        ok: false,
+        error: 'WitnessSectionUnavailableError',
+      });
+    }
+  });
+
+  it('carries the partial-answer sentence on every non-unanimous class', () => {
+    for (const e of [
+      new EnvelopeIndexUnprovenError('numbering x'),
+      new SatStepLimitError('depth x'),
+      new WitnessSectionUnavailableError('no raw block'),
+    ]) {
+      const report = refusalReport(Object.assign(e, { unanimous: false }), 'live', 'sat');
+      expect(report?.code).toBe(3);
+      expect(report?.note).toMatch(/--esplora names others/);
+    }
   });
 
   it('emits one JSON shape for a mapped and an unmapped failure', () => {

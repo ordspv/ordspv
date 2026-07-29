@@ -352,6 +352,10 @@ export async function fetchSatIdentity(
   let pool: PooledEsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
+  // attempts that ended some other way, which here is a pool-wide transport
+  // failure; a refusal reported over these says so rather than claiming the
+  // whole pool agreed with it
+  const unreachable: string[] = [];
   let lastCause: Error | undefined;
   for (let i = 0; i < members.length; i++) {
     const attempt = new PooledEsploraBackend([...members.slice(i), ...members.slice(0, i)]);
@@ -406,12 +410,17 @@ export async function fetchSatIdentity(
       // check below the walk's getTxHex and inside provenInputValues, so one
       // member serving garbage for one mid-walk request ends the build. That
       // is availability only, because that check is what makes the walk sound.
+      //
+      // The members this loop now skips were never led, so a refusal already
+      // recorded is reported over this one only when the two together account
+      // for every configured member. Otherwise the build failure stands.
       buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+      unreachable.push(members[i].baseUrl);
       break;
     }
   }
   if (!built || !pool) {
-    const shared = sharedDomainRefusal(refusals, members.length);
+    const shared = sharedDomainRefusal(refusals, members.length, unreachable);
     if (shared) throw shared;
     throw new SatIdentityError('BUILD_FAILED', `build failed:\n${buildErrors.join('\n')}`);
   }

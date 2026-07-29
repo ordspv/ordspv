@@ -15,6 +15,7 @@ import {
   L2_EXECUTED_LEAF_RESIDUAL,
   L2_NUMBERING_RESIDUAL,
 } from '@ordspv/core';
+import { WitnessSectionUnavailableError } from '@ordspv/fetch';
 
 /**
  * The residual sentences a content-path result carries. Below L3 the binding
@@ -53,15 +54,33 @@ export interface RefusalReport {
 export type RefusalContext = 'verify' | 'live';
 
 /**
+ * The sentence a refusal only some backends reached carries. A build that no
+ * backend answered with a bundle reports the refusal it does have, and the
+ * reader has to be told which backends stood behind it.
+ */
+const PARTIAL_ANSWER =
+  `Some configured backends could not be reached, so this rests on the ones that ` +
+  `answered; --esplora names others.`;
+
+/**
  * Classify what a verification or a live build threw.
  *
- * Four refusals are not claims that the bundle is forged. An unanchored
+ * Five refusals are not claims that the bundle is forged. An unanchored
  * sub-BIP34 coinbase height and an unprovable envelope numbering are both
  * bundles that may be perfectly honest and cannot prove one fact offline, a
  * path outside v1's sat domain is a well-formed bundle whose ancestry this
- * version does not follow, and a step cap is a refusal to read work that was
- * never bounded. Each gets its own prefix and its own exit code, so a script
- * can tell them apart from a forgery without reading the message.
+ * version does not follow, a step cap is a refusal to read work that was never
+ * bounded, and an unavailable witness section is a block no backend served.
+ * Each gets its own prefix and its own exit code, so a script can tell them
+ * apart from a forgery without reading the message.
+ *
+ * How far a refusal reaches decides one of the codes. A build loop marks the
+ * refusal it rethrows with `unanimous`, and a `CustodyUnsupportedError` that
+ * only the backends that answered stand behind is reported as unproven rather
+ * than as out of scope: it is a claim about the chain that the build cannot
+ * make on that strength. The other classes assert nothing about the chain and
+ * keep their code either way. A missing marker, which is every refusal a
+ * verifier raises, counts as unanimous and is proven.
  *
  * Returns undefined for everything else, which the caller reports as invalid.
  */
@@ -74,12 +93,16 @@ export function refusalReport(
   const live = context === 'live';
   const unproven = live ? `${command} UNPROVEN: ` : 'bundle UNPROVEN offline: ';
   const outOfScope = live ? `${command} OUT OF SCOPE: ` : 'bundle OUT OF SCOPE: ';
-  const report = (prefix: string, note: string, code: number): RefusalReport => ({
-    message: `${prefix}${message}. ${note}`,
-    code,
-    name: (e as Error).name,
-    note,
-  });
+  const unanimous = (e as { unanimous?: boolean }).unanimous !== false;
+  const report = (prefix: string, note: string, code: number): RefusalReport => {
+    const full = unanimous ? note : `${note} ${PARTIAL_ANSWER}`;
+    return {
+      message: `${prefix}${message}. ${full}`,
+      code,
+      name: (e as Error).name,
+      note: full,
+    };
+  };
   if (e instanceof CoinbaseHeightUnprovenError) {
     return report(
       unproven,
@@ -112,7 +135,26 @@ export function refusalReport(
       3,
     );
   }
+  if (e instanceof WitnessSectionUnavailableError) {
+    return report(
+      unproven,
+      `No backend that answered served the raw block the reveal's witness section is ` +
+        `built from; retrying later or naming another backend may serve it.`,
+      3,
+    );
+  }
   if (e instanceof CustodyUnsupportedError) {
+    // the class says the path leaves what v1 proves, which is a statement
+    // about the chain; on the strength of the backends that answered it is a
+    // claim the build cannot make, so it reports as unproven
+    if (!unanimous) {
+      return report(
+        unproven,
+        `The path is well formed and leaves what v1 proves, which is more than this ` +
+          `build can establish about the chain.`,
+        3,
+      );
+    }
     return report(
       outOfScope,
       live

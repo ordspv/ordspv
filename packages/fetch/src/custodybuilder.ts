@@ -389,6 +389,9 @@ export async function fetchCustody(
   let source: EsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
+  // attempts that ended some other way, which is a transport failure; a
+  // refusal reported over these says so rather than claiming they agreed
+  const unreachable: string[] = [];
   let lastCause: Error | undefined;
   for (let i = 0; i < backends.length; i++) {
     const backend = backends[i];
@@ -422,13 +425,15 @@ export async function fetchCustody(
       // terminal
       if (e instanceof CustodyUnsupportedError || e instanceof WitnessSectionUnavailableError) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
+      } else {
+        unreachable.push(backend.baseUrl);
       }
       lastCause = e as Error;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }
   if (!built || !source) {
-    const shared = sharedDomainRefusal(refusals, backends.length);
+    const shared = sharedDomainRefusal(refusals, backends.length, unreachable);
     if (shared) throw shared;
     throw new CustodyError('BUILD_FAILED', `all backends failed:\n${buildErrors.join('\n')}`);
   }

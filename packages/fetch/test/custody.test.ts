@@ -396,19 +396,40 @@ describe('fetchCustody build-time domain refusals', () => {
     await expect(p).rejects.toThrow(new RegExp(`each configured backend led an attempt.*${E}`));
   });
 
-  it('reports mixed failures as BUILD_FAILED with every cause', async () => {
-    const { id, routes } = poisonedSetup();
-    // E refuses on domain grounds, E2 serves nothing at all
+  /** every route the given backend serves, dropped */
+  function without(routes: Record<string, Route>, base: string): Record<string, Route> {
     const stripped: Record<string, Route> = {};
     for (const [url, route] of Object.entries(routes)) {
-      if (!url.startsWith(E2) || url.includes('/block-height/') || url.includes('/tip/')) {
+      if (!url.startsWith(base) || url.includes('/block-height/') || url.includes('/tip/')) {
         stripped[url] = route;
       }
     }
-    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(stripped) });
+    return stripped;
+  }
+
+  it('keeps the class when the other backend could not be reached at all', async () => {
+    const { id, routes } = poisonedSetup();
+    // E refuses on domain grounds, E2 serves nothing at all. No backend
+    // answered with a bundle, so the refusal is the most informative thing the
+    // build has, and it says what it rests on
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(without(routes, E2)) });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/unbound at reveal/);
+    expect(e.message).toMatch(/1 of 2 configured backends/);
+    expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
+    expect(e.message).toMatch(new RegExp(`could not be reached: ${E2}`));
+  });
+
+  it('reports BUILD_FAILED when no backend refused on domain grounds', async () => {
+    const { id, routes } = poisonedSetup();
+    // neither backend serves the reveal, so nothing was refused and nothing
+    // was proven; the caller gets every cause
+    const blind = without(without(routes, E2), E);
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(blind) });
     await expect(p).rejects.toThrow(CustodyError);
     await expect(p).rejects.toThrow(/all backends failed/);
-    await expect(p).rejects.toThrow(/unbound at reveal/);
     await expect(p).rejects.toThrow(/HTTP 404/);
   });
 });
@@ -506,6 +527,32 @@ describe('fetchCustody with multi-input reveals', () => {
     // the real cause is a backend failure, not an unprovable reveal
     await expect(p).rejects.toThrow(/HTTP 404/);
     await expect(p).rejects.toThrow(new RegExp(`${E},.*${E2}`));
+    // every backend reached it, so the sentence is the one it has always been
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e.unanimous).toBe(true);
+    expect(e.message).toMatch(
+      /\(each configured backend led an attempt that ended this way, so it is not one server's word: /,
+    );
+    expect(e.message).not.toMatch(/could not be reached/);
+  });
+
+  it('keeps the witness-section class when the other backend could not be reached', async () => {
+    // E walks the path and no backend serves the raw block, so E's attempt
+    // ends in the availability refusal. E2 serves nothing at all, so its
+    // attempt ends on transport. Reporting the refusal is honest as long as it
+    // says how far it reaches, and BUILD_FAILED would throw that away
+    const p = fetchCustody(id, {
+      ...OPTS,
+      anchorSources: [E3, E4],
+      fetchFn: stubFetch(routes(false)),
+    });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/spends 2 input/);
+    expect(e.message).toMatch(/1 of 2 configured backends/);
+    expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
+    expect(e.message).toMatch(new RegExp(`could not be reached: ${E2}`));
   });
 
   it('walks again on the next backend when one names a wrong block for the reveal', async () => {
