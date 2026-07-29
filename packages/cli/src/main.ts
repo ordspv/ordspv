@@ -126,9 +126,9 @@ function reportAttempt(info: AttemptInfo): void {
 /**
  * Report a failure the same way on all three commands.
  *
- * The four refusals that are not forgeries carry their own exit code, and the
- * code does not depend on which command raised them: a path outside v1's
- * domain exits 4 whether the caller read a bundle back or resolved the same
+ * The failures that are not forgeries carry their own exit code, and the code
+ * does not depend on which command raised them: a path outside v1's domain
+ * exits 4 whether the caller read a bundle back or resolved the same
  * inscription live. A `--json` caller reads the class on stdout, since a
  * scripted caller has no other discriminator.
  */
@@ -168,6 +168,8 @@ async function main(): Promise<void> {
         '  --max-steps N   funding steps the sat walk follows, and the bound the',
         '      verifier reads a genealogy bundle under',
         'exit codes: 0 ok  1 INVALID  2 usage  3 UNPROVEN  4 OUT OF SCOPE',
+        '  5 INCOMPLETE   1 is a document that failed verification, 5 is a build',
+        '      no configured backend completed, and nothing was verified',
         '  the code does not depend on the command; --json prints the class',
       ].join('\n'),
     );

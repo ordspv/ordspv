@@ -15,7 +15,7 @@ import {
   L2_EXECUTED_LEAF_RESIDUAL,
   L2_NUMBERING_RESIDUAL,
 } from '@ordspv/core';
-import { WitnessSectionUnavailableError } from '@ordspv/fetch';
+import { CustodyError, SatIdentityError, WitnessSectionUnavailableError } from '@ordspv/fetch';
 
 /**
  * The residual sentences a content-path result carries. Below L3 the binding
@@ -84,6 +84,11 @@ const PARTIAL_ANSWER =
  * keep their code either way. A missing marker, which is every refusal a
  * verifier raises, counts as unanimous and is proven.
  *
+ * Two more failures are not claims about a bundle at all. A build no backend
+ * completed and a build whose headers could not be anchored both leave the
+ * caller with nothing verified, which is a different thing from a document that
+ * contradicts itself, and they carry their own codes for that reason.
+ *
  * Returns undefined for everything else, which the caller reports as invalid.
  */
 export function refusalReport(
@@ -95,6 +100,7 @@ export function refusalReport(
   const live = context === 'live';
   const unproven = live ? `${command} UNPROVEN: ` : 'bundle UNPROVEN offline: ';
   const outOfScope = live ? `${command} OUT OF SCOPE: ` : 'bundle OUT OF SCOPE: ';
+  const incomplete = live ? `${command} INCOMPLETE: ` : 'bundle INCOMPLETE: ';
   const unanimous = (e as { unanimous?: boolean }).unanimous !== false;
   const report = (prefix: string, note: string, code: number): RefusalReport => {
     const full = unanimous ? note : `${note} ${PARTIAL_ANSWER}`;
@@ -165,18 +171,42 @@ export function refusalReport(
       4,
     );
   }
+  // a build that could not be completed and a document that failed
+  // verification were one report, so a network outage read as a forgery. What
+  // separates them is whether anything was ever verified: these two codes say
+  // the build never got that far
+  if (e instanceof CustodyError || e instanceof SatIdentityError) {
+    if (e.code === 'BUILD_FAILED') {
+      return report(
+        incomplete,
+        `No configured backend produced a usable answer, so nothing was verified; ` +
+          `--esplora names others.`,
+        5,
+      );
+    }
+    if (e.code === 'HEADER_TRUST') {
+      return report(
+        unproven,
+        `The headers could not be anchored to the agreement this build required; ` +
+          `--anchor-source names others.`,
+        3,
+      );
+    }
+  }
   return undefined;
 }
 
 /**
  * The one-line JSON a `--json` caller reads on a refusal, so the machine
  * channel discriminates on the same facts the human channel prints. A failure
- * with no mapping carries the same shape, so a caller parses one thing.
+ * with no mapping carries the same shape, so a caller parses one thing, and it
+ * reports the class's own name rather than the literal `Error`: the name costs
+ * nothing and is strictly more than a caller had before.
  */
 export function refusalJson(e: unknown, report: RefusalReport | undefined): string {
   return JSON.stringify({
     ok: false,
-    error: report ? report.name : 'Error',
+    error: report ? report.name : (e as Error).name,
     message: (e as Error).message,
     note: report?.note,
   });

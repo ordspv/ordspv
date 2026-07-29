@@ -461,6 +461,15 @@ already binds.
   one, the message names it and says a second backend is what would make it
   more, and the existing non-unanimous routing carries the refusal to exit code
   3.
+- **Exit code 5, `INCOMPLETE`, for a build no backend completed.** A total
+  outage, an anchoring shortfall and a genuinely forged bundle were one report
+  at exit code 1, which the usage text documents as `INVALID`.
+  `CustodyError('BUILD_FAILED')` and `SatIdentityError('BUILD_FAILED')` now
+  exit 5 and say that no configured backend produced a usable answer, the two
+  `HEADER_TRUST` codes exit 3 and name `--anchor-source`, and exit code 1 keeps
+  meaning a document that failed verification. On `--json` a failure the table
+  does not recognize reports the error's own class name rather than the literal
+  `Error`. All six codes are listed in the usage text.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

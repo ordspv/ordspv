@@ -12,7 +12,7 @@ import {
   hexToBytes,
   parseTx,
 } from '@ordspv/core';
-import { WitnessSectionUnavailableError } from '@ordspv/fetch';
+import { CustodyError, SatIdentityError, WitnessSectionUnavailableError } from '@ordspv/fetch';
 import { contentResiduals, refusalJson, refusalReport } from '../src/notes.js';
 
 /**
@@ -203,10 +203,11 @@ describe('shared CLI notes', () => {
  * `--json` caller reads the class rather than parsing a sentence.
  *
  * The live commands are driven with a backend URL no request can leave the
- * machine for, so the whole file stays offline. That reaches the unmapped
- * path end to end on both channels; the four mapped classes need a backend
- * serving crafted bytes, so their codes are checked through `verify`, which
- * runs the same reporter, and through the reporter itself.
+ * machine for, so the whole file stays offline. That reaches the
+ * build-completed-nothing path end to end on both channels; the mapped refusal
+ * classes need a backend serving crafted bytes, so their codes are checked
+ * through `verify`, which runs the same reporter, and through the reporter
+ * itself.
  */
 describe('refusals across commands', { timeout: 60_000 }, () => {
   const TMP = mkdtempSync(join(tmpdir(), 'ordspv-refusal-'));
@@ -267,21 +268,54 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
     expect(r.stderr).toMatch(/--max-steps applies to sat genealogy bundles/);
   });
 
-  it('gives custody and sat a JSON refusal channel at the same code', () => {
+  it('reports a build no backend completed as INCOMPLETE at exit 5, both channels', () => {
+    // a total outage is not a forged document, and exit 1 said it was. Nothing
+    // was verified here, which is what code 5 means
     for (const command of ['custody', 'sat']) {
       const args = [command, `${'ab'.repeat(32)}i0`, '--esplora', OFFLINE];
       const human = cli(args);
-      expect(human.status).toBe(1);
-      expect(human.stderr).toMatch(new RegExp(`error: ${command}: `));
+      expect(human.status).toBe(5);
+      expect(human.stderr).toMatch(new RegExp(`error: ${command} INCOMPLETE: `));
+      expect(human.stderr).toMatch(/No configured backend produced a usable answer/);
+      expect(human.stderr).toMatch(/--esplora names others/);
 
       const json = cli([...args, '--json']);
-      expect(json.status).toBe(1);
+      expect(json.status).toBe(5);
       const parsed = JSON.parse(json.stdout) as Record<string, unknown>;
       expect(parsed.ok).toBe(false);
-      // no mapping, so the shape is the same and the class is the generic one
-      expect(parsed.error).toBe('Error');
+      expect(parsed.error).toBe(command === 'custody' ? 'CustodyError' : 'SatIdentityError');
       expect(String(parsed.message)).toMatch(/fetch failed/);
-      expect(parsed.note).toBeUndefined();
+      expect(String(parsed.note)).toMatch(/nothing was verified/);
+    }
+  });
+
+  it('separates an anchoring shortfall and a failed verification from a forgery', () => {
+    // reaching HEADER_TRUST and VERIFY_FAILED through the live commands needs a
+    // backend serving crafted bytes, which this file has no way to run offline,
+    // so the two codes are checked at the reporter both commands share
+    for (const make of [
+      (code: 'HEADER_TRUST' | 'VERIFY_FAILED') => new CustodyError(code, 'why'),
+      (code: 'HEADER_TRUST' | 'VERIFY_FAILED') => new SatIdentityError(code, 'why'),
+    ]) {
+      for (const command of ['custody', 'sat']) {
+        const trust = make('HEADER_TRUST');
+        const report = refusalReport(trust, 'live', command);
+        expect(report?.code).toBe(3);
+        expect(report?.message).toMatch(new RegExp(`^${command} UNPROVEN: why\\.`));
+        expect(report?.note).toMatch(/--anchor-source names others/);
+        expect(JSON.parse(refusalJson(trust, report))).toMatchObject({
+          ok: false,
+          error: trust.name,
+        });
+
+        // a bundle that failed verification keeps meaning exit 1
+        const failed = make('VERIFY_FAILED');
+        expect(refusalReport(failed, 'live', command)).toBeUndefined();
+        // and the JSON says which class it was rather than the literal Error
+        expect(JSON.parse(refusalJson(failed, undefined))).toMatchObject({
+          error: failed.name,
+        });
+      }
     }
   });
 
