@@ -51,7 +51,12 @@ import {
   type HeaderTrustReport,
 } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
-import { sharedDomainRefusal, type DomainRefusal, type OnAttempt } from './failover.js';
+import {
+  sharedDomainRefusal,
+  type DomainRefusal,
+  type NoAnswer,
+  type OnAttempt,
+} from './failover.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -390,9 +395,10 @@ export async function fetchCustody(
   let source: EsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
-  // attempts that ended some other way, which is a transport failure; a
-  // refusal reported over these says so rather than claiming they agreed
-  const unreachable: string[] = [];
+  // attempts that ended some other way, which is a transport failure or a walk
+  // that could not be completed; a refusal reported over these says they
+  // produced no usable answer rather than claiming they agreed
+  const noAnswer: NoAnswer[] = [];
   let lastCause: Error | undefined;
   for (let i = 0; i < backends.length; i++) {
     const backend = backends[i];
@@ -434,14 +440,14 @@ export async function fetchCustody(
       ) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
       } else {
-        unreachable.push(backend.baseUrl);
+        noAnswer.push({ baseUrl: backend.baseUrl, error: e as Error });
       }
       lastCause = e as Error;
       buildErrors.push(`${backend.baseUrl}: ${(e as Error).message}`);
     }
   }
   if (!built || !source) {
-    const shared = sharedDomainRefusal(refusals, backends.length, unreachable);
+    const shared = sharedDomainRefusal(refusals, backends.length, noAnswer);
     if (shared) throw shared;
     throw new CustodyError('BUILD_FAILED', `all backends failed:\n${buildErrors.join('\n')}`);
   }

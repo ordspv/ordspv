@@ -47,13 +47,25 @@ export interface DomainRefusal {
 }
 
 /**
+ * One backend whose attempt produced no usable answer, with what ended it.
+ *
+ * This is everything outside the recognized refusal classes: a transport
+ * failure, a backend that served bytes hashing to the wrong txid, a walk that
+ * ran out of path. Some of those backends answered and some never responded at
+ * all, and the accounting cannot tell them apart, so what is said about them is
+ * the thing both cases share.
+ */
+export type NoAnswer = DomainRefusal;
+
+/**
  * A refusal a build loop rethrows on its backends' behalf.
  *
  * `unanimous` says how far it reaches. True means every configured backend led
  * an attempt that ended in this refusal, which is as close to the chain's own
- * answer as a builder gets. False means the backends that could not be reached
- * were never heard from, so the refusal is the word of the ones that answered.
- * A caller MUST NOT read a non-unanimous refusal as proof about the chain.
+ * answer as a builder gets. False means some configured backend never stood
+ * behind it, which covers an attempt that produced no usable answer and an
+ * attempt that was never led. A caller MUST NOT read a non-unanimous refusal
+ * as proof about the chain.
  *
  * A refusal a verifier raises carries no marker at all, and callers treat that
  * as unanimous: the bundle it refused had already bound its witness.
@@ -65,42 +77,53 @@ export interface SharedRefusalError extends Error {
 /**
  * The refusal to rethrow when no backend produced a bundle, so a caller still
  * discriminates on the class it discriminates on today. The message gains how
- * far the refusal reaches, and the names on both sides of that.
+ * far the refusal reaches, and the names on all three sides of that.
  *
- * `unreachable` holds the base URL of every attempt that ended some other way,
- * which is a transport failure the loop already has in its cause list. A
- * refusal from one backend while another succeeded proves nothing, since the
+ * Every configured backend lands in exactly one of three groups. It led an
+ * attempt that ended in a refusal, or it led an attempt that produced no usable
+ * answer, or it never led one at all because an earlier attempt ended the loop.
+ * A refusal from one backend while another succeeded proves nothing, since the
  * one that succeeded is the answer, and this is not called in that case. When
  * no backend succeeded, the refusal is the most informative thing the build
  * has, and reporting it while saying what it rests on is honest.
  *
  * Returns undefined when nothing was refused, when the refusals were of
- * different classes, or when the attempts did not account for every configured
- * backend; the caller's own build-failure path handles those with every cause
- * joined.
+ * different classes, or when the three groups do not account for every
+ * configured backend; the caller's own build-failure path handles those with
+ * every cause joined.
  */
 export function sharedDomainRefusal(
   refusals: DomainRefusal[],
   backendCount: number,
-  unreachable: string[] = [],
+  noAnswer: NoAnswer[] = [],
+  neverLed: string[] = [],
 ): SharedRefusalError | undefined {
   if (refusals.length === 0) return undefined;
-  if (refusals.length + unreachable.length !== backendCount) return undefined;
+  if (refusals.length + noAnswer.length + neverLed.length !== backendCount) return undefined;
   const first = refusals[0].error;
   if (!refusals.every((r) => r.error.constructor === first.constructor)) return undefined;
   const names = refusals.map((r) => r.baseUrl).join(', ');
-  const unanimous = unreachable.length === 0;
-  // what the loop establishes is one attempt per configured backend, each led
-  // by that backend and each ending one of these two ways. On the sat side the
+  const withCause = (rs: DomainRefusal[]): string =>
+    rs.map((r) => `${r.baseUrl}: ${r.error.message}`).join('; ');
+  // what the loop establishes is one attempt per backend that led one, each led
+  // by that backend and each ending one of two ways. On the sat side the
   // attempt runs through a pool, so the deciding bytes may have come from
   // another member, and claiming every backend reported the condition would
   // overstate it
-  first.message = unanimous
-    ? `${first.message} (each configured backend led an attempt that ended this way, ` +
-      `so it is not one server's word: ${names})`
-    : `${first.message} (${refusals.length} of ${backendCount} configured backends led an ` +
-      `attempt that ended this way: ${names}; the rest could not be reached: ` +
-      `${unreachable.join(', ')})`;
+  const unanimous = noAnswer.length === 0 && neverLed.length === 0;
+  if (unanimous) {
+    first.message =
+      `${first.message} (each configured backend led an attempt that ended this way, ` +
+      `so it is not one server's word: ${names})`;
+  } else {
+    const rest = [
+      noAnswer.length ? `${noAnswer.length} produced no usable answer: ${withCause(noAnswer)}` : '',
+      neverLed.length ? `${neverLed.length} never led an attempt: ${neverLed.join(', ')}` : '',
+    ].filter((s) => s !== '');
+    first.message =
+      `${first.message} (${refusals.length} of ${backendCount} configured backends led an ` +
+      `attempt that ended this way: ${names}; ${rest.join('; ')})`;
+  }
   const shared = first as SharedRefusalError;
   shared.unanimous = unanimous;
   return shared;

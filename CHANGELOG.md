@@ -436,6 +436,21 @@ already binds.
   backend. Raised by a verifier it means the bundle's own pointer misses the
   sat space of a transaction whose witness is already bound, which is a bundle
   that failed verification and keeps exit code 1.
+- **A partial refusal names what each backend actually did.** Backends whose
+  attempt ended in anything other than a recognized refusal were described as
+  unreachable, when many of them answered and simply produced nothing usable,
+  and their causes were dropped from the message entirely. They are now
+  reported as having produced no usable answer, each with its own cause, on
+  the rethrown error and in the CLI's remedy sentence, and the word unreachable
+  is gone from this path. The genealogy loop stops at a pool-wide transport
+  failure, and the members it skipped were dropped from the count, so the
+  accounting did not add up and a refusal already recorded fell back to a build
+  failure carrying no class at all; those members are now counted as never
+  having led an attempt. The three groups therefore account for every
+  configured backend in every arrangement, and a refusal reported over a set
+  containing a member that led nothing is marked as reaching less than all of
+  them, so `custody` and `sat` report one class and one exit code for the same
+  inscription where they used to differ.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

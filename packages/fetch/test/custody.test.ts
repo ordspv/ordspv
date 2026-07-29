@@ -419,7 +419,35 @@ describe('fetchCustody build-time domain refusals', () => {
     expect(e.message).toMatch(/unbound at reveal/);
     expect(e.message).toMatch(/1 of 2 configured backends/);
     expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
-    expect(e.message).toMatch(new RegExp(`could not be reached: ${E2}`));
+    // E2 answered nothing usable, which is what is said about it, and its own
+    // cause is carried rather than dropped
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${E2}: `));
+    expect(e.message).toMatch(/HTTP 404/);
+    expect(e.message).not.toMatch(/could not be reached/);
+  });
+
+  it('agrees with the sat wrapper on a refusal beside two that answered nothing', async () => {
+    // the same shape the genealogy suite drives: one backend refuses on domain
+    // grounds and the other two produce nothing usable. Both wrappers report
+    // the refusal's own class marked non-unanimous, which the CLI table turns
+    // into one exit code, so the two commands cannot disagree about the same
+    // inscription
+    const E5 = 'https://esplora5.test';
+    const { id, routes } = poisonedSetup();
+    const p = fetchCustody(id, {
+      ...OPTS,
+      ...ANCHORS,
+      esplora: [E, E2, E5],
+      fetchFn: stubFetch(without(routes, E2)),
+    });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e).not.toBeInstanceOf(CustodyError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/1 of 3 configured backends/);
+    expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
+    expect(e.message).toMatch(new RegExp(`2 produced no usable answer: ${E2}: `));
+    expect(e.message).toMatch(new RegExp(`${E5}: `));
   });
 
   it('reports BUILD_FAILED when no backend refused on domain grounds', async () => {
@@ -552,7 +580,8 @@ describe('fetchCustody with multi-input reveals', () => {
     expect(e.message).toMatch(/spends 2 input/);
     expect(e.message).toMatch(/1 of 2 configured backends/);
     expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
-    expect(e.message).toMatch(new RegExp(`could not be reached: ${E2}`));
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${E2}: `));
+    expect(e.message).not.toMatch(/could not be reached/);
   });
 
   it('walks again on the next backend when one names a wrong block for the reveal', async () => {

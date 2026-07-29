@@ -53,6 +53,8 @@ const E2 = 'https://esplora2.test';
 const E3 = 'https://esplora3.test';
 // a second serving backend, for failover assertions
 const EB = 'https://esplorab.test';
+// a third, for the accounting that has to cover members no attempt ever led
+const EC = 'https://esplorac.test';
 
 type Route = string | Uint8Array | object | (() => Promise<Response> | Response);
 
@@ -749,7 +751,64 @@ describe('fetchSatIdentity', () => {
     expect(e.message).toMatch(/unbound at reveal/);
     expect(e.message).toMatch(/1 of 2 configured backends/);
     expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
-    expect(e.message).toMatch(new RegExp(`could not be reached: ${EB}`));
+    // EB answered, and what it answered with is carried rather than dropped
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${EB}: `));
+    expect(e.message).toMatch(/HTTP 404/);
+    expect(e.message).not.toMatch(/could not be reached/);
+  });
+
+  it('counts the members a break skipped, and reports the refusal over them', async () => {
+    // E refuses on domain grounds. The attempt led by EB reads an honest reveal
+    // and walks into a transaction no member serves, which ends the build,
+    // and EC is never led. The three groups account for all three members, so
+    // the refusal is reported over them and says EC stood behind nothing.
+    // Before this the two skipped members were dropped, the count did not add
+    // up, and the caller got a build failure with no class at all
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const evenField = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+        },
+      ],
+      [{ value: 546n }],
+    );
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    // the coinbase behind the commit is served by nobody
+    delete routes[`${E}/tx/${coinbase.tx.txid}/hex`];
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) || url.startsWith(EC)
+        ? honest(url.replace(EB, E).replace(EC, E), init)
+        : base(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB, EC],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e).not.toBeInstanceOf(SatIdentityError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/1 of 3 configured backends/);
+    expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${EB}: `));
+    expect(e.message).toMatch(new RegExp(`1 never led an attempt: ${EC}`));
+    // and the loop really did stop before EC, which is why it is named apart
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
   });
 
   it('answers the header marker per header, and throws on one it never anchored', async () => {
@@ -953,7 +1012,8 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(e.unanimous).toBe(false);
     expect(e.message).toMatch(/1 of 2 configured backends/);
     expect(e.message).toMatch(new RegExp(`ended this way: ${E}`));
-    expect(e.message).toMatch(new RegExp(`could not be reached: ${EB}`));
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${EB}: `));
+    expect(e.message).not.toMatch(/could not be reached/);
   });
 
   it('passes WitnessSectionUnavailableError through, naming the backend cause', async () => {

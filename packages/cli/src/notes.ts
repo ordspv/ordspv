@@ -54,13 +54,13 @@ export interface RefusalReport {
 export type RefusalContext = 'verify' | 'live';
 
 /**
- * The sentence a refusal only some backends reached carries. A build that no
- * backend answered with a bundle reports the refusal it does have, and the
- * reader has to be told which backends stood behind it.
+ * The sentence a refusal short of every configured backend carries. A build
+ * that no backend answered with a bundle reports the refusal it does have, and
+ * the reader has to be told what stood behind it.
  */
 const PARTIAL_ANSWER =
-  `Some configured backends could not be reached, so this rests on the ones that ` +
-  `answered; --esplora names others.`;
+  `Some configured backends produced no usable answer, so this rests on the ones ` +
+  `that did; --esplora names others.`;
 
 /**
  * Classify what a verification or a live build threw.

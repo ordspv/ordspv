@@ -56,7 +56,12 @@ import {
 } from './custodybuilder.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
-import { sharedDomainRefusal, type DomainRefusal, type OnAttempt } from './failover.js';
+import {
+  sharedDomainRefusal,
+  type DomainRefusal,
+  type NoAnswer,
+  type OnAttempt,
+} from './failover.js';
 
 export class SatBuildError extends Error {}
 
@@ -367,10 +372,16 @@ export async function fetchSatIdentity(
   let pool: PooledEsploraBackend | undefined;
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
-  // attempts that ended some other way, which here is a pool-wide transport
-  // failure; a refusal reported over these says so rather than claiming the
-  // whole pool agreed with it
-  const unreachable: string[] = [];
+  // the attempt that ended some other way, which here is a pool-wide transport
+  // failure or a walk that could not be completed; a refusal reported over it
+  // says it produced no usable answer rather than claiming the whole pool
+  // agreed with the refusal
+  const noAnswer: NoAnswer[] = [];
+  // members the break below skipped. They led nothing and stand behind
+  // nothing, and counting them is what keeps the three groups summing to the
+  // configured count, so a refusal reported over them is non-unanimous by
+  // construction rather than dropped for not adding up
+  const neverLed: string[] = [];
   let lastCause: Error | undefined;
   for (let i = 0; i < members.length; i++) {
     const attempt = new PooledEsploraBackend([...members.slice(i), ...members.slice(0, i)]);
@@ -432,12 +443,13 @@ export async function fetchSatIdentity(
       // recorded is reported over this one only when the two together account
       // for every configured member. Otherwise the build failure stands.
       buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
-      unreachable.push(members[i].baseUrl);
+      noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
+      for (const skipped of members.slice(i + 1)) neverLed.push(skipped.baseUrl);
       break;
     }
   }
   if (!built || !pool) {
-    const shared = sharedDomainRefusal(refusals, members.length, unreachable);
+    const shared = sharedDomainRefusal(refusals, members.length, noAnswer, neverLed);
     if (shared) throw shared;
     throw new SatIdentityError('BUILD_FAILED', `build failed:\n${buildErrors.join('\n')}`);
   }
