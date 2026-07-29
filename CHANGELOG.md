@@ -7,20 +7,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Every recorded refusal rests on data the named backend served, with no
-  remainder.** `fetchSatIdentity` fetches the reveal's tx hex, its status,
-  its merkle proof and the terminal coinbase's status from the member
-  leading the attempt rather than through the pool, which could fall over to
-  another member on a request whose answer decides a domain refusal: the
-  reveal's bytes decide every refusal the walk can raise from the reveal,
-  and the coinbase's claimed height decides the subsidy boundary and with it
-  the fee-tail refusal. A refusal recorded under a backend's name is now
-  that backend's word, and `unanimous` is computed over members that each
-  served their own deciding data. A transport failure on one of the four
-  deciding requests is one member's failure, recorded as producing no usable
-  answer, and the build leads the next attempt with the next member; pool
-  exhaustion on any pooled request still ends the build. SPEC-SAT states the
-  rule.
+- **Every recorded refusal rests on data the named backend served for the
+  requested transaction.** `fetchSatIdentity` fetches the reveal's tx hex,
+  its status, its merkle proof and the terminal coinbase's status from the
+  member leading the attempt rather than through the pool, which could fall
+  over to another member on a request whose answer decides a domain refusal:
+  the reveal's bytes decide every refusal the walk can raise from the
+  reveal, and the coinbase's claimed height decides the subsidy boundary and
+  with it the fee-tail refusal. Both builders check the served reveal's
+  stripped hash against the inscription id's txid immediately after parsing,
+  so a refusal can never be recorded, or upgraded to unanimity, on bytes
+  that hash to some other transaction. A refusal recorded under a backend's
+  name is now that backend's word, and `unanimous` is computed over members
+  that each served their own deciding data. Any failure raised while the
+  build assembles from lead-served data, from the reveal fetch through the
+  reveal hop's assembly, prev-tx coverage and start-position derivation, and
+  again through the terminal coinbase hop's assembly, is one member's
+  failure whether the request failed or the value it returned did: it is
+  recorded as producing no usable answer and the build leads the next
+  attempt with the next member, the same rotation the custody loop already
+  ran on identical conditions. The successful attempt's lead is barred from
+  attesting to the bundle's headers by name, since the deciding requests do
+  not pass through the pool that records which members served bytes. Pool
+  exhaustion on a pooled request outside the lead-derived span still ends
+  the build. SPEC-SAT states the rule.
 - **The refusal taxonomy is one table that every command and both output
   channels read.** The refusal classes, whether a build rotates on each, and
   the exit-code category each reports live in two `Record`s keyed on unions
@@ -36,12 +46,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   witness-section remedy now names `--esplora`, since the table requires
   every remedy to name the flag that changes the outcome where one exists.
   Exit codes, `verify` output, and rotation behavior for everything a caller
-  can reach are unchanged. Two presentation fixes on the same reporting
+  can reach are unchanged. Presentation fixes on the same reporting
   surface: a `"witness": null` section in a custody or genealogy bundle is
-  refused as a bad section instead of surfacing as a raw TypeError, and
+  refused as a bad section instead of surfacing as a raw TypeError,
   `ord-resolve verify` reports a file it cannot read as one usage line at
   exit 2 and bytes that do not parse as JSON as one document line at exit 1,
-  with no stack trace on either.
+  with no stack trace on either, and every command's uncaught failure now
+  exits through one final catch as one line on stderr at exit 1, with each
+  command's classified paths untouched. `verifySatGenealogy` reads
+  `claimedSat` as a nonempty all-decimal string and refuses other forms
+  before conversion, closing `BigInt`'s empty-string and hex leniencies,
+  which recompute-and-check had made harmless.
 
 ## [0.3.0] - 2026-07-26
 

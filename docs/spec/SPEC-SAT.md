@@ -247,7 +247,9 @@ because the bundle a verifier refused had already bound its witness. The
 reveal's input count is such data, so a refusal raised on the count of inputs
 is terminal. A builder MUST record the rest as that backend's cause and walk
 again leading with the next one. A builder MUST derive each recorded refusal
-from reveal bytes and from a coinbase height the named backend itself served.
+from reveal bytes and from a coinbase height the named backend itself served,
+and MUST have checked the served reveal's stripped hash against the
+inscription id's txid before deriving anything from those bytes.
 A builder that has exhausted every configured
 backend SHOULD report the refusal in the class each backend raised, and SHOULD
 name every backend that led an attempt reporting it. A builder MUST report
@@ -257,7 +259,9 @@ when they did not. A builder MUST report a refusal as reaching every
 configured backend only when at least two backends were configured, since one
 backend agreeing with itself is one server's word. A refusal reported as
 reaching every configured backend means each backend's refusal rests on
-reveal bytes that backend itself served. A caller MUST NOT read a
+reveal bytes and a terminal coinbase height that backend itself served, with
+the served reveal's stripped hash checked against the inscription id's txid.
+A caller MUST NOT read a
 domain refusal short of every configured backend as proof about the chain.
 
 The claimed height of a terminal coinbase below 230,000 is refused outright
