@@ -415,6 +415,15 @@ already binds.
   one JSON object carrying `ok: false`, the error class, the message and the
   remedy, and exits on the same code, with the same shape for a failure the
   table does not recognize.
+- **`--max-steps` is the bound the verifier reads under on the live path
+  too.** `fetchSatIdentity` passed the caller's cap to the walk and then ran
+  the verification at the verifier's own default of 10,000, so
+  `ord-resolve sat <id> --max-steps 20000` on an ancestry deeper than 10,000
+  built the bundle and then refused it, reporting `INVALID` at exit code 1 for
+  a document its own walk had just produced. The option is forwarded to
+  `verifySatGenealogy`, and `SatStepLimitError` joins the classes the wrapper
+  rethrows unwrapped, so a cap reached at either phase reaches the caller as
+  itself.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

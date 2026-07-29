@@ -470,11 +470,21 @@ export async function fetchSatIdentity(
   let identity: VerifiedSatIdentity;
   try {
     identity = verifySatGenealogy(built.bundle, {
+      // the caller's cap is the bound on both sides of this build. The walk
+      // stops at it and the verifier reads under it, so a raised cap that
+      // built a deep ancestry is not refused by the verifier's own default
+      maxSteps: options.maxSteps,
       powLimitBits: options.powLimitBits,
       trustHeader: marker,
     });
   } catch (e) {
     if (e instanceof CustodyUnsupportedError) throw e;
+    // a bundle deeper than the cap is a refusal to read rather than a claim
+    // that it is forged, and the caller raises the cap to read it. The walk
+    // and this read now run under one bound, so nothing this build produced
+    // reaches it; the arm is the class's terminal side, the way the envelope
+    // numbering arm above is
+    if (e instanceof SatStepLimitError) throw e;
     // an unprovable index is a property of the reveal, not a forged bundle
     if (e instanceof EnvelopeIndexUnprovenError) throw e;
     // an unanchored sub-BIP34 height likewise: the bundle may be honest and

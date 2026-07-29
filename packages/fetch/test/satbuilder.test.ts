@@ -450,6 +450,38 @@ describe('fetchSatIdentity', () => {
     expect(two.count()).toBe(one.count() * 2);
   });
 
+  it('reads its own deep build under the raised cap, not the verifier default', async () => {
+    // --max-steps is documented as the bound the verifier reads a genealogy
+    // under. It reached the walk alone, so an ancestry past the verifier's own
+    // default of 10,000 built and was then refused by the verification the
+    // same call runs, and the caller was told the bundle was invalid
+    const DEPTH = 10_001;
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const middle: Chained[] = [];
+    let prev = coinbase;
+    for (let i = 0; i < DEPTH - 1; i++) {
+      prev = buildTx([{ txid: prev.tx.txid, vout: 0 }], [{ value: SUBSIDY - BigInt(i + 1) }]);
+      middle.push(prev);
+    }
+    const commit = buildTx([{ txid: prev.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, ...middle]);
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      maxSteps: 20_000,
+      fetchFn: stubFetch(routes),
+    });
+    expect(res.identity.depth).toBe(DEPTH);
+    expect(res.bundle.funding.length).toBe(DEPTH);
+
+    // the bundle really is past the default, which is what the live path was
+    // refusing: read back with no cap named it is the step-cap class and not a
+    // verdict on the document
+    expect(() => verifySatGenealogy(res.bundle, NO_POW_FLOOR)).toThrow(SatStepLimitError);
+    expect(verifySatGenealogy(res.bundle, { ...NO_POW_FLOOR, maxSteps: 20_000 }).depth).toBe(DEPTH);
+  }, 120_000);
+
   it('walks past the old 512-step ceiling on the raised default', async () => {
     // 600 funding steps: refused before, built now without passing maxSteps
     expect(DEFAULT_MAX_STEPS).toBeGreaterThan(600);
