@@ -7,5 +7,6 @@ export * from './decompress.js';
 export * from './resolver.js';
 export * from './custodybuilder.js';
 export * from './satbuilder.js';
+export * from './taxonomy.js';
 // the build loops' progress hook; the bookkeeping beside it stays internal
 export type { AttemptInfo, OnAttempt, SharedRefusalError } from './failover.js';

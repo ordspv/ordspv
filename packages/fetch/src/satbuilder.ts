@@ -50,10 +50,10 @@ import {
 import {
   assembleAnchoredHop,
   attachRevealWitnessSection,
-  WitnessSectionUnavailableError,
   type AnchorBackend,
   type WitnessSectionMode,
 } from './custodybuilder.js';
+import { WitnessSectionUnavailableError, type WrapperCode } from './taxonomy.js';
 import { makeHeaderTrust, MAINNET_CHECKPOINTS, type HeaderTrustReport } from './headertrust.js';
 import { DEFAULT_ANCHOR_SOURCES, DEFAULT_ESPLORA } from './resolver.js';
 import {
@@ -315,7 +315,7 @@ export interface FetchSatIdentityResult {
 
 export class SatIdentityError extends Error {
   constructor(
-    public readonly code: 'BUILD_FAILED' | 'VERIFY_FAILED' | 'HEADER_TRUST',
+    public readonly code: WrapperCode,
     message: string,
   ) {
     super(message);

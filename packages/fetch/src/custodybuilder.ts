@@ -57,6 +57,7 @@ import {
   type NoAnswer,
   type OnAttempt,
 } from './failover.js';
+import { WitnessSectionUnavailableError, type WrapperCode } from './taxonomy.js';
 
 /**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
@@ -96,21 +97,6 @@ export interface BuildCustodyResult {
 }
 
 export class CustodyBuildError extends Error {}
-
-/**
- * No backend could serve the raw block the reveal's witness section is built
- * from. This is an availability failure and retrying elsewhere or later may
- * well succeed, which is exactly what `EnvelopeIndexUnprovenError` does not
- * mean: that class is the verifier's refusal of a reveal whose numbering
- * cannot be proven at all. The message names every backend tried and its
- * cause, including a backend that exposes no raw-block method.
- */
-export class WitnessSectionUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WitnessSectionUnavailableError';
-  }
-}
 
 /** Whether the builder attaches the reveal's witness section (SPEC-CUSTODY). */
 export type WitnessSectionMode = 'always' | 'when-needed';
@@ -370,7 +356,7 @@ export interface FetchCustodyResult {
 
 export class CustodyError extends Error {
   constructor(
-    public readonly code: 'BUILD_FAILED' | 'VERIFY_FAILED' | 'HEADER_TRUST',
+    public readonly code: WrapperCode,
     message: string,
   ) {
     super(message);
