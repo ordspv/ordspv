@@ -424,6 +424,18 @@ already binds.
   `verifySatGenealogy`, and `SatStepLimitError` joins the classes the wrapper
   rethrows unwrapped, so a cap reached at either phase reaches the caller as
   itself.
+- **A start position outside the reveal's sat space rotates to the next
+  backend.** The position is derived from the pointer and the envelope input,
+  both read out of a reveal witness the txid does not commit to, and the two
+  functions that reject it threw a plain `Error`, which the genealogy build
+  loop treats as a transport failure and stops on. One backend serving a
+  rewritten pointer therefore ended the whole build at the first attempt with
+  every other backend unasked. The new `SatPositionError` (`@ordspv/core`,
+  re-exported by `@ordspv/fetch`) carries that refusal, and both build loops
+  record it as that backend's cause and lead the next attempt with another
+  backend. Raised by a verifier it means the bundle's own pointer misses the
+  sat space of a transaction whose witness is already bound, which is a bundle
+  that failed verification and keeps exit code 1.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

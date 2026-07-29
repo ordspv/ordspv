@@ -123,12 +123,30 @@ export function satName(sat: bigint): string {
 // Backward arithmetic
 // ---------------------------------------------------------------------------
 
+/**
+ * A traced position does not land in the sat space it was resolved against.
+ *
+ * Which phase raised it decides what it means. A verifier raises it about a
+ * bundle whose witness is already bound, so the bundle's own pointer does not
+ * land in the transaction's sat space and the document is invalid. A builder
+ * raises it about a position derived from a pointer and an envelope input read
+ * out of a served reveal witness, which the txid does not commit to, so it is
+ * one backend's word and the wrappers record it and lead the next attempt with
+ * another backend.
+ */
+export class SatPositionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SatPositionError';
+  }
+}
+
 /** Absolute output-space position of (vout, offset) in a transaction. */
 export function outputSpacePosition(tx: ParsedTx, vout: number, offset: bigint): bigint {
   const out = tx.outputs[vout];
-  if (!out) throw new Error(`no output ${vout}`);
+  if (!out) throw new SatPositionError(`no output ${vout}`);
   if (offset < 0n || offset >= out.value) {
-    throw new Error(`offset ${offset} outside output ${vout} value ${out.value}`);
+    throw new SatPositionError(`offset ${offset} outside output ${vout} value ${out.value}`);
   }
   let position = offset;
   for (let i = 0; i < vout; i++) position += tx.outputs[i].value;
@@ -156,9 +174,9 @@ export function containingInput(
     remaining -= inputValues[i];
   }
   if (inputValues.length >= tx.inputs.length) {
-    throw new Error(`position ${position} beyond the transaction's total input sats`);
+    throw new SatPositionError(`position ${position} beyond the transaction's total input sats`);
   }
-  throw new Error(
+  throw new SatPositionError(
     `position ${position} not reached by prev txs for inputs 0..${inputValues.length - 1}; more are needed`,
   );
 }

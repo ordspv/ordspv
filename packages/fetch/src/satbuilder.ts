@@ -32,6 +32,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatPositionError,
   SatStepLimitError,
   type BlockHeader,
   type GenealogyStepJson,
@@ -76,6 +77,20 @@ export class SatBuildError extends Error {}
  * another member, at the cost of a second full walk.
  */
 export { SatStepLimitError };
+
+/**
+ * A traced position that does not land in a transaction's sat space, re-exported
+ * from `@ordspv/core` for the same reason the step cap is: the verifier refuses
+ * on the same ground and a caller discriminating on the class has to see one
+ * class from both sides.
+ *
+ * The phase is doing the work again. Raised by a builder the position came out
+ * of a pointer and an envelope input read from a reveal witness nothing has
+ * bound, so it is one backend's word and both build loops rotate on it. Raised
+ * by a verifier the bundle had already bound its witness, so the document is
+ * invalid and the CLI reports it that way.
+ */
+export { SatPositionError };
 
 /** funding steps the builder will walk before giving up (SPEC-SAT) */
 export const DEFAULT_MAX_STEPS = 4096;
@@ -381,15 +396,17 @@ export async function fetchSatIdentity(
       // txid, so leading with another member cannot change the answer
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
       // the rest came out of bytes nothing has bound. A v1-domain refusal and
-      // a step cap are read out of the served envelope, and an unavailable
-      // witness section is read out of the block hash and the position the
-      // leading member's own status and merkle proof named, either of which a
-      // hostile member can point at a real but wrong block, making the raw
-      // block unusable on every member. Record it and lead the next attempt
-      // with another member
+      // a step cap are read out of the served envelope, a start position that
+      // lands outside the reveal's sat space comes from the pointer and the
+      // envelope input in that same witness, and an unavailable witness section
+      // is read out of the block hash and the position the leading member's own
+      // status and merkle proof named, either of which a hostile member can
+      // point at a real but wrong block, making the raw block unusable on every
+      // member. Record it and lead the next attempt with another member
       if (
         e instanceof CustodyUnsupportedError ||
         e instanceof SatStepLimitError ||
+        e instanceof SatPositionError ||
         e instanceof WitnessSectionUnavailableError
       ) {
         refusals.push({ baseUrl: members[i].baseUrl, error: e });

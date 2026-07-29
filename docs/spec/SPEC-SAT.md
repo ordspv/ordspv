@@ -235,11 +235,12 @@ cap may be honest and the caller may raise the cap and read it.
 A builder derives its start position, and therefore its walk, from an envelope
 it read out of a reveal witness nothing has bound. A refusal it raises from
 that position is one backend's claim, including a fee-tail ancestry, an
-unbound inscription, and a walk that reached the builder's own step cap. The
-same holds of a witness section the builder could not build, since the block
-hash and the in-block position it is fetched against were named by that
-backend's own status and merkle proof. So the test is what the refusal was
-derived from. A builder MUST NOT treat a build-time refusal as terminal while
+unbound inscription, a start position that lands outside the sat space of the
+transaction it was resolved against, and a walk that reached the builder's own
+step cap. The same holds of a witness section the builder could not build,
+since the block hash and the in-block position it is fetched against were named
+by that backend's own status and merkle proof. So the test is what the refusal
+was derived from. A builder MUST NOT treat a build-time refusal as terminal while
 another backend is configured unless the refusal was derived from data the
 reveal txid commits, and it MUST NOT read such a refusal as a fact about the
 chain until a verifier raises it on a bundle whose envelope binding holds. The

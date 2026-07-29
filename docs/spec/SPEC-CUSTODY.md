@@ -142,8 +142,11 @@ raw block unusable at every backend. So the test is what the refusal was
 derived from. A builder MUST NOT treat a build-time refusal as terminal while
 another backend is configured unless the refusal was derived from data the
 reveal txid commits; it MUST record the rest as that backend's cause and build
-against the next one. The reveal's input count is such data, so a refusal
-raised on the count of inputs is terminal. A refusal becomes terminal once a
+against the next one. A position that lands outside the sat space of the
+transaction it was resolved against is derived from the pointer and the
+envelope input in that same witness, so it is one backend's claim too. The
+reveal's input count is such data, so a refusal raised on the count of inputs
+is terminal. A refusal becomes terminal once a
 verifier raises it, because the bundle a verifier refused had already bound
 its witness through the envelope binding above. A builder that has exhausted
 every configured backend SHOULD report the refusal in the class each backend

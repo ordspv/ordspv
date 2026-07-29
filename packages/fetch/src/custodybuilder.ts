@@ -31,6 +31,7 @@ import {
   verifyCustodyBundle,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatPositionError,
   ZERO32,
   type CustodyBundleJson,
   type CustodyHopJson,
@@ -423,7 +424,14 @@ export async function fetchCustody(
       // a real but wrong block. Record it and ask the next backend; the
       // verifier's own refusal, after the bundle proved its witness, stays
       // terminal
-      if (e instanceof CustodyUnsupportedError || e instanceof WitnessSectionUnavailableError) {
+      // `SatPositionError` is listed so both build loops classify the same
+      // condition the same way. The custody walk computes no sat-space
+      // position of its own, so nothing in it raises the class today
+      if (
+        e instanceof CustodyUnsupportedError ||
+        e instanceof SatPositionError ||
+        e instanceof WitnessSectionUnavailableError
+      ) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
       } else {
         unreachable.push(backend.baseUrl);

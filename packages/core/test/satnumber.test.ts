@@ -17,6 +17,7 @@ import {
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   CoinbaseHeightUnprovenError,
+  SatPositionError,
   SatStepLimitError,
   TOTAL_SATS,
   LAST_SAT,
@@ -224,6 +225,11 @@ describe('backward hop arithmetic', () => {
     expect(outputSpacePosition(spend.tx, 0, 999n)).toBe(999n);
     expect(outputSpacePosition(spend.tx, 1, 200n)).toBe(1700n);
     expect(() => outputSpacePosition(spend.tx, 1, 1400n)).toThrow(/outside output/);
+    // a position outside the sat space it was resolved against is its own
+    // class: a builder reads the position out of an unbound witness and rotates
+    // on it, and a verifier reads it out of a bundle whose witness is bound
+    expect(() => outputSpacePosition(spend.tx, 1, 1400n)).toThrow(SatPositionError);
+    expect(() => outputSpacePosition(spend.tx, 9, 0n)).toThrow(SatPositionError);
   });
 
   it('containing input mirrors the forward FIFO', () => {
@@ -244,6 +250,12 @@ describe('backward hop arithmetic', () => {
 
   it('asks for more prev txs rather than guessing', () => {
     expect(() => containingInput(spend.tx, [1000n], 1700n)).toThrow(/more are needed/);
+    expect(() => containingInput(spend.tx, [1000n], 1700n)).toThrow(SatPositionError);
+    // and a position past every input sat the transaction has is the same class
+    expect(() => containingInput(spend.tx, [1000n, 2000n], 3000n)).toThrow(SatPositionError);
+    expect(() => containingInput(spend.tx, [1000n, 2000n], 3000n)).toThrow(
+      /beyond the transaction's total input sats/,
+    );
   });
 
   it('coinbase terminal: subsidy positions number directly, fee tail refuses', () => {

@@ -26,6 +26,7 @@ import {
   SatBuildError,
   SatIdentityError,
   perHeaderAttestation,
+  SatPositionError,
   SatStepLimitError,
   WitnessSectionUnavailableError,
   type AttemptInfo,
@@ -664,6 +665,48 @@ describe('fetchSatIdentity', () => {
       fetchFn,
     });
     expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
+  it('asks the next member when one serves a pointer outside the reveal', async () => {
+    // the pointer and the envelope input are read out of a witness the txid
+    // does not commit to, so the start position they imply is one member's
+    // word. A position outside the reveal's sat space used to end the whole
+    // build at attempt 0, with every other member unasked
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    // outputs past the inputs, so a pointer can be inside output space and
+    // still past every sat the reveal spends
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 50_000n }]);
+    const outside = pointerCommit(40_000);
+    const poisoned = segwitTx(
+      [{ txid: commit.tx.txid, vout: 0, witness: outside.witness }],
+      [{ value: 50_000n }],
+    );
+    expect(poisoned.tx.txid).toBe(reveal.tx.txid);
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : base(url, init);
+
+    // the position the poisoned witness implies is refused in its own class
+    await expect(
+      buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, base)),
+    ).rejects.toThrow(SatPositionError);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(res.identity.revealPosition).toBe(0n);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(SatPositionError);
     expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
   });
 
