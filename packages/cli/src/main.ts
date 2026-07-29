@@ -329,7 +329,20 @@ async function main(): Promise<void> {
 
   if (command === 'verify') {
     const file = positional[1] ?? fail('verify: missing bundle file', 2);
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    // a file that cannot be read is a usage failure, and bytes that do not
+    // parse are a defective document; neither deserves a stack trace
+    let raw: string;
+    try {
+      raw = readFileSync(file, 'utf8');
+    } catch (e) {
+      fail(`verify: cannot read ${file}: ${(e as Error).message}`, 2);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      fail(`verify: ${file} is not JSON: ${(e as Error).message}`);
+    }
     let kind: BundleKind;
     try {
       kind = classifyBundle(parsed);

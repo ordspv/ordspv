@@ -133,8 +133,8 @@ export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
     nonUnanimousCategory: 'UNPROVEN',
     note: {
       verify:
-        `Anchor the coinbase block hash at that height against your own chain view ` +
-        `and re-run verification with that anchor supplied.`,
+        `Check the coinbase block hash at that height against your own chain view; ` +
+        `library callers can supply that attestation through the trustHeader hook.`,
       live:
         `Below the BIP34 boundary the claimed height rests on an attestation of the ` +
         `block hash at that height, and no configured anchor source gave one; ` +

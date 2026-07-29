@@ -159,6 +159,23 @@ describe('ord-resolve verify refusals', { timeout: 60_000 }, () => {
     const r = run(write('nonsense.json', { version: 1 }));
     expect(r.status).toBe(2);
   });
+
+  it('reports an unreadable file as usage and non-JSON bytes as a bad document', () => {
+    // both used to reach main().catch and print a stack trace at exit 1. A
+    // file that cannot be read is a usage failure, and bytes that do not
+    // parse are a document failure; each is one line with no stack trace
+    const missing = run(join(TMP, 'absent.json'));
+    expect(missing.status).toBe(2);
+    expect(missing.stderr).toMatch(/error: verify: cannot read .*absent\.json/);
+    expect(missing.stderr).not.toMatch(/\n\s+at /);
+
+    const garbagePath = join(TMP, 'garbage.json');
+    writeFileSync(garbagePath, 'not a bundle {{{');
+    const garbage = run(garbagePath);
+    expect(garbage.status).toBe(1);
+    expect(garbage.stderr).toMatch(/error: verify: .*garbage\.json is not JSON/);
+    expect(garbage.stderr).not.toMatch(/\n\s+at /);
+  });
 });
 
 /**

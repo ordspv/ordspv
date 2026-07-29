@@ -242,8 +242,8 @@ since the block hash and the in-block position it is fetched against were named
 by that backend's own status and merkle proof. So the test is what the refusal
 was derived from. A builder MUST NOT treat a build-time refusal as terminal while
 another backend is configured unless the refusal was derived from data the
-reveal txid commits, and it MUST NOT read such a refusal as a fact about the
-chain until a verifier raises it on a bundle whose envelope binding holds. The
+reveal txid commits. A refusal becomes terminal once a verifier raises it,
+because the bundle a verifier refused had already bound its witness. The
 reveal's input count is such data, so a refusal raised on the count of inputs
 is terminal. A builder MUST record the rest as that backend's cause and walk
 again leading with the next one. A builder MUST derive each recorded refusal
@@ -254,7 +254,9 @@ whether every configured backend reached that same refusal, and MUST name the
 backends that produced no usable answer and the backends that led no attempt
 when they did not. A builder MUST report a refusal as reaching every
 configured backend only when at least two backends were configured, since one
-backend agreeing with itself is one server's word. A caller MUST NOT read a
+backend agreeing with itself is one server's word. A refusal reported as
+reaching every configured backend means each backend's refusal rests on
+reveal bytes that backend itself served. A caller MUST NOT read a
 domain refusal short of every configured backend as proof about the chain.
 
 The claimed height of a terminal coinbase below 230,000 is refused outright
