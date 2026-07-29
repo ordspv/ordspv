@@ -421,7 +421,12 @@ export async function fetchCustody(
     } catch (e) {
       // a build-time refusal is terminal only when it was derived from data
       // the txid commits. This one is: the reveal's input count is inside the
-      // txid, so every backend serving that reveal reports the same thing
+      // txid, so every backend serving that reveal reports the same thing.
+      // No builder raises the class today, since a reveal that cannot prove its
+      // numbering is refused at verification rather than during the walk. The
+      // arm is the terminal side of the rule with no live build-time example,
+      // and it stays so the next reader does not read its absence as an
+      // oversight
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
       // the rest came out of bytes nothing has bound. A v1-domain refusal is
       // read out of the served witness, and an unavailable witness section is

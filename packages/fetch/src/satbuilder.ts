@@ -332,19 +332,25 @@ export class SatIdentityError extends Error {
  * header no endpoint here anchored is a question this hook cannot answer, and
  * it throws rather than guessing.
  *
+ * The key is the hash and the height together, because the value says hash at
+ * height and nothing weaker. An anchor establishes that this hash is the block
+ * at that height, so answering the same verdict for the same hash presented at
+ * another height would hand back an attestation of a pair nobody attested to.
+ *
  * The core hook is synchronous and cannot await an attesting round trip, which
  * is why the anchoring runs first and this reports what it found.
  */
 export function perHeaderAttestation(
-  endpoints: { hash: string; report: HeaderTrustReport }[],
+  endpoints: { hash: string; height: number; report: HeaderTrustReport }[],
 ): (header: BlockHeader, height: number) => HeaderAttestation {
-  const byHash = new Map(endpoints.map((e) => [e.hash.toLowerCase(), e.report]));
+  const key = (hash: string, height: number): string => `${hash.toLowerCase()}@${height}`;
+  const byHashHeight = new Map(endpoints.map((e) => [key(e.hash, e.height), e.report]));
   return (header, height) => {
-    const report = byHash.get(header.hash);
+    const report = byHashHeight.get(key(header.hash, height));
     if (report) return report.attests;
     throw new Error(
       `verifier asked about header ${header.hash} at height ${height}, which this ` +
-        `build anchored neither endpoint for`,
+        `build anchored neither endpoint for at that height`,
     );
   };
 }
@@ -404,7 +410,12 @@ export async function fetchSatIdentity(
     } catch (e) {
       // a build-time refusal is terminal only when it was derived from data
       // the txid commits. This one is: the reveal's input count is inside the
-      // txid, so leading with another member cannot change the answer
+      // txid, so leading with another member cannot change the answer. No
+      // builder raises the class today, since a reveal that cannot prove its
+      // numbering is refused at verification rather than during the walk. The
+      // arm is the terminal side of the rule with no live build-time example,
+      // and it stays so the next reader does not read its absence as an
+      // oversight
       if (e instanceof EnvelopeIndexUnprovenError) throw e;
       // the rest came out of bytes nothing has bound. A v1-domain refusal and
       // a step cap are read out of the served envelope, a start position that
@@ -492,8 +503,16 @@ export async function fetchSatIdentity(
   };
 
   const marker = perHeaderAttestation([
-    { hash: built.bundle.reveal.block.hash, report: headerTrust.reveal },
-    { hash: built.bundle.coinbase.block.hash, report: headerTrust.coinbase },
+    {
+      hash: built.bundle.reveal.block.hash,
+      height: built.bundle.reveal.block.height,
+      report: headerTrust.reveal,
+    },
+    {
+      hash: built.bundle.coinbase.block.hash,
+      height: built.bundle.coinbase.block.height,
+      report: headerTrust.coinbase,
+    },
   ]);
 
   let identity: VerifiedSatIdentity;

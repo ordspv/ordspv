@@ -61,4 +61,16 @@ describe('sharedDomainRefusal', () => {
       ),
     ).toBeUndefined();
   });
+
+  it('refuses a second call on the same error instance', () => {
+    const once = [refusal(A), refusal(B)];
+    const e = sharedDomainRefusal(once, 2);
+    expect(e).toBeDefined();
+    // the mutation is not idempotent: a second call would append a second
+    // parenthetical and could flip the marker, so it is a caller bug
+    expect(() => sharedDomainRefusal(once, 3, [], [C])).toThrow(
+      /called twice on the same error instance/,
+    );
+    expect(e?.unanimous).toBe(true);
+  });
 });

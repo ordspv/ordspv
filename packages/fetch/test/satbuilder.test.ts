@@ -849,13 +849,26 @@ describe('fetchSatIdentity', () => {
     const revealHeader = parseHeader(hexToBytes(res.bundle.reveal.block.header));
     const coinbaseHeader = parseHeader(hexToBytes(res.bundle.coinbase.block.header));
     const marker = perHeaderAttestation([
-      { hash: res.bundle.reveal.block.hash, report: res.headerTrust.reveal },
-      { hash: res.bundle.coinbase.block.hash, report: res.headerTrust.coinbase },
+      {
+        hash: res.bundle.reveal.block.hash,
+        height: res.bundle.reveal.block.height,
+        report: res.headerTrust.reveal,
+      },
+      {
+        hash: res.bundle.coinbase.block.hash,
+        height: res.bundle.coinbase.block.height,
+        report: res.headerTrust.coinbase,
+      },
     ]);
     expect(marker(revealHeader, REVEAL_HEIGHT)).toBeUndefined();
     expect(marker(coinbaseHeader, CB_HEIGHT)).toBe('hash-at-height');
     const foreign = parseHeader(hexToBytes(mineBlock([commit.tx]).headerHex));
     expect(() => marker(foreign, 1)).toThrow(/anchored neither endpoint for/);
+    // the value means hash AT HEIGHT, so the anchored hash at another height is
+    // a pair nobody attested to and the hook refuses it
+    expect(() => marker(coinbaseHeader, CB_HEIGHT + 1)).toThrow(
+      /anchored neither endpoint for at that height/,
+    );
   });
 
   it('refuses an unbound inscription rather than inventing a sat', async () => {

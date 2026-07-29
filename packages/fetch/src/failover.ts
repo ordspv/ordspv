@@ -108,6 +108,12 @@ export function sharedDomainRefusal(
   if (refusals.length + noAnswer.length + neverLed.length !== backendCount) return undefined;
   const first = refusals[0].error;
   if (!refusals.every((r) => r.error.constructor === first.constructor)) return undefined;
+  if (Object.prototype.hasOwnProperty.call(first, 'unanimous')) {
+    // the mutation below is not idempotent, so a second call on the same
+    // instance would append a second parenthetical and could flip the marker.
+    // Nothing in this package does that, and a caller that does has a bug
+    throw new Error('sharedDomainRefusal called twice on the same error instance');
+  }
   const names = refusals.map((r) => r.baseUrl).join(', ');
   const withCause = (rs: DomainRefusal[]): string =>
     rs.map((r) => `${r.baseUrl}: ${r.error.message}`).join('; ');

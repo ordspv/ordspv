@@ -479,6 +479,11 @@ already binds.
   here while a terminal coinbase height below the BIP34 boundary is refused
   outright: a header hash is something any reader can check against any chain
   view, and a sub-BIP34 height appears in no header at all.
+- **The header attestation marker keys on hash and height together.** The hook
+  `fetchSatIdentity` hands the core verifier carries a hash-at-height verdict
+  but matched on the hash alone, so the same hash presented at another height
+  would have been answered with an attestation of a pair nobody attested to.
+  Nothing read it that way; the key is now the pair.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was
