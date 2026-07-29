@@ -35,6 +35,7 @@ import {
   HeaderTrustError,
   OrdResolveError,
   ResponseCapExceededError,
+  RevealSourceError,
   SatBuildError,
   SatIdentityError,
   WitnessSectionUnavailableError,
@@ -207,6 +208,12 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
   {
     ctor: SatBuildError,
     reason: `one backend's build failure, recorded as that backend's cause under BUILD_FAILED`,
+  },
+  {
+    ctor: RevealSourceError,
+    reason:
+      `one member's transport failure on a deciding reveal request, recorded as that ` +
+      `member's cause so the build leads the next attempt with another member`,
   },
   {
     ctor: CustodyBuildError,

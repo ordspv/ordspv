@@ -246,7 +246,8 @@ reveal txid commits, and it MUST NOT read such a refusal as a fact about the
 chain until a verifier raises it on a bundle whose envelope binding holds. The
 reveal's input count is such data, so a refusal raised on the count of inputs
 is terminal. A builder MUST record the rest as that backend's cause and walk
-again leading with the next one. A builder that has exhausted every configured
+again leading with the next one. A builder MUST derive each recorded refusal
+from reveal bytes the named backend itself served. A builder that has exhausted every configured
 backend SHOULD report the refusal in the class each backend raised, and SHOULD
 name every backend that led an attempt reporting it. A builder MUST report
 whether every configured backend reached that same refusal, and MUST name the

@@ -66,6 +66,21 @@ import {
 export class SatBuildError extends Error {}
 
 /**
+ * A deciding reveal request failed at the backend leading the attempt.
+ *
+ * The reveal's tx hex, its status and its merkle proof are the requests whose
+ * answers decide every domain refusal the walk can raise from the reveal, so
+ * `fetchSatIdentity` makes them against the leading member alone instead of
+ * through the pool: a refusal recorded under a backend's name has to rest on
+ * reveal bytes that backend served itself. A transport failure on one of them
+ * is therefore one member's failure, and the wrapper records it as that
+ * member's cause and leads the next attempt with the next member. Pool
+ * exhaustion on a pooled request still ends the whole build, because that
+ * throw already means every member failed the request.
+ */
+export class RevealSourceError extends SatBuildError {}
+
+/**
  * The walk hit its step cap, so a caller can tell an ancestry that is merely
  * deeper than the cap from a backend that failed.
  *
@@ -163,12 +178,36 @@ export async function buildSatGenealogyBundle(
     maxSteps?: number;
     witnessBackends?: AnchorBackend[];
     witnessSection?: WitnessSectionMode;
+    /**
+     * The backend the reveal's deciding requests are made against: its tx
+     * hex, its status, and its merkle proof, whose answers decide every
+     * domain refusal the walk can raise from the reveal. Everything checked
+     * against the reveal's own bytes (prev txs, headers, block info, the
+     * funding walk) stays on `backend`, where pool fallover cannot change a
+     * domain decision, and the raw block keeps its deliberate rotation
+     * through `witnessBackends`. A failure of one of the three requests
+     * throws `RevealSourceError` so the caller can tell one member's failure
+     * from pool exhaustion. Defaults to `backend`, unwrapped.
+     */
+    revealSource?: AnchorBackend;
   } = {},
 ): Promise<BuildSatGenealogyResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const id = parseInscriptionId(inscriptionId);
 
-  const revealHex = (await backend.getTxHex(id.txid)).trim();
+  const lead = options.revealSource;
+  const leadOnly = async <T>(what: string, call: (m: AnchorBackend) => Promise<T>): Promise<T> => {
+    if (!lead) return call(backend);
+    try {
+      return await call(lead);
+    } catch (e) {
+      throw new RevealSourceError(
+        `${what} failed at the leading backend ${lead.baseUrl}: ${(e as Error).message}`,
+      );
+    }
+  };
+
+  const revealHex = (await leadOnly(`reveal tx ${id.txid}`, (m) => m.getTxHex(id.txid))).trim();
   const reveal = parseTx(hexToBytes(revealHex));
   const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
   if (!inscription) {
@@ -176,7 +215,20 @@ export async function buildSatGenealogyBundle(
   }
   const k = inscription.input;
 
-  const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, k);
+  // the reveal hop's status and merkle proof come from the lead alone; the
+  // header, the block info and the prev txs stay pooled, since none of them
+  // can move a domain decision once the reveal bytes are the lead's
+  const revealAnchor: AnchorBackend = lead
+    ? {
+        baseUrl: backend.baseUrl,
+        getTxHex: (t) => backend.getTxHex(t),
+        getTxStatus: (t) => leadOnly(`reveal status ${t}`, (m) => m.getTxStatus(t)),
+        getMerkleProof: (t) => leadOnly(`reveal merkle proof ${t}`, (m) => m.getMerkleProof(t)),
+        getHeaderHex: (h) => backend.getHeaderHex(h),
+        getBlockInfo: (h) => backend.getBlockInfo(h),
+      }
+    : backend;
+  const revealHop = await assembleAnchoredHop(revealAnchor, reveal, revealHex, k);
   await attachRevealWitnessSection(
     options.witnessBackends ?? [backend],
     reveal,
@@ -371,9 +423,10 @@ export async function fetchSatIdentity(
   // reveal. A domain refusal is the one failure rotation cannot answer,
   // because it comes out of a reveal witness nothing has bound rather than out
   // of a failed request, so each attempt leads with a different member and
-  // pays for the whole walk again. Attempt i's first request is the reveal and
-  // a fresh pool starts at its first member, so attempt i reads the reveal
-  // from member i.
+  // pays for the whole walk again. The reveal's deciding requests go to
+  // member i alone (`revealSource` below), so a refusal recorded under member
+  // i's name rests on reveal bytes that member served itself rather than on
+  // whatever the pool fell over to.
   let built: BuildSatGenealogyResult | undefined;
   let pool: PooledEsploraBackend | undefined;
   const buildErrors: string[] = [];
@@ -404,6 +457,9 @@ export async function fetchSatIdentity(
         // the pool already rotates every member for the raw block request and
         // names each one's cause, so it is the whole witness-backend list
         witnessBackends: [attempt],
+        // the deciding reveal requests come from the leading member alone, so
+        // a refusal recorded under members[i] is members[i]'s word
+        revealSource: members[i],
       });
       pool = attempt;
       break;
@@ -434,13 +490,24 @@ export async function fetchSatIdentity(
         buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
         continue;
       }
-      // a transport failure ends the whole build here, and the reason is
-      // structural. This walk runs through a PooledEsploraBackend whose `run`
-      // throws only after every member failed that request (backends.ts), so
-      // the throw already means the pool failed, and a fresh lead member would
-      // walk to the same wall. The custody side builds through one
-      // EsploraBackend per attempt, where a transport failure is one backend's
-      // and advancing is right.
+      // a deciding reveal request failed at the leading member alone, which
+      // says nothing about the rest of the pool: it is this member's failure,
+      // recorded as producing no usable answer, and the next attempt leads
+      // with the next member. It must not reach the break below, whose
+      // premise is that every member already failed
+      if (e instanceof RevealSourceError) {
+        buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+        noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
+        lastCause = e as Error;
+        continue;
+      }
+      // a transport failure on a pooled request ends the whole build here,
+      // and the reason is structural. This walk runs through a
+      // PooledEsploraBackend whose `run` throws only after every member
+      // failed that request (backends.ts), so the throw already means the
+      // pool failed, and a fresh lead member would walk to the same wall. The
+      // custody side builds through one EsploraBackend per attempt, where a
+      // transport failure is one backend's and advancing is right.
       //
       // What the pool does not rotate on is a content failure: a member
       // serving bytes that hash wrong is caught outside `run`, at the txid

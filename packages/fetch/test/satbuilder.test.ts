@@ -23,6 +23,7 @@ import {
   buildSatGenealogyBundle,
   DEFAULT_MAX_STEPS,
   fetchSatIdentity,
+  RevealSourceError,
   SatBuildError,
   SatIdentityError,
   perHeaderAttestation,
@@ -814,6 +815,148 @@ describe('fetchSatIdentity', () => {
     expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
   });
 
+  it('refuses unanimity over a refusal one member alone decided with its reveal bytes', async () => {
+    // the seventh review's case: EB is unreachable and E serves a doctored
+    // reveal whose envelope is unbound. The reveal's deciding requests come
+    // from the lead alone, so the attempt EB leads ends as EB's own transport
+    // failure instead of recording E's refusal under EB's name through pool
+    // fallover. One refusal, one no-answer, and the refusal is one server's
+    // word. Before the fix both attempts recorded the refusal E's bytes
+    // decided and the build called it unanimous, which the CLI reported at
+    // OUT OF SCOPE, exit 4
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const evenField = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+        },
+      ],
+      [{ value: 546n }],
+    );
+    expect(poisoned.tx.txid).toBe(reveal.tx.txid);
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    // EB has no routes at all, so every EB request fails in transport
+    const fetchFn = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [EB, E], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(false);
+    expect(e.message).toMatch(/unbound at reveal/);
+    expect(e.message).toMatch(new RegExp(`1 of 2 configured backends led an attempt that ended this way: ${E}`));
+    // EB's entry carries its own transport cause, from the deciding request
+    expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${EB}: `));
+    expect(e.message).toMatch(/failed at the leading backend/);
+    expect(e.message).toMatch(/HTTP 404/);
+    expect(e.message).not.toMatch(/each configured backend led an attempt/);
+  });
+
+  it('still builds from the second member when the first lead is unreachable', async () => {
+    // the availability half of the same fix: EB unreachable and E honest used
+    // to succeed through pool fallover inside EB's attempt, and now succeeds
+    // on the attempt E leads after EB's failure is recorded as its own
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [EB, E],
+      fetchFn: stubFetch(routes),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([EB, E]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
+  it('keeps unanimity when each member served the refused reveal bytes itself', async () => {
+    // two members each serving the refused bytes themselves is what unanimity
+    // means, and the fix leaves it standing
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const evenField = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+        },
+      ],
+      [{ value: 546n }],
+    );
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+    // EB mirrors E, doctored reveal included
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(true);
+    expect(e.message).toMatch(/each configured backend led an attempt that ended this way/);
+  });
+
+  it('reports a build failure when no lead can serve the reveal at all', async () => {
+    // both members unreachable: each lead's deciding request fails as its own,
+    // no refusal is ever recorded, and the build is INCOMPLETE with both
+    // members named beside their transport cause
+    const p = fetchSatIdentity(`${'ab'.repeat(32)}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn: stubFetch({}),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(new RegExp(`${E}: .*failed at the leading backend`));
+    expect(e.message).toMatch(new RegExp(`${EB}: .*failed at the leading backend`));
+  });
+
+  it('still ends the build through the break when a pooled request exhausts the pool', async () => {
+    // both leads serve the reveal's deciding requests; the commit behind the
+    // reveal is served by nobody, so the pooled prev-tx request fails at every
+    // member and the break ends the build with the second member never led
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    delete routes[`${E}/tx/${commit.tx.txid}/hex`];
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(/all 2 pooled backend\(s\) failed/);
+    // the break fired at attempt 0 and EB was never led
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
+  });
+
   it('answers the header marker per header, and throws on one it never anchored', async () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
@@ -942,9 +1085,9 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     // the raw block is unusable however the pool rotates and the section
     // cannot be built. The trigger is that member's word, not the chain's, so
     // the refusal is not terminal: the build leads with the other member and
-    // reads the status from an honest one. Which member answers a given
-    // request is the pool's own rotation, and rotating the LEAD is what puts a
-    // different member on the status request the second time around.
+    // reads the status from an honest one. The status is a deciding request
+    // and comes from the lead alone, so EB's decoy status decides exactly the
+    // attempt EB leads and no other.
     const decoy = mineBlock([coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY + 1n }]).tx]);
     const r = routes(true);
     r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex;
@@ -975,7 +1118,7 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     const attempts: AttemptInfo[] = [];
     const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
       ...OPTS,
-      esplora: [E, EB],
+      esplora: [EB, E],
       fetchFn,
       onAttempt: (info) => attempts.push(info),
     });
@@ -983,17 +1126,17 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(res.identity.sat).toBe(SAT);
     expect(res.bundle.reveal.block.hash).toBe(revealBlock.blockHash);
     // one report per attempt, and the second says what ended the first
-    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([EB, E]);
     expect(attempts[0].cause).toBeUndefined();
     expect(attempts[1].cause).toBeInstanceOf(WitnessSectionUnavailableError);
     expect(attempts[1].total).toBe(2);
   });
 
   it('keeps the witness-section class when the next lead member could not be reached', async () => {
-    // the attempt led by E reads the reveal's status from the other member,
-    // which names a real but wrong block, so the section cannot be built. The
-    // attempt led by EB gets past that and walks into a funding tx no member
-    // serves. The refusal is the informative half of that pair
+    // E's own status names a real but wrong block for the reveal, so the
+    // attempt E leads cannot build the section, and that refusal is E's own
+    // word. The attempt led by EB gets past that and walks into a funding tx
+    // no member serves. The refusal is the informative half of that pair
     const decoy = mineBlock([coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY + 1n }]).tx]);
     const r = routes(true);
     r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex;
@@ -1006,8 +1149,13 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     // the coinbase behind the commit is served by nobody
     delete r[`${E}/tx/${coinbase.tx.txid}/hex`];
     const base = stubFetch(r);
+    const honestStatus = JSON.stringify({
+      confirmed: true,
+      block_height: REVEAL_HEIGHT,
+      block_hash: revealBlock.blockHash,
+    });
     const fetchFn: FetchFn = (url, init) => {
-      if (url === `${EB}/tx/${reveal.tx.txid}/status`) {
+      if (url === `${E}/tx/${reveal.tx.txid}/status`) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1017,6 +1165,11 @@ describe('fetchSatIdentity with multi-input reveals', () => {
             }),
             { headers: { 'content-type': 'application/json' } },
           ),
+        );
+      }
+      if (url === `${EB}/tx/${reveal.tx.txid}/status`) {
+        return Promise.resolve(
+          new Response(honestStatus, { headers: { 'content-type': 'application/json' } }),
         );
       }
       return base(url.replace(EB, E), init);
