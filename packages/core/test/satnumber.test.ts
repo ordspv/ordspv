@@ -355,6 +355,17 @@ describe('verifySatGenealogy', () => {
     expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(/folds to/);
   });
 
+  it('rejects a claimed sat that is not a nonempty decimal string', () => {
+    // BigInt('') is 0n and BigInt('0x10') is 16n, so a lenient parse would
+    // let those forms reach the recompute-and-check comparison; the claim is
+    // refused before conversion instead
+    for (const claimed of ['', '0x10', ' 1000', '1000n', '1_000']) {
+      const b = bundle();
+      b.claimedSat = claimed;
+      expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(/folds to/);
+    }
+  });
+
   it('rejects a broken hash chain', () => {
     const b = bundle();
     b.funding = [b.funding[1], b.funding[0]];

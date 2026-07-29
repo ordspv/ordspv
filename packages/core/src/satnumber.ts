@@ -491,6 +491,12 @@ export function verifySatGenealogy(
   const pos = outputSpacePosition(coinbase, expectVout, offset);
   const sat = coinbaseSatAt(coinbase, pos, height);
 
+  // BigInt() accepts the empty string as zero and hex forms; the claim
+  // parses strictly even though recompute-and-check makes the leniency
+  // harmless
+  if (typeof bundle.claimedSat !== 'string' || !/^[0-9]+$/.test(bundle.claimedSat)) {
+    throw new Error(`bundle claims sat ${bundle.claimedSat}, genealogy folds to ${sat}`);
+  }
   const claimed = BigInt(bundle.claimedSat);
   if (claimed !== sat) {
     throw new Error(`bundle claims sat ${bundle.claimedSat}, genealogy folds to ${sat}`);

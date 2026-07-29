@@ -117,11 +117,11 @@ export function sharedDomainRefusal(
   const names = refusals.map((r) => r.baseUrl).join(', ');
   const withCause = (rs: DomainRefusal[]): string =>
     rs.map((r) => `${r.baseUrl}: ${r.error.message}`).join('; ');
-  // what the loop establishes is one attempt per backend that led one, each led
-  // by that backend and each ending one of two ways. On the sat side the
-  // attempt runs through a pool, so the deciding bytes may have come from
-  // another member, and claiming every backend reported the condition would
-  // overstate it
+  // the deciding bytes are the lead's by construction: both loops route every
+  // request whose answer can move a domain decision to the member leading the
+  // attempt. The wording stays because it is what the loop establishes, one
+  // attempt per backend that led one, each deciding on data its own lead
+  // served
   const unanimous = backendCount >= 2 && noAnswer.length === 0 && neverLed.length === 0;
   if (unanimous) {
     first.message =

@@ -71,19 +71,40 @@ describe('block header consensus rules', () => {
 describe('parseBlock bounds and linearity', () => {
   const HEADER = hexToBytes(GENESIS_HEADER_HEX);
 
-  it('parses a many-tx block in linear time (single advancing offset)', () => {
-    // enough small txs that the old per-tx tail copy would be visibly quadratic
-    const txs = Array.from({ length: 4000 }, () => dummyTx());
-    const raw = serializeBlock(HEADER, txs);
-    const started = performance.now();
-    const block = parseBlock(raw);
-    const elapsed = performance.now() - started;
-    expect(block.txs.length).toBe(4000);
-    expect(block.txs[0].txid).toBe(txs[0].txid);
-    expect(block.txs[3999].txid).toBe(txs[3999].txid);
-    // O(n^2) tail-slicing over ~380KB x 4000 txs takes multiple seconds;
-    // the linear parse finishes comfortably inside this generous bound.
-    expect(elapsed).toBeLessThan(2000);
+  it('parses a many-tx block in linear time (single advancing offset)', { timeout: 120_000 }, () => {
+    // enough small txs that the old per-tx tail copy would be visibly
+    // quadratic. An absolute wall-clock bound flaked under full-suite load,
+    // so the bound is relative: a small block and a large one are timed in
+    // the same test, machine load cancels out of the ratio, and only
+    // superlinear growth can breach it
+    const small = Array.from({ length: 500 }, () => dummyTx());
+    const large = Array.from({ length: 4000 }, () => dummyTx());
+    const smallRaw = serializeBlock(HEADER, small);
+    const largeRaw = serializeBlock(HEADER, large);
+    parseBlock(smallRaw); // warm-up, so JIT compilation is not in the ratio
+    const time = (raw: Uint8Array, expectTxs: number): number => {
+      const started = performance.now();
+      const block = parseBlock(raw);
+      const elapsed = performance.now() - started;
+      expect(block.txs.length).toBe(expectTxs);
+      return elapsed;
+    };
+    // each round times the two sizes back to back, so a load spike or a GC
+    // pause lands on both sides of that round's ratio; the median over
+    // rounds discards the rounds it hit only one side of
+    const ratios: number[] = [];
+    for (let round = 0; round < 5; round++) {
+      const smallTime = time(smallRaw, 500);
+      const largeTime = time(largeRaw, 4000);
+      ratios.push(largeTime / Math.max(smallTime, 0.05));
+    }
+    ratios.sort((a, b) => a - b);
+    const block = parseBlock(largeRaw);
+    expect(block.txs[0].txid).toBe(large[0].txid);
+    expect(block.txs[3999].txid).toBe(large[3999].txid);
+    // 8x the txs: a linear parse costs ~8x, the old per-tx tail copy ~64x.
+    // The bound sits far above the one and far below the other
+    expect(ratios[2]).toBeLessThan(32);
   });
 
   it('rejects a block larger than the consensus maximum before parsing', () => {

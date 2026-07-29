@@ -515,4 +515,6 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => fail(e?.stack ?? String(e)));
+// every command's classified failures already exited through their own paths;
+// whatever reaches here gets one line on stderr, no stack, exit 1
+main().catch((e) => fail(e instanceof Error ? e.message : String(e)));

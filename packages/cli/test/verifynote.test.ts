@@ -338,6 +338,17 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
     expect(r.stderr).toMatch(/--max-steps applies to sat genealogy bundles/);
   });
 
+  it('reports an invalid uri to parse as one line, no stack, exit 1', () => {
+    // an uncaught failure used to reach main().catch and print a stack
+    // trace; every command's final catch is one gentle line now, with each
+    // command's own classified paths untouched
+    const r = cli(['parse', 'not-a-uri']);
+    expect(r.status).toBe(1);
+    expect(r.stderr.trim().split('\n')).toHaveLength(1);
+    expect(r.stderr).toMatch(/^error: /);
+    expect(r.stderr).not.toMatch(/\n\s+at /);
+  });
+
   it('reports a build no backend completed as INCOMPLETE at exit 5, both channels', () => {
     // a total outage is not a forged document, and exit 1 said it was. Nothing
     // was verified here, which is what code 5 means
