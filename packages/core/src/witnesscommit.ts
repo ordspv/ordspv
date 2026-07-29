@@ -91,6 +91,9 @@ const HEX32 = /^[0-9a-fA-F]{64}$/;
  * a caller as an internal fault rather than a bad bundle.
  */
 function checkWitnessSectionShape(witness: WitnessSectionJson): void {
+  if (typeof witness !== 'object' || witness === null) {
+    throw new Error('witness section: must be a non-null object');
+  }
   const w = witness as unknown as Record<string, unknown>;
   if (typeof w.coinbaseHex !== 'string' || !/^[0-9a-fA-F]+$/.test(w.coinbaseHex.trim())) {
     throw new Error('witness section: coinbaseHex must be a non-empty hex string');

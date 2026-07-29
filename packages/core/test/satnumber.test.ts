@@ -991,4 +991,14 @@ describe('wtxid-anchored reveals (genealogy)', () => {
       /witness section: wtxidBranch\[0\] must be a 32-byte hex string/,
     );
   });
+
+  it('refuses witness: null on the reveal as a bad section, not a TypeError', () => {
+    // null passes the presence guard, which reads !== undefined, so the shape
+    // check is what has to name the section rather than a property of null
+    const b = wtxidGenealogy(block, bytesToHex(reveal.tx.raw), commit.hex, 1, firstSatOfBlock(1000) + 10_000n);
+    (b.reveal as { witness?: unknown }).witness = null;
+    expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+      /witness section: must be a non-null object/,
+    );
+  });
 });

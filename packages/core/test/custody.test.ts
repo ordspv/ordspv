@@ -986,6 +986,16 @@ describe('wtxid-anchored reveals (custody)', () => {
     expect(() => verifyCustodyBundle(badReserved, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
   });
 
+  it('refuses witness: null on the reveal as a bad section, not a TypeError', () => {
+    // null passes the presence guard, which reads !== undefined, so the shape
+    // check is what has to name the section rather than a property of null
+    const b = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
+    (b.hops[0] as { witness?: unknown }).witness = null;
+    expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow(
+      /witness section: must be a non-null object/,
+    );
+  });
+
   it('rejects a coinbase with no commitment output through the shared function', () => {
     // a block whose coinbase carries no witness commitment cannot anchor any
     // witness; built by hand because the block helper always commits
