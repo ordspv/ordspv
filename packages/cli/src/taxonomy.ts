@@ -212,7 +212,8 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
   {
     ctor: RevealSourceError,
     reason:
-      `one member's transport failure on a deciding reveal request, recorded as that ` +
+      `one member's failure inside the lead-derived span, a deciding request that ` +
+      `failed or a served value that could not be built from, recorded as that ` +
       `member's cause so the build leads the next attempt with another member`,
   },
   {

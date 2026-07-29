@@ -22,6 +22,7 @@ import { EsploraBackend, type FetchFn } from '../src/backends.js';
 import {
   buildSatGenealogyBundle,
   DEFAULT_MAX_STEPS,
+  fetchCustody,
   fetchSatIdentity,
   RevealSourceError,
   SatBuildError,
@@ -1009,14 +1010,16 @@ describe('fetchSatIdentity', () => {
   });
 
   it('still ends the build through the break when a pooled request exhausts the pool', async () => {
-    // both leads serve the reveal's deciding requests; the commit behind the
-    // reveal is served by nobody, so the pooled prev-tx request fails at every
-    // member and the break ends the build with the second member never led
-    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
-    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    // both leads serve the reveal hop and its prev-tx coverage; the funding
+    // tx one step past the reveal hop is served by nobody, so a pooled
+    // mid-walk request outside the lead-derived span fails at every member
+    // and the break ends the build with the second member never led
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
+    const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const routes = chainRoutes(coinbase, reveal, [commit]);
-    delete routes[`${E}/tx/${commit.tx.txid}/hex`];
+    const routes = chainRoutes(coinbase, reveal, [commit, f1]);
+    delete routes[`${E}/tx/${f1.tx.txid}/hex`];
     const base = stubFetch(routes);
     const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
 
@@ -1033,6 +1036,126 @@ describe('fetchSatIdentity', () => {
     expect(e.message).toMatch(/all 2 pooled backend\(s\) failed/);
     // the break fired at attempt 0 and EB was never led
     expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
+  });
+
+  it('rotates when the lead answers that the reveal is unconfirmed', async () => {
+    // the first of the three lead-derived value failures: the status request
+    // succeeded and the VALUE the lead served says unconfirmed. That is one
+    // member's answer, so the lead lands in noAnswer with its cause and the
+    // next member leads. Before the phase rule it was a plain build error
+    // that hit the pool-exhaustion break with EB never led
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    routes[`${E}/tx/${reveal.tx.txid}/outspend/0`] = { spent: false };
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => {
+      if (url === `${E}/tx/${reveal.tx.txid}/status`) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ confirmed: false }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      return honest(url.replace(EB, E), init);
+    };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect((attempts[1].cause as Error).message).toMatch(/is not confirmed/);
+
+    // the custody loop rotates on the identical condition, so the two
+    // commands agree about the same inscription
+    const custody = await fetchCustody(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+    });
+    expect(custody.custody.satpoint.txid).toBe(reveal.tx.txid);
+  });
+
+  it('rotates when the lead serves a matching-txid reveal without the envelope', async () => {
+    // the second value failure: the witness is outside the stripped txid, so
+    // the lead can serve bytes that pass the id check and carry no envelope
+    // at the requested index. That is the lead's word about uncommitted
+    // bytes, so the lead lands in noAnswer and the next member leads
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const stripped = segwitTx(
+      [{ txid: commit.tx.txid, vout: 0, witness: [new Uint8Array(64).fill(7)] }],
+      [{ value: 546n }],
+    );
+    expect(stripped.tx.txid).toBe(reveal.tx.txid);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    routes[`${E}/tx/${reveal.tx.txid}/outspend/0`] = { spent: false };
+    const honest = stubFetch(routes);
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: stripped.hex });
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : base(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect((attempts[1].cause as Error).message).toMatch(/has no envelope with index/);
+
+    const custody = await fetchCustody(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+    });
+    expect(custody.custody.satpoint.txid).toBe(reveal.tx.txid);
+  });
+
+  it('records a reveal naming a missing prev output as each lead\'s own failure', async () => {
+    // the third value failure: the reveal, served consistently by every
+    // member for its own txid, names a prev-tx output that does not exist in
+    // the hash-checked prev bytes. Each lead's attempt fails on data that
+    // lead served, so both land in noAnswer and the build is INCOMPLETE with
+    // both causes named, instead of the break ending it with EB never led.
+    // The custody wrapper reports the same code, so the two commands agree
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    // input names commit:3, which commit does not have
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 3, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(/has no output 3/);
+    expect(e.message).toMatch(new RegExp(`${E}: .*failed at the leading backend`));
+    expect(e.message).toMatch(new RegExp(`${EB}: .*failed at the leading backend`));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+
+    const pc = fetchCustody(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const ec = (await pc.catch((x: unknown) => x)) as { code?: string };
+    expect(ec.code).toBe('BUILD_FAILED');
   });
 
   it('refuses unanimity over a coinbase height one member alone served', async () => {

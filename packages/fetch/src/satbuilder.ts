@@ -66,18 +66,28 @@ import {
 export class SatBuildError extends Error {}
 
 /**
- * A lead-only deciding request failed at the backend leading the attempt.
+ * A failure that rests on data the backend leading the attempt served.
  *
  * Four requests decide the domain refusals the walk can raise: the reveal's
  * tx hex, its status, its merkle proof, and the terminal coinbase's status,
  * whose block_height is the height that places the traced position against
  * the subsidy boundary. `fetchSatIdentity` makes them against the leading
  * member alone instead of through the pool: a refusal recorded under a
- * backend's name has to rest on data that backend served itself. A transport
- * failure on one of them is therefore one member's failure, and the wrapper
- * records it as that member's cause and leads the next attempt with the next
- * member. Pool exhaustion on a pooled request still ends the whole build,
- * because that throw already means every member failed the request.
+ * backend's name has to rest on data that backend served itself.
+ *
+ * The class covers a phase, not a request list. Any failure raised while the
+ * build assembles from lead-served data, from the reveal fetch through the
+ * reveal hop's assembly, prev-tx coverage and start-position derivation, and
+ * again through the terminal coinbase hop's assembly, is one member's
+ * failure, whether the request itself failed or the value it returned did:
+ * an unconfirmed status, a missing envelope, a named prev-tx output that
+ * does not exist. The wrapper records it as that member's cause and leads
+ * the next attempt with the next member. The recordable refusal classes,
+ * `SatPositionError`, and the terminal `EnvelopeIndexUnprovenError` pass
+ * through the span unwrapped, since each already has its own arm in the
+ * loop. Pool exhaustion on a pooled request outside the span still ends the
+ * whole build, because that throw already means every member failed the
+ * request.
  */
 export class RevealSourceError extends SatBuildError {}
 
@@ -208,72 +218,104 @@ export async function buildSatGenealogyBundle(
       );
     }
   };
-
-  // the inscription id commits to the reveal's stripped hash, and every
-  // funding step checks the served bytes against the txid its input names.
-  // The root of that chain gets the same check here: bytes hashing to some
-  // other transaction are the lead's wrong answer, thrown through the
-  // RevealSourceError path so the loop records no usable answer and the next
-  // member leads, rather than a domain refusal derived from them
-  const { revealHex, reveal } = await leadOnly(`reveal tx ${id.txid}`, async (m) => {
-    const hex = (await m.getTxHex(id.txid)).trim();
-    const tx = parseTx(hexToBytes(hex));
-    if (tx.txid !== id.txid) {
-      throw new SatBuildError(`backend served ${tx.txid} for requested ${id.txid}`);
-    }
-    return { revealHex: hex, reveal: tx };
-  });
-  const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
-  if (!inscription) {
-    throw new SatBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);
-  }
-  const k = inscription.input;
-
-  // the reveal hop's status and merkle proof come from the lead alone; the
-  // header, the block info and the prev txs stay pooled, since none of them
-  // can move a domain decision once the reveal bytes are the lead's
-  const revealAnchor: AnchorBackend = lead
-    ? {
-        baseUrl: backend.baseUrl,
-        getTxHex: (t) => backend.getTxHex(t),
-        getTxStatus: (t) => leadOnly(`reveal status ${t}`, (m) => m.getTxStatus(t)),
-        getMerkleProof: (t) => leadOnly(`reveal merkle proof ${t}`, (m) => m.getMerkleProof(t)),
-        getHeaderHex: (h) => backend.getHeaderHex(h),
-        getBlockInfo: (h) => backend.getBlockInfo(h),
+  // the phase rule behind RevealSourceError: any failure raised inside a span
+  // whose decisions rest on lead-served data is one member's failure, whether
+  // the request failed or the value it returned did, so the wrapper records
+  // it as that member's cause and leads the next attempt with another member.
+  // What passes through unwrapped already has its own arm in the loop: the
+  // classes the taxonomy marks recordable, SatPositionError beside them, the
+  // terminal EnvelopeIndexUnprovenError, and a failure the leadOnly wrapper
+  // classified itself
+  const leadDerived = async <T>(what: string, fn: () => Promise<T>): Promise<T> => {
+    if (!lead) return fn();
+    try {
+      return await fn();
+    } catch (e) {
+      if (
+        e instanceof RevealSourceError ||
+        isRecordableBuildRefusal(e) ||
+        e instanceof SatPositionError ||
+        e instanceof EnvelopeIndexUnprovenError
+      ) {
+        throw e;
       }
-    : backend;
-  const revealHop = await assembleAnchoredHop(revealAnchor, reveal, revealHex, k);
-  await attachRevealWitnessSection(
-    options.witnessBackends ?? [backend],
-    reveal,
-    revealHop,
-    options.witnessSection,
-  );
-  const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
-  if (inscription.unboundByEvenField || revealValues[k] === 0n) {
-    throw new CustodyUnsupportedError(
-      'inscription is unbound at reveal (zero-value envelope input or unrecognized even field); it has no sat identity to trace',
-      revealHop.block.height,
+      throw new RevealSourceError(
+        `${what} failed at the leading backend ${lead.baseUrl}: ${(e as Error).message}`,
+      );
+    }
+  };
+
+  // the lead-derived span opens here and closes after the start position is
+  // resolved into the reveal's prev-tx coverage; the funding walk below runs
+  // outside it against bytes a txid already fixes
+  const { reveal, revealHop, start } = await leadDerived('reveal hop assembly', async () => {
+    // the inscription id commits to the reveal's stripped hash, and every
+    // funding step checks the served bytes against the txid its input names.
+    // The root of that chain gets the same check here: bytes hashing to some
+    // other transaction are the lead's wrong answer, thrown through the
+    // RevealSourceError path so the loop records no usable answer and the
+    // next member leads, rather than a domain refusal derived from them
+    const { revealHex, reveal } = await leadOnly(`reveal tx ${id.txid}`, async (m) => {
+      const hex = (await m.getTxHex(id.txid)).trim();
+      const tx = parseTx(hexToBytes(hex));
+      if (tx.txid !== id.txid) {
+        throw new SatBuildError(`backend served ${tx.txid} for requested ${id.txid}`);
+      }
+      return { revealHex: hex, reveal: tx };
+    });
+    const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
+    if (!inscription) {
+      throw new SatBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);
+    }
+    const k = inscription.input;
+
+    // the reveal hop's status and merkle proof come from the lead alone; the
+    // header, the block info and the prev txs stay pooled, since none of them
+    // can move a domain decision once the reveal bytes are the lead's
+    const revealAnchor: AnchorBackend = lead
+      ? {
+          baseUrl: backend.baseUrl,
+          getTxHex: (t) => backend.getTxHex(t),
+          getTxStatus: (t) => leadOnly(`reveal status ${t}`, (m) => m.getTxStatus(t)),
+          getMerkleProof: (t) => leadOnly(`reveal merkle proof ${t}`, (m) => m.getMerkleProof(t)),
+          getHeaderHex: (h) => backend.getHeaderHex(h),
+          getBlockInfo: (h) => backend.getBlockInfo(h),
+        }
+      : backend;
+    const revealHop = await assembleAnchoredHop(revealAnchor, reveal, revealHex, k);
+    await attachRevealWitnessSection(
+      options.witnessBackends ?? [backend],
+      reveal,
+      revealHop,
+      options.witnessSection,
     );
-  }
+    const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
+    if (inscription.unboundByEvenField || revealValues[k] === 0n) {
+      throw new CustodyUnsupportedError(
+        'inscription is unbound at reveal (zero-value envelope input or unrecognized even field); it has no sat identity to trace',
+        revealHop.block.height,
+      );
+    }
 
-  // start position in the reveal's sat stream: first sat of the envelope's
-  // input, or the pointer, which indexes output space (identical to input
-  // space, since outputs are a prefix slice of the concatenated inputs)
-  let totalOut = 0n;
-  for (const o of reveal.outputs) totalOut += o.value;
-  let position: bigint;
-  if (inscription.pointer !== undefined && inscription.pointer < totalOut) {
-    position = inscription.pointer;
-  } else {
-    position = 0n;
-    for (let i = 0; i < k; i++) position += revealValues[i];
-  }
+    // start position in the reveal's sat stream: first sat of the envelope's
+    // input, or the pointer, which indexes output space (identical to input
+    // space, since outputs are a prefix slice of the concatenated inputs)
+    let totalOut = 0n;
+    for (const o of reveal.outputs) totalOut += o.value;
+    let position: bigint;
+    if (inscription.pointer !== undefined && inscription.pointer < totalOut) {
+      position = inscription.pointer;
+    } else {
+      position = 0n;
+      for (let i = 0; i < k; i++) position += revealValues[i];
+    }
 
-  // a pointer can land past the envelope input, so the reveal may need prev
-  // txs for inputs beyond k; the verifier accepts and uses them
-  const start = await prevTxsCovering(backend, reveal, position, revealHop.prevTxs);
-  revealHop.prevTxs = start.prevTxs;
+    // a pointer can land past the envelope input, so the reveal may need prev
+    // txs for inputs beyond k; the verifier accepts and uses them
+    const start = await prevTxsCovering(backend, reveal, position, revealHop.prevTxs);
+    revealHop.prevTxs = start.prevTxs;
+    return { reveal, revealHop, start };
+  });
 
   const funding: GenealogyStepJson[] = [];
   let expectTxid = reveal.inputs[start.input].prevTxid;
@@ -299,28 +341,31 @@ export async function buildSatGenealogyBundle(
     }
 
     if (isCoinbaseTx(tx)) {
-      // the terminal coinbase's status is the fourth lead-only deciding
-      // request: its block_height is the height coinbaseSatAt reads below,
-      // which decides the subsidy boundary and with it the fee-tail refusal.
-      // The hop's other requests stay pooled, since the header, the block
-      // info, the merkle proof and the coinbase bytes themselves are bound
-      // by the anchoring the verifier re-checks, and none of them moves a
-      // domain decision
-      const coinbaseAnchor: AnchorBackend = lead
-        ? {
-            baseUrl: backend.baseUrl,
-            getTxHex: (t) => backend.getTxHex(t),
-            getTxStatus: (t) => leadOnly(`coinbase status ${t}`, (m) => m.getTxStatus(t)),
-            getMerkleProof: (t) => backend.getMerkleProof(t),
-            getHeaderHex: (h) => backend.getHeaderHex(h),
-            getBlockInfo: (h) => backend.getBlockInfo(h),
-          }
-        : backend;
-      const coinbaseHop = await assembleAnchoredHop(coinbaseAnchor, tx, hex, -1);
-      const pos = outputSpacePosition(tx, expectVout, offset);
-      // throws CustodyUnsupportedError for fee-tail positions, before the
-      // caller spends anything on verification
-      const sat = coinbaseSatAt(tx, pos, coinbaseHop.block.height);
+      // the lead-derived span reopens for the terminal hop: the coinbase's
+      // status is the fourth lead-only deciding request, its block_height is
+      // the height coinbaseSatAt reads below, which decides the subsidy
+      // boundary and with it the fee-tail refusal. The hop's other requests
+      // stay pooled, since the header, the block info, the merkle proof and
+      // the coinbase bytes themselves are bound by the anchoring the
+      // verifier re-checks, and none of them moves a domain decision
+      const { coinbaseHop, sat } = await leadDerived('coinbase hop assembly', async () => {
+        const coinbaseAnchor: AnchorBackend = lead
+          ? {
+              baseUrl: backend.baseUrl,
+              getTxHex: (t) => backend.getTxHex(t),
+              getTxStatus: (t) => leadOnly(`coinbase status ${t}`, (m) => m.getTxStatus(t)),
+              getMerkleProof: (t) => backend.getMerkleProof(t),
+              getHeaderHex: (h) => backend.getHeaderHex(h),
+              getBlockInfo: (h) => backend.getBlockInfo(h),
+            }
+          : backend;
+        const coinbaseHop = await assembleAnchoredHop(coinbaseAnchor, tx, hex, -1);
+        const pos = outputSpacePosition(tx, expectVout, offset);
+        // throws CustodyUnsupportedError for fee-tail positions, before the
+        // caller spends anything on verification
+        const sat = coinbaseSatAt(tx, pos, coinbaseHop.block.height);
+        return { coinbaseHop, sat };
+      });
       return {
         bundle: {
           version: 1,
