@@ -29,6 +29,19 @@ export const L2_NUMBERING_RESIDUAL =
   'at L2 and needs an L3 witness commitment';
 
 /**
+ * What an offline verification of a custody or genealogy bundle leaves to the
+ * reader. Every header in the bundle carries proof of work and nothing more, so
+ * the result holds against whatever chain the reader takes as real. A hop
+ * header's hash is a value any caller can check against any chain view at no
+ * marginal cost, which is why saying so is a complete remedy here and why the
+ * unprovable heights the verifier refuses outright are a different case: those
+ * appear in no header, so no amount of chain view settles them.
+ */
+export const BUNDLE_HEADERS_UNANCHORED =
+  'no header in this bundle was anchored, so this result holds only against your ' +
+  'own chain view; anchor each block hash at the height printed beside it';
+
+/**
  * What a printed block height is worth on an offline verification. The header
  * is proof-of-work checked and its hash is what a caller anchors; the height
  * beside it is the serving backend's claim until that anchor pins the pair.

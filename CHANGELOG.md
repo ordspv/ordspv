@@ -470,6 +470,15 @@ already binds.
   meaning a document that failed verification. On `--json` a failure the table
   does not recognize reports the error's own class name rather than the literal
   `Error`. All six codes are listed in the usage text.
+- **`ord-resolve verify` says that it anchored no header.** A custody or
+  genealogy bundle verified offline rests every hop header on the
+  proof-of-work floor alone, and the result said nothing about that. The JSON
+  carries `anchored`, false on every bundle today, and the human channel
+  carries one line saying the result holds only against the reader's own chain
+  view. SPEC-VERIFICATION section 4 now states why that is a complete remedy
+  here while a terminal coinbase height below the BIP34 boundary is refused
+  outright: a header hash is something any reader can check against any chain
+  view, and a sub-BIP34 height appears in no header at all.
 - **The reveal's own witness guard tested truth, not presence.** Both
   verifiers read `revealHop.witness` for truth while the three guards beside
   them read `!== undefined`, so a JSON `"witness": 0` at the reveal was

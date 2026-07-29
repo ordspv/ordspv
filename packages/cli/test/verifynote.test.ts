@@ -237,6 +237,43 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
     return path;
   }
 
+  /**
+   * A one-hop custody bundle over the same mainnet reveal the proof fixtures
+   * carry: the reveal hop is the proof bundle's own block, transaction and
+   * merkle branch, with the commit as its prev tx. Verification runs for real,
+   * PoW floor included, and nothing is fetched.
+   */
+  function custodyFromProofFixture(): string {
+    const proof = JSON.parse(
+      readFileSync(join(EXT, `${SINGLE_INPUT}.bundle.json`), 'utf8'),
+    ) as Record<string, never>;
+    const path = join(TMP, 'custody.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        inscriptionId: proof.inscriptionId,
+        hops: [{ block: proof.block, tx: proof.reveal, prevTxs: [(proof.commit as never)['hex']] }],
+        finalSatpoint: `${SINGLE_INPUT.replace(/i\d+$/, '')}:0:0`,
+      }),
+    );
+    return path;
+  }
+
+  it('says an offline verification anchored no header, on both channels', () => {
+    // every header here rests on proof of work alone. A hop hash is something
+    // any reader can check against any chain view, so saying so is the whole
+    // remedy, and the reader has to be told rather than left to infer it
+    const r = cli(['verify', custodyFromProofFixture()]);
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(parsed.ok).toBe(true);
+    expect(parsed.kind).toBe('custody');
+    expect(parsed.anchored).toBe(false);
+    expect(r.stderr).toMatch(/no header in this bundle was anchored/);
+    expect(r.stderr).toMatch(/holds only against your own chain view/);
+  });
+
   it('reports the verifier step cap as UNPROVEN at exit 3 on both channels', () => {
     const path = deepGenealogy();
     const human = cli(['verify', path, '--max-steps', '1']);

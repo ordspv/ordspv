@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
   formatSatpoint,
+  BUNDLE_HEADERS_UNANCHORED,
   HEIGHT_IS_A_CLAIM,
   L2_EXECUTED_LEAF_RESIDUAL,
   verifyCustodyBundle,
@@ -379,12 +380,18 @@ async function main(): Promise<void> {
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
+              // no anchor is supplied to an offline verification today, so this
+              // is false on every bundle. The field exists so a reader is told
+              // rather than left to infer it, and a caller that later supplies
+              // one has somewhere to read the answer
+              anchored: false,
               note: indexNote(result.indexProof),
             },
             null,
             2,
           ),
         );
+        console.error(BUNDLE_HEADERS_UNANCHORED);
         return;
       }
       if (kind === 'custody') {
@@ -402,12 +409,14 @@ async function main(): Promise<void> {
               singleLeafTree: result.singleLeafTree,
               singleInputReveal: result.singleInputReveal,
               indexProof: result.indexProof,
+              anchored: false,
               note: indexNote(result.indexProof),
             },
             (_, v) => (typeof v === 'bigint' ? v.toString() : v),
             2,
           ),
         );
+        console.error(BUNDLE_HEADERS_UNANCHORED);
         return;
       }
       const result = verifyProofBundle(parsed as ProofBundleJson);

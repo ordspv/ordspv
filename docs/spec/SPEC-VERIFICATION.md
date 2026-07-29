@@ -168,8 +168,18 @@ difficulty costs about 2^78 hashes, and nothing requires a bundle's header to me
 it, since the bundle picks its own height and its own `nBits`. What the floor buys
 is the removal of the free case. Verifiers MUST still anchor the hash against their
 own view of the chain, because that is what defends against a fabricated header,
-and the floor says nothing about which chain a header sits on. Composable
-strategies (reference: `makeHeaderTrust`):
+and the floor says nothing about which chain a header sits on.
+
+A verifier that anchored nothing MAY still report a result, and MUST say that
+no header in the bundle was anchored, because a reader holding any chain view
+can check a hop header's hash against it at no marginal cost and the statement
+is therefore a remedy the reader can act on. A verifier MUST NOT report a fact
+the reader cannot check that way, which is why a terminal coinbase height below
+the BIP34 boundary is refused outright rather than noted (SPEC-SAT): that height
+appears in no header, so a reader holding the whole chain still cannot settle
+it, and saying so would leave the reader with nothing to do about it.
+
+Composable strategies (reference: `makeHeaderTrust`):
 
 - **Checkpoints** (MUST when applicable): compiled-in `height → hash` pairs; a bundle
   contradicting a checkpoint is rejected outright. Ships with genesis, 767430

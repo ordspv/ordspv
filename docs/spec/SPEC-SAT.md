@@ -256,6 +256,10 @@ configured backend only when at least two backends were configured, since one
 backend agreeing with itself is one server's word. A caller MUST NOT read a
 domain refusal short of every configured backend as proof about the chain.
 
+The claimed height of a terminal coinbase below 230,000 is refused outright
+rather than noted, and a hop header resting on proof of work alone is noted
+rather than refused. SPEC-VERIFICATION section 4 states why.
+
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.
 
