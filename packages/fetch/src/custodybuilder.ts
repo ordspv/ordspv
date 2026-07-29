@@ -233,6 +233,14 @@ export async function buildCustodyBundle(
 
   const revealHex = await backend.getTxHex(id.txid);
   const reveal = parseTx(hexToBytes(revealHex.trim()));
+  // the inscription id commits to the reveal's stripped hash, and every later
+  // hop checks the served bytes against the outpoint chain. The root gets the
+  // same check: bytes hashing to some other transaction are this backend's
+  // wrong answer, recorded as no usable answer, and never a domain refusal
+  // derived from them
+  if (reveal.txid !== id.txid) {
+    throw new CustodyBuildError(`backend served ${reveal.txid} for requested ${id.txid}`);
+  }
   const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
   if (!inscription) {
     throw new CustodyBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);

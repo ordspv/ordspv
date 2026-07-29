@@ -388,6 +388,69 @@ describe('fetchCustody build-time domain refusals', () => {
     expect(res.custody.genesis.offset).toBe(0n);
   });
 
+  it('records a backend serving another transaction for the reveal as its wrong answer', async () => {
+    // the inscription id commits to the reveal's stripped hash, so bytes
+    // hashing to some other transaction are E's wrong answer, recorded as no
+    // usable answer with that as the cause, and E2's honest reveal builds
+    const { commit, reveal, block, id } = inscriptionSetup();
+    const decoy = legacySpend('55'.repeat(32), 0, [546n]);
+    let routes = routesForBlock(block, 100, 120);
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    routes[`${E4}/block-height/100`] = block.blockHash;
+    routes[`${E4}/blocks/tip/height`] = '120';
+    routes = mirror(routes, E, E2);
+    // only after mirroring, so E2 keeps the honest bytes
+    routes[`${E}/tx/${reveal.txid}/hex`] = bytesToHex(decoy.raw);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...OPTS,
+      ...ANCHORS,
+      fetchFn: stubFetch(routes),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect((attempts[1].cause as Error).message).toMatch(/backend served .* for requested/);
+  });
+
+  it('never records a refusal derived from wrong-txid reveal bytes', async () => {
+    // both backends serve, for the requested txid, a valid parse of a
+    // DIFFERENT transaction whose envelope is unbound, with the decoy's
+    // status and merkle proof registered so the walk would reach the domain
+    // refusal. One local hash reclassifies the bytes as served-wrong-bytes:
+    // both backends land in noAnswer and no CustodyUnsupportedError is ever
+    // recorded, where before the check the build called the refusal
+    // unanimous, the exit 4 upgrade
+    const { commit, reveal, block, id } = inscriptionSetup();
+    // one sat more on the output, so the stripped txid differs from the id's
+    const poisoned = parseTx(
+      serializeFull({
+        version: reveal.version,
+        inputs: reveal.inputs.map((inp, n) => (n === 0 ? { ...inp, witness: evenFieldWitness() } : inp)),
+        outputs: reveal.outputs.map((o, n) => (n === 0 ? { ...o, value: o.value + 1n } : o)),
+        locktime: reveal.locktime,
+      }),
+    );
+    expect(poisoned.txid).not.toBe(reveal.txid);
+    let routes = routesForBlock(block, 100, 120);
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${poisoned.txid}/status`] = routes[`${E}/tx/${reveal.txid}/status`];
+    routes[`${E}/tx/${poisoned.txid}/merkle-proof`] = routes[`${E}/tx/${reveal.txid}/merkle-proof`];
+    routes[`${E}/tx/${reveal.txid}/hex`] = bytesToHex(poisoned.raw);
+    routes = mirror(routes, E, E2);
+
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(routes) });
+    const e = (await p.catch((x: unknown) => x)) as Error;
+    expect(e).toBeInstanceOf(CustodyError);
+    expect((e as CustodyError).code).toBe('BUILD_FAILED');
+    expect(e).not.toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.message).toMatch(/backend served .* for requested/);
+    expect(e.message).toMatch(new RegExp(E));
+    expect(e.message).toMatch(new RegExp(E2));
+  });
+
   it('surfaces the refusal when the poisoning backend is the only one', async () => {
     // one configured backend agreeing with itself is one server's word, and
     // the message says that rather than claiming every backend reached it

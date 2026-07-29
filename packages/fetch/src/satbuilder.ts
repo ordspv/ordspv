@@ -209,8 +209,20 @@ export async function buildSatGenealogyBundle(
     }
   };
 
-  const revealHex = (await leadOnly(`reveal tx ${id.txid}`, (m) => m.getTxHex(id.txid))).trim();
-  const reveal = parseTx(hexToBytes(revealHex));
+  // the inscription id commits to the reveal's stripped hash, and every
+  // funding step checks the served bytes against the txid its input names.
+  // The root of that chain gets the same check here: bytes hashing to some
+  // other transaction are the lead's wrong answer, thrown through the
+  // RevealSourceError path so the loop records no usable answer and the next
+  // member leads, rather than a domain refusal derived from them
+  const { revealHex, reveal } = await leadOnly(`reveal tx ${id.txid}`, async (m) => {
+    const hex = (await m.getTxHex(id.txid)).trim();
+    const tx = parseTx(hexToBytes(hex));
+    if (tx.txid !== id.txid) {
+      throw new SatBuildError(`backend served ${tx.txid} for requested ${id.txid}`);
+    }
+    return { revealHex: hex, reveal: tx };
+  });
   const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
   if (!inscription) {
     throw new SatBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);

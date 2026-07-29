@@ -399,6 +399,84 @@ describe('fetchSatIdentity', () => {
     await expect(p).rejects.toThrow(/backend served/);
   });
 
+  it('records a lead serving another transaction for the reveal as no usable answer', async () => {
+    // the inscription id commits to the reveal's stripped hash, so bytes
+    // hashing to some other transaction are the lead's wrong answer rather
+    // than anything to reason from: E lands in noAnswer with its cause and EB
+    // leads the next attempt. Before the check the decoy's missing envelope
+    // was a plain build error that ended the whole build with EB never led
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const decoy = buildTx([{ txid: '55'.repeat(32), vout: 0 }], [{ value: 10_000n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: decoy.hex });
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : base(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect((attempts[1].cause as Error).message).toMatch(/backend served .* for requested/);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
+  it('never records a refusal derived from wrong-txid reveal bytes', async () => {
+    // both members serve, for the requested txid, a valid parse of a
+    // DIFFERENT transaction whose envelope is unbound, with the decoy's
+    // status and merkle proof registered so the walk would reach the domain
+    // refusal. One local hash reclassifies the bytes as served-wrong-bytes:
+    // both members land in noAnswer and no CustodyUnsupportedError is ever
+    // recorded. Before the check both attempts recorded the refusal the
+    // decoy's witness decided and the build called it unanimous, the exit 4
+    // upgrade
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const evenField = envelopeScript(
+      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+      { checksigPrefix: true },
+    );
+    // one sat more on the output, so the stripped txid differs from the id's
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+        },
+      ],
+      [{ value: 547n }],
+    );
+    expect(poisoned.tx.txid).not.toBe(reveal.tx.txid);
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    routes[`${E}/tx/${reveal.tx.txid}/hex`] = poisoned.hex;
+    routes[`${E}/tx/${poisoned.tx.txid}/status`] = routes[`${E}/tx/${reveal.tx.txid}/status`];
+    routes[`${E}/tx/${poisoned.tx.txid}/merkle-proof`] =
+      routes[`${E}/tx/${reveal.tx.txid}/merkle-proof`];
+    const base = stubFetch(routes);
+    // EB mirrors E, wrong-txid reveal included
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect((e as SatIdentityError).code).toBe('BUILD_FAILED');
+    expect(e).not.toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.message).toMatch(/backend served .* for requested/);
+    expect(e.message).toMatch(new RegExp(E));
+    expect(e.message).toMatch(new RegExp(EB));
+  });
+
   it('completes a chain of exactly maxSteps and names the cap when it does not', async () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
     const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
