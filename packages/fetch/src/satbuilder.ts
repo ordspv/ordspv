@@ -505,6 +505,7 @@ export async function fetchSatIdentity(
   // the pool fell over to.
   let built: BuildSatGenealogyResult | undefined;
   let pool: PooledEsploraBackend | undefined;
+  let leadBaseUrl = '';
   const buildErrors: string[] = [];
   const refusals: DomainRefusal[] = [];
   // the attempt that ended some other way, which here is a pool-wide transport
@@ -539,6 +540,7 @@ export async function fetchSatIdentity(
         revealSource: members[i],
       });
       pool = attempt;
+      leadBaseUrl = members[i].baseUrl;
       break;
     } catch (e) {
       // a build-time refusal is terminal only when it was derived from data
@@ -614,8 +616,12 @@ export async function fetchSatIdentity(
       minAgreement: options.minHeaderAgreement,
       minConfirmations: options.minConfirmations,
       checkpoints: options.checkpoints ?? MAINNET_CHECKPOINTS,
-      // every pool member that served bytes is barred from attesting
-      proofSources: pool.usedBaseUrls,
+      // every pool member that served bytes is barred from attesting, and
+      // the successful attempt's lead is barred by name: the deciding
+      // requests do not pass through the pool, so a lead that served only
+      // them would never enter usedBaseUrls and could vote on the bytes it
+      // chose
+      proofSources: new Set([...pool.usedBaseUrls, leadBaseUrl]),
       powLimitBits: options.powLimitBits,
     });
 

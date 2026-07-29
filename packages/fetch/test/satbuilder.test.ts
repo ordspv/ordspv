@@ -640,6 +640,48 @@ describe('fetchSatIdentity', () => {
     expect(res.headerTrust.coinbase.builderIsSource).toBe(true);
   });
 
+  it('bars a lead that served only the deciding requests from attesting', async () => {
+    // the deciding requests do not pass through the pool, so a lead that
+    // serves them and refuses every pooled request never enters
+    // usedBaseUrls. Offered as an anchor source it could then vote on the
+    // bytes it chose, turning 2-of-N agreement into one genuine outsider
+    // plus its own voice. The lead is barred by name: anchoring that then
+    // falls short of the minimum reports HEADER_TRUST instead of counting
+    // the self-vote
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const honest = stubFetch(routes);
+    // E answers the four deciding requests and the attester endpoints, and
+    // refuses every pooled proof request; EB serves everything
+    const deciding = new Set([
+      `${E}/tx/${reveal.tx.txid}/hex`,
+      `${E}/tx/${reveal.tx.txid}/status`,
+      `${E}/tx/${reveal.tx.txid}/merkle-proof`,
+      `${E}/tx/${coinbase.tx.txid}/status`,
+    ]);
+    const fetchFn: FetchFn = (url, init) => {
+      if (url.startsWith(E) && !deciding.has(url) && !url.includes('/block-height/') && !url.includes('/tip/')) {
+        return Promise.resolve(new Response('lead serves proofs to no pool', { status: 404 }));
+      }
+      return honest(url.replace(EB, E), init);
+    };
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      anchorSources: [E, E2],
+      fetchFn,
+      limits: { retry: { maxAttempts: 1 } },
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('HEADER_TRUST');
+    expect(e.message).toMatch(/1 independent source/);
+    expect(e.message).toMatch(/excluded from the vote/);
+  });
+
   it('surfaces a fee-tail ancestry as CustodyUnsupportedError, not backend failover', async () => {
     // the coinbase pays subsidy plus 100k in fee sats; the traced sat sits at
     // the first fee sat, so numbering it would need whole-block accounting
