@@ -147,7 +147,11 @@ raised on the count of inputs is terminal. A refusal becomes terminal once a
 verifier raises it, because the bundle a verifier refused had already bound
 its witness through the envelope binding above. A builder that has exhausted
 every configured backend SHOULD report the refusal in the class each backend
-raised, and SHOULD name every backend that led an attempt reporting it.
+raised, and SHOULD name every backend that led an attempt reporting it. A
+builder MUST report whether every configured backend reached that same
+refusal, and MUST name the backends it could not reach when they did not. A
+caller MUST NOT read a domain refusal that only some configured backends
+reached as proof about the chain.
 
 Verifiers SHOULD report the control block's merkle path depth at input `k`,
 whether it is zero (`singleLeafTree`), and whether the reveal has a single

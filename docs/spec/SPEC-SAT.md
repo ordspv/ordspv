@@ -247,7 +247,10 @@ reveal's input count is such data, so a refusal raised on the count of inputs
 is terminal. A builder MUST record the rest as that backend's cause and walk
 again leading with the next one. A builder that has exhausted every configured
 backend SHOULD report the refusal in the class each backend raised, and SHOULD
-name every backend that led an attempt reporting it.
+name every backend that led an attempt reporting it. A builder MUST report
+whether every configured backend reached that same refusal, and MUST name the
+backends it could not reach when they did not. A caller MUST NOT read a domain
+refusal that only some configured backends reached as proof about the chain.
 
 `claimedSat` is a claim. Verifiers MUST fold the genealogy themselves and
 reject on mismatch.

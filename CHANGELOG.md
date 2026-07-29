@@ -291,9 +291,20 @@ already binds.
   extended to say so and to name them, so a caller still discriminates on the
   class it discriminated on before. That is what the loop establishes, and on
   the sat side the attempt runs through a pool whose deciding bytes may have
-  come from another member. Mixed failures report `BUILD_FAILED` with every
-  cause joined. The same class raised by `verifyCustodyBundle` or
-  `verifySatGenealogy` stays terminal and now passes through `fetchCustody`
+  come from another member. A build in which some backends refused this way and
+  the rest could not be reached at all reports the refusal too, since no
+  backend answered with a bundle and the refusal is the most informative thing
+  the build has. The rethrown error carries `unanimous`, false in that case,
+  and its message says how many backends reached the refusal and names the ones
+  it could not reach. A `CustodyUnsupportedError` marked that way reports as
+  `UNPROVEN` at exit code 3 rather than as `OUT OF SCOPE` at exit code 4,
+  because a path leaving what v1 proves is a claim about the chain that the
+  backends that answered cannot settle; the other refusal classes assert
+  nothing about the chain and keep their codes. A verifier's own refusal
+  carries no marker and stays proven. A build where nothing was refused reports
+  `BUILD_FAILED` with every cause joined. The same class raised by
+  `verifyCustodyBundle` or `verifySatGenealogy` stays terminal and now passes
+  through `fetchCustody`
   unwrapped as it already did through `fetchSatIdentity`, because a bundle a
   verifier refused had already bound its witness.
   `EnvelopeIndexUnprovenError` keeps its immediate rethrow, because it is
@@ -378,7 +389,8 @@ already binds.
   class was always meant to report. The rule the specs now state is that a
   builder MUST NOT treat a build-time refusal as terminal while another backend
   is configured unless the refusal was derived from data the reveal txid
-  commits.
+  commits. The CLI maps the class to `UNPROVEN` at exit code 3, since a block
+  no backend served is availability and says nothing about the reveal.
 - **The verifier's own step cap read as a forgery.** `verifySatGenealogy`
   threw a plain `Error` when a bundle carried more funding steps than its cap,
   so a genealogy built with a raised builder cap over a genuinely deep ancestry
