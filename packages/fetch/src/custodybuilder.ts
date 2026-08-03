@@ -534,10 +534,13 @@ export async function fetchCustody(
       // block. Record it and ask the next backend; the verifier's own
       // refusal, after the bundle proved its witness, stays terminal.
       // `SatPositionError` stays beside the predicate by name so both build
-      // loops classify the same condition the same way; the CLI table
-      // excludes it because a verifier raising it is a forgery. The custody
-      // walk computes no sat-space position of its own, so nothing in it
-      // raises the class today
+      // loops classify the same condition the same way, and because it
+      // carries no build-time facts row of its own. Its row lives in the CLI
+      // table, keyed by output context: a verifier raising it reports INVALID
+      // because the bundle bound the pointer it then failed, and a build loop
+      // raising it reports UNPROVEN because the reveal txid commits to no
+      // witness byte. The custody walk computes no sat-space position of its
+      // own, so nothing in it raises the class today
       if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
       } else {

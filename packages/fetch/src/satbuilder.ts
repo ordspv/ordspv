@@ -559,10 +559,14 @@ export async function fetchSatIdentity(
       // the served envelope, and an unavailable witness section out of the
       // block hash and the position the leading member's own status and
       // merkle proof named, which a hostile member can point at a real but
-      // wrong block. `SatPositionError` stays beside the predicate by name:
-      // the CLI table excludes it because a verifier raising it is a
-      // forgery, and at build it comes from the pointer and the envelope
-      // input in that same unbound witness, so the loop rotates on it too.
+      // wrong block. `SatPositionError` stays beside the predicate by name
+      // because it carries no build-time facts row of its own: the CLI table
+      // holds its row, keyed by output context, where a verifier raising it
+      // reports INVALID because the bundle bound the pointer it then failed,
+      // and a build loop raising it reports UNPROVEN because the reveal txid
+      // commits to no witness byte. At build it comes from the pointer and
+      // the envelope input in that same unbound witness, so the loop rotates
+      // on it too.
       // Record the refusal and lead the next attempt with another member
       if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {
         refusals.push({ baseUrl: members[i].baseUrl, error: e });
