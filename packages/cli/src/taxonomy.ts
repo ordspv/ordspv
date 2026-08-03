@@ -148,6 +148,11 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
         `against a backend that serves raw blocks supplies one.`,
     },
   },
+  // no CLI path reaches this class today: every command configures header
+  // trust that yields 'hash-at-height', and the class is raised only in the
+  // other branch. The row stays because a library caller supplying its own
+  // trustHeader hook reaches it, and the row is what makes that caller's
+  // report correct
   CoinbaseHeightUnprovenError: {
     ctor: CoinbaseHeightUnprovenError,
     category: { verify: 'UNPROVEN', live: 'UNPROVEN' },

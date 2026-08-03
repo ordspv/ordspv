@@ -287,10 +287,14 @@ export async function buildSatGenealogyBundle(
 
     // the reveal hop's status and merkle proof come from the lead alone; the
     // header, the block info and the prev txs stay pooled, since none of them
-    // can move a domain decision once the reveal bytes are the lead's
+    // can move a domain decision once the reveal bytes are the lead's.
+    // `checkHopAnswers` reports against this baseUrl, and no single name is
+    // right for every check it runs, so the name is the attempt: the lead that
+    // served the status and the merkle proof, leading the pool that served the
+    // rest
     const revealAnchor: AnchorBackend = lead
       ? {
-          baseUrl: backend.baseUrl,
+          baseUrl: `${lead.baseUrl} leading ${backend.baseUrl}`,
           getTxHex: (t) => backend.getTxHex(t),
           getTxStatus: (t) => leadOnly(`reveal status ${t}`, (m) => m.getTxStatus(t)),
           getMerkleProof: (t) => leadOnly(`reveal merkle proof ${t}`, (m) => m.getMerkleProof(t)),

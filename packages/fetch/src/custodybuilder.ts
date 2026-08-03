@@ -381,7 +381,10 @@ export async function assembleAnchoredHop(
   );
   const prevTxs: string[] = [];
   for (let i = 0; i <= prevTxsUpTo; i++) {
-    prevTxs.push(await backend.getTxHex(tx.inputs[i].prevTxid));
+    // trimmed here so the bundle carries the bytes a verifier reads back:
+    // `provenInputValues` trims before parsing, and the reveal hex is trimmed
+    // where it is read
+    prevTxs.push((await backend.getTxHex(tx.inputs[i].prevTxid)).trim());
   }
   return {
     block: {

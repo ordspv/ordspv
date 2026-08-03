@@ -42,6 +42,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is a case where a third may well succeed. Four changelog entries that stated
   a class-to-code mapping without the condition it carries, which is that
   every configured attempt ended in that same class, are narrowed to say so.
+- **Smaller items on the same surface.** A custody hop's prev-tx hex is
+  trimmed where it is read, so a bundle this builder writes carries the bytes
+  a verifier reads back. The genealogy reveal hop's self-check reported
+  against the pool's name while its status and merkle proof came from the lead
+  alone, and neither name covers every check the function runs; the shim now
+  names the attempt, in the form `<lead> leading pool(...)`.
+  `CoinbaseHeightUnprovenError`'s taxonomy row records that no CLI path
+  reaches it today and why the row stays.
 - **The last member of that defect: the genealogy builder checks the terminal
   coinbase's height against the coinbase's own BIP34 push.** From block
   230,000 on a coinbase states its height in its scriptSig, and
