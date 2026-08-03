@@ -191,6 +191,16 @@ describe('fetchCustody', () => {
     expect(res.custody.genesis.txid).toBe(reveal.txid);
     expect(res.headerTrust).toHaveLength(2);
     expect(res.tip.map((t) => t.state)).toEqual(['unspent', 'unspent']);
+
+    // the result carries the bundle it verified, so `custody --bundle` has
+    // an artifact to write; through the JSON the file would hold, a reader
+    // gets the same satpoint, hops and indexProof back with no network
+    const reread = verifyCustodyBundle(JSON.parse(JSON.stringify(res.bundle, null, 2)), {
+      powLimitBits: null,
+    });
+    expect(reread.satpoint).toEqual(res.custody.satpoint);
+    expect(reread.hops).toBe(res.custody.hops);
+    expect(reread.indexProof).toBe(res.custody.indexProof);
   });
 
   it('rejects a backend whose claimed spender does not spend the satpoint', async () => {

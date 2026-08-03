@@ -23,6 +23,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them from the command line in response to a backend's behaviour weakens a
   safety property in the wrong direction.
 
+### Added
+
+- **`custody --bundle FILE` writes the custody bundle, and
+  `FetchCustodyResult` carries it.** `verify` reads custody bundles and
+  nothing could produce one: `fetchCustody` built and verified the bundle,
+  then discarded it, and the CLI had no flag. The result now carries the
+  bundle the function already verified, and the `custody` command writes it
+  with the same print-then-write order `sat` keeps: the satpoint prints
+  first, then the file is written, and a write failure reports `custody:
+  cannot write bundle to <path>: <message>` on stderr at exit 1. The
+  written file round-trips: `verify` on it reports the same satpoint, hops
+  and indexProof the live command printed.
+
 ### Changed
 
 - **The CLI refuses unknown flags and misplaced value flags at exit 2

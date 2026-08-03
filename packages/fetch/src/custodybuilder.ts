@@ -744,6 +744,8 @@ export interface CustodyTipSource {
 
 export interface FetchCustodyResult {
   custody: VerifiedCustody;
+  /** the bundle, so callers can persist an offline-verifiable artifact */
+  bundle: CustodyBundleJson;
   /** anchoring report for each hop, in hop order */
   headerTrust: HeaderTrustReport[];
   /** per-source outspend answers for the final satpoint (liveness, not proof) */
@@ -911,5 +913,5 @@ export async function fetchCustody(
     }),
   );
 
-  return { custody, headerTrust, tip, pendingSpendTxid: built.pendingSpendTxid };
+  return { custody, bundle: built.bundle, headerTrust, tip, pendingSpendTxid: built.pendingSpendTxid };
 }

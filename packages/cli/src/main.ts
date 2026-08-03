@@ -39,7 +39,7 @@ import {
  *   ord-resolve <uri> --verify none|L1|L2|L3   verification level (default L2)
  *   ord-resolve proof <id> [--level L2|L3]     emit a proof bundle
  *   ord-resolve verify <bundle.json>           verify a proof, custody or sat bundle offline
- *   ord-resolve custody <id>                   prove where the inscribed sat is
+ *   ord-resolve custody <id> [--bundle FILE]   prove where the inscribed sat is
  *   ord-resolve sat <id> [--max-steps N]       prove which sat it is
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
@@ -236,7 +236,7 @@ async function main(): Promise<void> {
         '                                              proof, custody or sat genealogy',
         '      a successful verify prints its JSON report whether or not --json is',
         '      passed; the flag controls the failure channel',
-        '  ord-resolve custody <inscription-id> [--json] [--max-hops N]',
+        '  ord-resolve custody <inscription-id> [--json] [--bundle FILE] [--max-hops N]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]  --anchor-source url[,url]',
@@ -372,6 +372,14 @@ async function main(): Promise<void> {
         console.log(`envelope    ${envelopeNote(res.custody)}`);
         for (const t of res.tip) console.log(`tip         ${t.source}: ${t.state}${t.detail ? ` (${t.detail})` : ''}`);
         if (res.pendingSpendTxid) console.log(`pending     unconfirmed spend ${res.pendingSpendTxid}`);
+      }
+      // the satpoint the walk proved is printed; from here a failure is the
+      // write's alone, the same order the sat branch keeps
+      const bundleOut = str(flags.get('bundle'));
+      if (bundleOut) {
+        const failure = writeBundleFile('custody', bundleOut, res.bundle);
+        if (failure) fail(failure, 1);
+        if (!flags.has('json')) console.log(`bundle      ${bundleOut}`);
       }
       return;
     } catch (e) {
