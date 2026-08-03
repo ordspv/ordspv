@@ -101,13 +101,24 @@ describe('refusal taxonomy coverage', () => {
     expect(REFUSAL_TABLE.SatStepLimitError.note.verify).toMatch(/--max-steps/);
     expect(REFUSAL_TABLE.SatStepLimitError.note.live).toMatch(/--max-steps/);
     expect(REFUSAL_TABLE.CustodyHopLimitError.note.live).toMatch(/--max-hops/);
-    expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.live).toMatch(/--anchor-source/);
     expect(REFUSAL_TABLE.WitnessSectionUnavailableError.note.live).toMatch(/--esplora/);
     expect(REFUSAL_TABLE.SatPositionError.note.live).toMatch(/--esplora/);
     const buildFailed = WRAPPER_TABLE.BUILD_FAILED;
     if (buildFailed.category !== 'INVALID') expect(buildFailed.note).toMatch(/--esplora/);
     const headerTrust = WRAPPER_TABLE.HEADER_TRUST;
     if (headerTrust.category !== 'INVALID') expect(headerTrust.note).toMatch(/--anchor-source/);
+  });
+
+  it('names no flag where none can change the outcome', () => {
+    // the live coinbase-height refusal is raised inside the per-attempt build,
+    // before any anchoring runs, so --anchor-source cannot reach it and no
+    // other flag supplies the attestation it needs; a note naming one sends
+    // the reader on a rerun that ends in the byte-identical refusal
+    expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.live).not.toMatch(/--anchor-source/);
+    expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.live).not.toMatch(/--/);
+    // the offline arm has no anchor flag either; its remedy is the reader's
+    // own chain view and, for a library caller, the trustHeader hook
+    expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.verify).not.toMatch(/--/);
   });
 });
 

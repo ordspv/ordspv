@@ -81,6 +81,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contributing nothing the pool recorded, on a reveal that gets a witness
   section at all. Narrow is not the same as closed, and both specs state the
   bar as a MUST NOT.
+- **The live note for an unprovable sub-BIP34 coinbase height told the reader
+  to add anchor sources, and on that path the flag cannot change the
+  outcome.** `CoinbaseHeightUnprovenError` is raised inside the per-attempt
+  build and rethrown once the refusal set is unanimous, before any anchoring
+  machinery is constructed, and anchoring is the only machinery
+  `--anchor-source` feeds. A reader who followed the note and reran got the
+  byte-identical exit-3 refusal. The note now says what stands: below the
+  BIP34 boundary only an attestation of the block hash at that height binds
+  the claimed height to the block, and no flag supplies one because the
+  refusal precedes anchoring. A library caller can supply the attestation
+  through the `trustHeader` hook. Every other note in both tables was swept
+  for the same defect, a named flag the producing path cannot reach or whose
+  change cannot change the outcome, and no other note fails the test.
 
 ### Changed
 

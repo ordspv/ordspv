@@ -104,9 +104,9 @@ export interface RefusalRow {
   nonUnanimousCategory: 'UNPROVEN' | 'OUT OF SCOPE';
   /**
    * The remedy sentence per output context. It names the flag that changes
-   * the outcome wherever one exists; the offline verify context for the
-   * coinbase height has none, since no anchor can be supplied to an offline
-   * verification today.
+   * the outcome wherever one exists; neither coinbase-height context has
+   * one, since no anchor can be supplied to an offline verification today
+   * and the live refusal is raised before any anchoring runs.
    */
   note: Record<RefusalContext, string>;
   /**
@@ -166,8 +166,9 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
         `library callers can supply that attestation through the trustHeader hook.`,
       live:
         `Below the BIP34 boundary only an attestation of the block hash at that height ` +
-        `binds the claimed height to the block, and this build has none; ` +
-        `--anchor-source names others.`,
+        `binds the claimed height to the block, and no flag supplies one: this refusal ` +
+        `is raised while the bundle is being built, before any anchoring runs. ` +
+        `A library caller can supply the attestation through the trustHeader hook.`,
     },
   },
   SatStepLimitError: {
