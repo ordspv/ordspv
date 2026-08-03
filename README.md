@@ -87,7 +87,7 @@ network. Rules are in [docs/spec/SPEC-SAT.md](docs/spec/SPEC-SAT.md).
 
 ```bash
 npm install
-npm test                                  # 508 tests, incl. real mainnet vectors, offline
+npm test                                  # whole suite, incl. real mainnet vectors, offline
 
 # resolve + verify inscription 0 at L2 (live network):
 npx tsx packages/cli/src/main.ts ord:6fb976ab49dcec017f1e201e84395983204ae1a7c2abf7ced0a85d692e442799i0 --out skull.png --json

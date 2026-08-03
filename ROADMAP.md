@@ -11,7 +11,7 @@ docs/RESEARCH.md for the full technical rationale.*
   paths (SPEC-CUSTODY.md), sat identity (SPEC-SAT.md), and a cross-chain
   embedding guide (docs/CROSS-CHAIN.md). All of it is grounded in the cited research
   synthesis (docs/RESEARCH.md).
-- Working code, 508 tests, all offline-runnable. `@ordspv/core` has the consensus
+- Working code with a fully offline-runnable test suite. `@ordspv/core` has the consensus
   primitives, the ord-exact envelope parser, and L2/L3 proof verification.
   `@ordspv/fetch` is the verified resolver: failover backends, checkpoint and M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling.
@@ -33,7 +33,7 @@ docs/RESEARCH.md for the full technical rationale.*
 
 ## Validation checklist (needs live network)
 
-1. `npm install && npm test && npx tsc --noEmit`: expect 508 green.
+1. `npm install && npm test && npx tsc --noEmit`: expect a green suite and a clean typecheck.
 2. `npx tsx scripts/fetch-fixtures.ts`: byte-compares vendored fixtures against live
    esplora, then runs LIVE L2 **and L3** resolutions of inscription 0. *(Both ran
    green 2026-07-11, before and after the envelope-parser rewrite.)*
