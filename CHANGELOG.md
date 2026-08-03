@@ -36,6 +36,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`verify` on a custody bundle emits the satpoint as the object the live
+  command emits.** Live `custody --json` prints `satpoint` as
+  `{txid, vout, offset}`; the verify report printed the same value as a
+  formatted `txid:vout:offset` string, so a scripted caller needed two
+  readers for one field. Both surfaces are unpublished, which makes this
+  the last cheap moment to unify them, and the object form wins: it is the
+  richer, machine-readable shape, and it is the one the live command
+  already emits. A sweep of the rest of the verify report against the live
+  commands' JSON found no other field the two surfaces render in different
+  shapes; `sat` and `verify` already emit `sat` and `revealPosition` as
+  decimal strings on both.
+
 - **The CLI refuses unknown flags and misplaced value flags at exit 2
   instead of accepting them in silence.** `parseArgs` reads the token after
   any `--name` as its value, so a typo like `--bundel out.json` swallowed
@@ -53,6 +65,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is satisfied rather than ignored.
 
 ### Fixed
+
+- **`--bundle ''` slipped the needs-a-value guard and the command exited 0
+  having written nothing.** The guard refused a value flag read as boolean
+  `true`, the shape parseArgs produces when the next token is another flag,
+  and an explicit empty string reached the write sites, which test
+  truthiness, so `custody <id> --bundle ''` ran the whole walk and wrote no
+  file, and `resolve <uri> --out ''` wrote nothing after a successful
+  resolve, the same silence the guard's own comment forbids. The guard now
+  refuses the empty string beside `true`, on every value flag, with the
+  same message at the same exit 2; the caller's mistake is the same
+  mistake in a different shape.
 
 - **A string height on an anchored hop verified, and a bundle missing a
   top-level field died as a TypeError.** `verifyAnchoredHop` never checked

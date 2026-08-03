@@ -120,6 +120,23 @@ describe('--verify case', () => {
   });
 });
 
+describe('a value flag with an empty value', () => {
+  // '' slips a guard that tests === true, and the write sites test
+  // truthiness, so `--bundle ''` used to exit 0 having written nothing,
+  // which is the same silence the guard exists to refuse
+  it('refuses --bundle with an empty value', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--bundle', '']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--bundle needs a value/);
+  });
+
+  it('refuses --out with an empty value on resolve', () => {
+    const r = run([ID, ...OFFLINE, '--out', '']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--out needs a value/);
+  });
+});
+
 describe('a value flag followed by another flag', () => {
   // parseArgs reads `--max-steps --json` as boolean true, str() turns that
   // into undefined, and the command would run at the default cap the caller

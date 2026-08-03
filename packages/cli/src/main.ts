@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
-  formatSatpoint,
   BUNDLE_HEADERS_UNANCHORED,
   HEIGHT_IS_A_CLAIM,
   L2_EXECUTED_LEAF_RESIDUAL,
@@ -260,9 +259,12 @@ async function main(): Promise<void> {
   }
 
   // refuse a value flag that swallowed no value before any default can stand
-  // in for what the caller left out
+  // in for what the caller left out; '' is the same mistake in a different
+  // shape, and the write sites test truthiness, so it would exit 0 having
+  // written nothing
   for (const name of VALUE_FLAGS) {
-    if (flags.get(name) === true) fail(`--${name} needs a value`, 2);
+    const v = flags.get(name);
+    if (v === true || v === '') fail(`--${name} needs a value`, 2);
   }
 
   // canonical form on the way in, so a case variant of a serving backend
@@ -543,7 +545,9 @@ async function main(): Promise<void> {
               ok: true,
               kind,
               inscriptionId: result.inscriptionId,
-              satpoint: formatSatpoint(result.satpoint),
+              // the same object shape the live custody --json emits, so a
+              // scripted caller reads one satpoint shape on both surfaces
+              satpoint: result.satpoint,
               hops: result.hops,
               height: result.height,
               controlBlockDepth: result.controlBlockDepth,
