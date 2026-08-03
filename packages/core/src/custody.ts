@@ -408,7 +408,12 @@ export interface CustodyHopJson {
    * Raw hex of the transactions referenced by this tx's inputs, aligned by
    * input index. Entries are required for inputs 0..k, where k is the
    * envelope input (hop 0) or the input spending the tracked satpoint
-   * (later hops); later entries may be omitted or empty.
+   * (later hops); later entries may be omitted.
+   *
+   * An empty string is not a permitted filler. A genealogy verifier uses
+   * every entry supplied (SPEC-SAT, "Verifiers MUST use every prev tx
+   * supplied"), so a trailing empty entry fails to parse there rather than
+   * being skipped. This builder emits trimmed non-empty hex only.
    */
   prevTxs: string[];
   /**

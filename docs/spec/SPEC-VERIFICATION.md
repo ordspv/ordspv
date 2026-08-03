@@ -221,8 +221,15 @@ Composable strategies (reference: `makeHeaderTrust`):
 - At each level, if the node is the last of an odd-width level it MUST equal its
   sibling (self-pair); otherwise an identical sibling at the tree edge MUST be
   rejected (mutation shape, CVE-2012-2459).
-- 64-byte transactions MUST be rejected wherever a tx is parsed from a bundle
-  (leaf/inner-node confusion, CVE-2017-12842; cf. BIP-54).
+- Verifiers MUST reject a 64-byte transaction wherever a transaction parsed from
+  a bundle is folded through a merkle branch (leaf/inner-node confusion,
+  CVE-2017-12842; cf. BIP-54): the reveal, every custody hop transaction, both
+  genealogy endpoints, and the coinbase of a witness section. Genealogy funding
+  steps are held to the same rule, cheaply, so the chain's positions stay
+  uniform. Previous transactions are exempt, and the exemption is deliberate: a
+  prev tx is hashed only against the txid the spending input names and is never
+  folded into a tree, so the confusion the rule exists to stop cannot arise
+  there (SPEC-SAT states the same carve-out with the same reason).
 - Coinbase proofs MUST be verified at position 0 (all folds left-anchored).
 
 ## 6. Delegation and recursion

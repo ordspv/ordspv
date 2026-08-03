@@ -219,6 +219,10 @@ height with strictly increasing position. Hop transactions MUST be distinct,
 and hops after the reveal MUST NOT be coinbases. At hop 0 verifiers MUST also
 bind the envelope and its index as the envelope binding section requires.
 
+Previous transactions need no 64-byte check: none of them is folded into a
+tree, and each is pinned by the txid the input spending it names, so hashing to
+that txid is the whole of what they have to satisfy.
+
 `finalSatpoint` is a claim; verifiers MUST recompute the path and reject on
 mismatch.
 
