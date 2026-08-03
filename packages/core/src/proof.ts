@@ -131,7 +131,10 @@ function parseHexTx(hex: string, label: string): ParsedTx {
 export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions = {}): VerifiedInscription {
   if (bundle.version !== 1) throw new Error(`unsupported proof bundle version ${(bundle as { version: unknown }).version}`);
   // a bundle is untrusted JSON, so an absent field must name itself rather
-  // than surface as a TypeError that reads as an internal fault
+  // than surface as a TypeError that reads as an internal fault. The standard
+  // covers the top level and one level down (block.*, reveal.*, commit.*);
+  // the witness section gets its messages from its own shape checks in
+  // witnesscommit.ts
   if (typeof bundle.inscriptionId !== 'string') {
     throw new Error('bundle field inscriptionId is missing or not a string');
   }
@@ -144,6 +147,12 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   const id = parseInscriptionId(bundle.inscriptionId);
 
   // ---- header ----
+  if (typeof bundle.block.header !== 'string') {
+    throw new Error('bundle field block.header is missing or not a string');
+  }
+  if (typeof bundle.block.hash !== 'string') {
+    throw new Error('bundle field block.hash is missing or not a string');
+  }
   const header = parseHeader(hexToBytes(bundle.block.header));
   if (header.hash !== bundle.block.hash.toLowerCase()) {
     throw new Error(`header hashes to ${header.hash}, bundle claims ${bundle.block.hash}`);
@@ -161,9 +170,15 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   opts.trustHeader?.(header, bundle.block.height);
 
   // ---- reveal inclusion (txid tree) ----
+  if (typeof bundle.reveal.hex !== 'string') {
+    throw new Error('bundle field reveal.hex is missing or not a string');
+  }
   const reveal = parseHexTx(bundle.reveal.hex, 'reveal');
   if (reveal.txid !== id.txid) {
     throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
+  }
+  if (!Array.isArray(bundle.reveal.txidBranch)) {
+    throw new Error('bundle field reveal.txidBranch is missing or not an array');
   }
   const txidBranch = bundle.reveal.txidBranch.map(displayToInternal);
   const expectedHeight = treeHeight(bundle.block.txCount);
@@ -190,6 +205,9 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
       throw new Error('witness section on an L2 bundle; L3 is the level that reads one');
     }
     if (!bundle.commit) throw new Error('L2 bundle missing commit tx');
+    if (typeof bundle.commit.hex !== 'string') {
+      throw new Error('bundle field commit.hex is missing or not a string');
+    }
     const commit = parseHexTx(bundle.commit.hex, 'commit');
     const input = reveal.inputs[inscription.input];
     if (commit.txid !== input.prevTxid) {

@@ -295,6 +295,31 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     expect(err?.message).toBe('bundle field inscriptionId is missing or not a string');
   });
 
+  it('names one-level-down absences instead of surfacing TypeErrors', () => {
+    // the depth-two standard: absences at block.*, reveal.* and commit.*
+    // name a field; the witness section has its own shape checks
+    const cases: [string, string, string][] = [
+      ['block', 'header', 'bundle field block.header is missing or not a string'],
+      ['block', 'hash', 'bundle field block.hash is missing or not a string'],
+      ['reveal', 'hex', 'bundle field reveal.hex is missing or not a string'],
+      ['reveal', 'txidBranch', 'bundle field reveal.txidBranch is missing or not an array'],
+      ['commit', 'hex', 'bundle field commit.hex is missing or not a string'],
+    ];
+    for (const [section, field, message] of cases) {
+      const { bundle } = l2Setup();
+      delete (bundle as unknown as Record<string, Record<string, unknown>>)[section][field];
+      let err: Error | undefined;
+      try {
+        verifyProofBundle(bundle, NO_POW_FLOOR);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, `${section}.${field}`).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+  });
+
   it('refuses a string or absent block height, and verifies the numeric one', () => {
     // the height reaches the verified report and the trustHeader hook; a
     // bundle is untrusted JSON, so "height": "846000" would flow into both

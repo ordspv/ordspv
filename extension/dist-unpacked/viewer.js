@@ -3139,6 +3139,12 @@
       throw new Error("bundle field reveal is missing or not an object");
     }
     const id = parseInscriptionId(bundle.inscriptionId);
+    if (typeof bundle.block.header !== "string") {
+      throw new Error("bundle field block.header is missing or not a string");
+    }
+    if (typeof bundle.block.hash !== "string") {
+      throw new Error("bundle field block.hash is missing or not a string");
+    }
     const header = parseHeader(hexToBytes(bundle.block.header));
     if (header.hash !== bundle.block.hash.toLowerCase()) {
       throw new Error(`header hashes to ${header.hash}, bundle claims ${bundle.block.hash}`);
@@ -3152,9 +3158,15 @@
       throw new Error("bundle missing valid block height");
     }
     opts.trustHeader?.(header, bundle.block.height);
+    if (typeof bundle.reveal.hex !== "string") {
+      throw new Error("bundle field reveal.hex is missing or not a string");
+    }
     const reveal = parseHexTx(bundle.reveal.hex, "reveal");
     if (reveal.txid !== id.txid) {
       throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
+    }
+    if (!Array.isArray(bundle.reveal.txidBranch)) {
+      throw new Error("bundle field reveal.txidBranch is missing or not an array");
     }
     const txidBranch = bundle.reveal.txidBranch.map(displayToInternal);
     const expectedHeight = treeHeight(bundle.block.txCount);
@@ -3175,6 +3187,9 @@
         throw new Error("witness section on an L2 bundle; L3 is the level that reads one");
       }
       if (!bundle.commit) throw new Error("L2 bundle missing commit tx");
+      if (typeof bundle.commit.hex !== "string") {
+        throw new Error("bundle field commit.hex is missing or not a string");
+      }
       const commit = parseHexTx(bundle.commit.hex, "commit");
       const input = reveal.inputs[inscription.input];
       if (commit.txid !== input.prevTxid) {

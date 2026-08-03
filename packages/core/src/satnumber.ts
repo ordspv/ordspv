@@ -26,6 +26,7 @@ import { hexToBytes } from './bytes.js';
 import { parseHeader } from './header.js';
 import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
 import {
+  checkHopShape,
   checkPrevTxCount,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
@@ -329,7 +330,11 @@ export function verifySatGenealogy(
     throw new Error(`unsupported genealogy bundle version ${(bundle as { version: unknown }).version}`);
   }
   // a bundle is untrusted JSON, so an absent field must name itself rather
-  // than surface as a TypeError that reads as an internal fault
+  // than surface as a TypeError that reads as an internal fault. The standard
+  // covers the top level and one level down on every element the walk reads
+  // (the endpoint hops' and the funding steps' block, tx and prevTxs); the
+  // witness section and prev tx entries get their messages from their own
+  // shape checks and from hash checks that name the input
   if (typeof bundle.inscriptionId !== 'string') {
     throw new Error('bundle field inscriptionId is missing or not a string');
   }
@@ -351,6 +356,7 @@ export function verifySatGenealogy(
   }
 
   // ---- reveal: anchored, envelope located, start position derived ----
+  checkHopShape(bundle.reveal, 'reveal');
   const reveal = parseHexTxChecked(bundle.reveal.tx.hex, 'reveal');
   if (reveal.txid !== id.txid) {
     throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
@@ -446,12 +452,23 @@ export function verifySatGenealogy(
   const seen = new Set<string>([reveal.txid]);
   for (let i = 0; i < bundle.funding.length; i++) {
     const label = `funding[${i}]`;
+    const fundingStep = bundle.funding[i];
+    // one-level-down shape, the same standard the endpoint hops get
+    if (typeof fundingStep !== 'object' || fundingStep === null) {
+      throw new Error(`${label}: missing valid funding step`);
+    }
     // GenealogyStepJson declares no witness field, but a bundle is untrusted
     // JSON and the spec's rule binds every element, not just the coinbase
-    if ((bundle.funding[i] as { witness?: unknown }).witness !== undefined) {
+    if ((fundingStep as { witness?: unknown }).witness !== undefined) {
       throw new Error(`${label}: witness section is only accepted at the reveal`);
     }
-    const tx = parseHexTxChecked(bundle.funding[i].tx.hex, label);
+    if (typeof fundingStep.tx !== 'object' || fundingStep.tx === null) {
+      throw new Error(`${label}: missing valid tx section`);
+    }
+    if (typeof fundingStep.tx.hex !== 'string') {
+      throw new Error(`${label}: missing valid tx hex`);
+    }
+    const tx = parseHexTxChecked(fundingStep.tx.hex, label);
     if (tx.txid !== expectTxid) {
       throw new Error(`${label}: hashes to ${tx.txid}, chain expects ${expectTxid}`);
     }
@@ -495,6 +512,7 @@ export function verifySatGenealogy(
         `funds nothing from a previous transaction, so none can be used`,
     );
   }
+  checkHopShape(bundle.coinbase, 'coinbase');
   const coinbase = parseHexTxChecked(bundle.coinbase.tx.hex, 'coinbase');
   if (coinbase.txid !== expectTxid) {
     throw new Error(`coinbase hashes to ${coinbase.txid}, chain expects ${expectTxid}`);

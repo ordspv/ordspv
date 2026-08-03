@@ -74,6 +74,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A bundle missing a field one level down died as a TypeError instead of
+  naming the field.** The earlier shape standard stopped at the top level
+  by declaration; deleting `block.hash` from a proof bundle, `tx.hex` from
+  a custody hop, or `prevTxs` from a genealogy reveal surfaced `Cannot
+  read properties of undefined`, an internal-fault message for a defective
+  document. Every absence one level down now names a field or a rule, on
+  all three bundle kinds. The proof verifier checks `block.header`,
+  `block.hash`, `reveal.hex`, `reveal.txidBranch` and `commit.hex` by
+  name; the shared hop verifier checks its containers, the header, the
+  hash and the txid branch under the hop's label; a hop shape check covers
+  the containers and `tx.hex` before the first read on custody hops, both
+  genealogy endpoints and every funding step; and `checkPrevTxCount`
+  refuses a prev tx list that is not a list. Absences that already
+  produced a named refusal are unchanged: an absent `tx.pos` still reads
+  `invalid merkle position`, and the genealogy coinbase's absent `pos`
+  still reads the position rule. The witness section keeps its own shape
+  checks, and prev tx entries keep failing through the hash checks that
+  name the input.
+
 - **A proof bundle's block height reached the report and the `trustHeader`
   hook unchecked.** The earlier height fix typed every height the shared
   hop verifier reads, and `verifyProofBundle` is the one reader outside

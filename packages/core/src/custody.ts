@@ -150,6 +150,11 @@ function mapToOutputs(tx: ParsedTx, position: bigint): Satpoint | undefined {
  * code narrows in silence.
  */
 export function checkPrevTxCount(tx: ParsedTx, prevTxsHex: string[], label: string): void {
+  // untrusted JSON: an absent list must name itself rather than surface as
+  // a TypeError on .length
+  if (!Array.isArray(prevTxsHex)) {
+    throw new Error(`${label}: prevTxs is not a list`);
+  }
   if (prevTxsHex.length > tx.inputs.length) {
     throw new Error(
       `${label}: ${prevTxsHex.length} prev txs supplied for ${tx.inputs.length} input(s); ` +
@@ -510,6 +515,28 @@ function parseHopTx(hex: string, label: string): ParsedTx {
 }
 
 /**
+ * Shape of one hop's containers and its tx hex, checked before any read on
+ * a hop a verifier is about to parse: a bundle is untrusted JSON, and a read
+ * through an absent section is a TypeError that reads as an internal fault.
+ * verifyAnchoredHop re-checks the sections it reads, so a direct caller of
+ * that function is covered without this one.
+ */
+export function checkHopShape(hop: CustodyHopJson, label: string): void {
+  if (typeof hop !== 'object' || hop === null) {
+    throw new Error(`${label}: missing valid hop object`);
+  }
+  if (typeof hop.block !== 'object' || hop.block === null) {
+    throw new Error(`${label}: missing valid block section`);
+  }
+  if (typeof hop.tx !== 'object' || hop.tx === null) {
+    throw new Error(`${label}: missing valid tx section`);
+  }
+  if (typeof hop.tx.hex !== 'string') {
+    throw new Error(`${label}: missing valid tx hex`);
+  }
+}
+
+/**
  * Anchor one hop: header, proof-of-work floor, txCount, caller's trust hook,
  * txid merkle branch. Returns what the trust hook asserted, so a caller that
  * needs the height bound to the header (the terminal coinbase below BIP34) can
@@ -521,6 +548,19 @@ export function verifyAnchoredHop(
   label: string,
   opts: CustodyVerifyOptions,
 ): HeaderAttestation {
+  // one-level-down shape before any read; see checkHopShape for the rule
+  if (typeof hop.block !== 'object' || hop.block === null) {
+    throw new Error(`${label}: missing valid block section`);
+  }
+  if (typeof hop.tx !== 'object' || hop.tx === null) {
+    throw new Error(`${label}: missing valid tx section`);
+  }
+  if (typeof hop.block.header !== 'string') {
+    throw new Error(`${label}: missing valid block header`);
+  }
+  if (typeof hop.block.hash !== 'string') {
+    throw new Error(`${label}: missing valid block hash`);
+  }
   const header = parseHeader(hexToBytes(hop.block.header));
   if (header.hash !== hop.block.hash.toLowerCase()) {
     throw new Error(`${label}: header hashes to ${header.hash}, bundle claims ${hop.block.hash}`);
@@ -537,6 +577,9 @@ export function verifyAnchoredHop(
   }
   const attestation = opts.trustHeader?.(header, hop.block.height);
 
+  if (!Array.isArray(hop.tx.txidBranch)) {
+    throw new Error(`${label}: missing valid txid branch`);
+  }
   const branch = hop.tx.txidBranch.map(displayToInternal);
   const expected = treeHeight(hop.block.txCount);
   if (branch.length !== expected) {
@@ -561,7 +604,10 @@ export function verifyCustodyBundle(
     throw new Error(`unsupported custody bundle version ${(bundle as { version: unknown }).version}`);
   }
   // a bundle is untrusted JSON, so an absent field must name itself rather
-  // than surface as a TypeError that reads as an internal fault
+  // than surface as a TypeError that reads as an internal fault. The standard
+  // covers the top level and one level down (each hop's block, tx and
+  // prevTxs); the witness section and prev tx entries get their messages
+  // from their own shape checks and from hash checks that name the input
   if (typeof bundle.inscriptionId !== 'string') {
     throw new Error('bundle field inscriptionId is missing or not a string');
   }
@@ -572,6 +618,7 @@ export function verifyCustodyBundle(
 
   // ---- hop 0: reveal, genesis satpoint ----
   const revealHop = bundle.hops[0];
+  checkHopShape(revealHop, 'hop 0 (reveal)');
   const reveal = parseHopTx(revealHop.tx.hex, 'hop 0 (reveal)');
   if (reveal.txid !== id.txid) {
     throw new Error(`reveal tx hashes to ${reveal.txid}, inscription id says ${id.txid}`);
@@ -627,6 +674,7 @@ export function verifyCustodyBundle(
   for (let h = 1; h < bundle.hops.length; h++) {
     const hop = bundle.hops[h];
     const label = `hop ${h}`;
+    checkHopShape(hop, label);
     // a bundle is untrusted JSON, so the guard tests presence and not truth:
     // `"witness": 0` carries no data, and it must still not slip a rule the
     // spec states without exception

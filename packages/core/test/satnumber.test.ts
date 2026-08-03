@@ -349,6 +349,67 @@ describe('verifySatGenealogy', () => {
     );
   });
 
+  it('names one-level-down absences on the endpoint hops instead of surfacing TypeErrors', () => {
+    const cases: [string[], string][] = [
+      [['reveal', 'block'], 'reveal: missing valid block section'],
+      [['reveal', 'tx'], 'reveal: missing valid tx section'],
+      [['reveal', 'block', 'header'], 'reveal: missing valid block header'],
+      [['reveal', 'block', 'hash'], 'reveal: missing valid block hash'],
+      [['reveal', 'tx', 'hex'], 'reveal: missing valid tx hex'],
+      [['reveal', 'tx', 'txidBranch'], 'reveal: missing valid txid branch'],
+      [['reveal', 'prevTxs'], 'reveal: prevTxs is not a list'],
+      [['coinbase', 'block'], 'coinbase: missing valid block section'],
+      [['coinbase', 'tx'], 'coinbase: missing valid tx section'],
+      [['coinbase', 'block', 'header'], 'coinbase: missing valid block header'],
+      [['coinbase', 'block', 'hash'], 'coinbase: missing valid block hash'],
+      [['coinbase', 'tx', 'hex'], 'coinbase: missing valid tx hex'],
+      [['coinbase', 'tx', 'txidBranch'], 'coinbase: missing valid txid branch'],
+    ];
+    for (const [path, message] of cases) {
+      const b = bundle();
+      let o = b as unknown as Record<string, unknown>;
+      for (const p of path.slice(0, -1)) o = o[p] as Record<string, unknown>;
+      delete o[path[path.length - 1]];
+      let err: Error | undefined;
+      try {
+        verifySatGenealogy(b, FIXTURE_OPTS);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, path.join('.')).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+  });
+
+  it('names one-level-down absences on funding steps the same way', () => {
+    const cases: [string[], string][] = [
+      [['tx'], 'funding[0]: missing valid tx section'],
+      [['tx', 'hex'], 'funding[0]: missing valid tx hex'],
+      [['prevTxs'], 'funding[0]: prevTxs is not a list'],
+    ];
+    for (const [path, message] of cases) {
+      const b = bundle();
+      let o = b.funding[0] as unknown as Record<string, unknown>;
+      for (const p of path.slice(0, -1)) o = o[p] as Record<string, unknown>;
+      delete o[path[path.length - 1]];
+      let err: Error | undefined;
+      try {
+        verifySatGenealogy(b, FIXTURE_OPTS);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, path.join('.')).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+    const b = bundle();
+    (b.funding as unknown as unknown[])[0] = null;
+    expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+      'funding[0]: missing valid funding step',
+    );
+  });
+
   it('refuses a string height on the reveal hop, and verifies the numeric one', () => {
     const b = bundle();
     (b.reveal.block as unknown as Record<string, unknown>).height = '2000';

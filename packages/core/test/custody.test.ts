@@ -355,6 +355,80 @@ describe('verifyCustodyBundle', () => {
     expect(verifyCustodyBundle(singleHopBundle()).height).toBe(expected.blockHeight);
   });
 
+  it('names one-level-down absences on the reveal hop instead of surfacing TypeErrors', () => {
+    const cases: [string[], string][] = [
+      [['block'], 'hop 0 (reveal): missing valid block section'],
+      [['tx'], 'hop 0 (reveal): missing valid tx section'],
+      [['block', 'header'], 'hop 0 (reveal): missing valid block header'],
+      [['block', 'hash'], 'hop 0 (reveal): missing valid block hash'],
+      [['tx', 'hex'], 'hop 0 (reveal): missing valid tx hex'],
+      [['tx', 'txidBranch'], 'hop 0 (reveal): missing valid txid branch'],
+      [['prevTxs'], 'hop 0 (reveal): prevTxs is not a list'],
+    ];
+    for (const [path, message] of cases) {
+      const b = singleHopBundle();
+      let o = b.hops[0] as unknown as Record<string, unknown>;
+      for (const p of path.slice(0, -1)) o = o[p] as Record<string, unknown>;
+      delete o[path[path.length - 1]];
+      let err: Error | undefined;
+      try {
+        verifyCustodyBundle(b);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, path.join('.')).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+    // an element that is not an object at all is the same defect one step up
+    const b = singleHopBundle();
+    (b.hops as unknown as unknown[])[0] = null;
+    expect(() => verifyCustodyBundle(b)).toThrow('hop 0 (reveal): missing valid hop object');
+  });
+
+  it('names the same absences on a later hop through the walk', () => {
+    const outValue = revealTx.outputs[0].value;
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    function twoHop(): CustodyBundleJson {
+      const b = singleHopBundle();
+      b.hops.push({
+        block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+        tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+        prevTxs: [revealHex],
+      });
+      b.finalSatpoint = `${spend.tx.txid}:0:0`;
+      return b;
+    }
+    const cases: [string[], string][] = [
+      [['block'], 'hop 1: missing valid block section'],
+      [['tx'], 'hop 1: missing valid tx section'],
+      [['block', 'header'], 'hop 1: missing valid block header'],
+      [['block', 'hash'], 'hop 1: missing valid block hash'],
+      [['tx', 'hex'], 'hop 1: missing valid tx hex'],
+      [['tx', 'txidBranch'], 'hop 1: missing valid txid branch'],
+      [['prevTxs'], 'hop 1: prevTxs is not a list'],
+    ];
+    for (const [path, message] of cases) {
+      const b = twoHop();
+      let o = b.hops[1] as unknown as Record<string, unknown>;
+      for (const p of path.slice(0, -1)) o = o[p] as Record<string, unknown>;
+      delete o[path[path.length - 1]];
+      let err: Error | undefined;
+      try {
+        verifyCustodyBundle(b, NO_POW_FLOOR);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, path.join('.')).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+    const b = twoHop();
+    (b.hops as unknown as unknown[])[1] = null;
+    expect(() => verifyCustodyBundle(b, NO_POW_FLOOR)).toThrow('hop 1: missing valid hop object');
+  });
+
   it('refuses a bundle without inscriptionId by naming the field', () => {
     const b = singleHopBundle() as unknown as Record<string, unknown>;
     delete b.inscriptionId;
