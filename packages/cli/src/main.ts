@@ -247,7 +247,8 @@ async function main(): Promise<void> {
         '  --max-hops N    confirmed transfers the custody walk follows (custody only;',
         '      the custody verifier reads no cap)',
         '  --timeout-ms N  whole-request deadline in milliseconds for each backend',
-        '      request (proof, custody, sat, resolve; parse and verify open no socket)',
+        '      request; a failing request is retried up to 4 times, each attempt under',
+        '      its own deadline (proof, custody, sat, resolve)',
         'exit codes: 0 ok  1 INVALID  2 usage  3 UNPROVEN  4 OUT OF SCOPE',
         '  5 INCOMPLETE   1 is a document that failed verification, 5 is a build',
         '      no configured backend completed, and nothing was verified',
@@ -583,7 +584,11 @@ async function main(): Promise<void> {
 
   // default: resolve <uri>
   const uri = command;
-  const verification = (str(flags.get('verify')) ?? 'L2') as VerificationMode;
+  const verifyArg = str(flags.get('verify')) ?? 'L2';
+  // case-normalized the way --level is, storing the canonical form
+  const verification = (
+    verifyArg.toLowerCase() === 'none' ? 'none' : verifyArg.toUpperCase()
+  ) as VerificationMode;
   if (!['none', 'L1', 'L2', 'L3'].includes(verification)) fail('--verify must be none|L1|L2|L3', 2);
 
   const resolver = new OrdResolver({

@@ -43,6 +43,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The `--timeout-ms` usage line implied one attempt per request, and
+  `--verify` refused the lowercase values `--level` accepts.** The deadline
+  bounds each transport attempt, and `EsploraBackend` retries a failing
+  request up to 4 times with backoff sleeps between, so the wall clock a
+  caller inferred from the flag could be about 4x too small plus the
+  sleeps; the usage line now says a failing request is retried up to 4
+  times, each attempt under its own deadline. The full retry policy stays
+  documented where it lives, in `backends.ts`. And `--verify l2` was
+  refused at exit 2 while `--level l3` was accepted through case
+  normalization; `--verify` now normalizes the same way and stores the
+  canonical form, and a value that is no level in any case is still
+  refused.
+
 - **The genealogy verifier accepted prev tx bytes on the terminal coinbase
   that nothing examined.** `SatGenealogyBundleJson` requires `prevTxs` on
   every hop, and the terminal coinbase's list was never read, so a bundle

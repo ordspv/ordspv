@@ -104,6 +104,22 @@ describe('misplaced value flags', () => {
   });
 });
 
+describe('--verify case', () => {
+  // --level accepts l3 through toUpperCase(); --verify refused l2 outright,
+  // two behaviours for the same kind of value
+  it('accepts a lowercase level on the resolve path', () => {
+    const r = run([ID, ...OFFLINE, '--verify', 'l2']);
+    expect(r.status).not.toBe(2);
+    expect(r.stderr).not.toMatch(/--verify must be/);
+  });
+
+  it('still refuses a value that is no level in any case', () => {
+    const r = run([ID, ...OFFLINE, '--verify', 'bogus']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--verify must be none\|L1\|L2\|L3/);
+  });
+});
+
 describe('a value flag followed by another flag', () => {
   // parseArgs reads `--max-steps --json` as boolean true, str() turns that
   // into undefined, and the command would run at the default cap the caller
