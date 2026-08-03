@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The last member of that defect: the genealogy builder checks that the
+  terminal coinbase sits at position 0 of its block.** `verifySatGenealogy`
+  refuses a bundle whose terminal coinbase is anywhere else, and
+  SPEC-VERIFICATION states it as a MUST, because a coinbase is its block's
+  first transaction and every fold is left-anchored. The position came from
+  whichever backend served the merkle proof, and a block that places the
+  coinbase elsewhere contradicts nothing else the hop carries, so the walk ran
+  to the end and the caller was told its own bundle was invalid at exit 1 with
+  the other configured backends never asked. The check sits beside the
+  coinbase hop's assembly rather than inside `assembleAnchoredHop`, which
+  anchors ordinary hops too, where a nonzero position is correct. A violation
+  is `HopConsistencyError` naming the backend, the transaction and the
+  position it served, which is one backend producing no usable answer and
+  never a refusal, so the next configured member leads the next attempt.
 - **Three more verifier checks now have a build-time equivalent, so one
   backend's wrong answer costs one attempt.** The same defect at three sites:
   a check the verifier runs had nothing behind it in either builder, so a

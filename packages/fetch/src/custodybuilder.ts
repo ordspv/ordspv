@@ -152,8 +152,9 @@ export class CustodyBuildError extends Error {}
  * header is under the configured proof-of-work floor or fails the target it
  * states itself, a block info field that disagrees with the status or the
  * header the same backend served, a transaction whose stripped serialization
- * is 64 bytes, a custody hop the backend places before the hop it spends, and
- * a reveal whose envelope does not bind to its commit output. The loops record
+ * is 64 bytes, a custody hop the backend places before the hop it spends, a
+ * terminal coinbase the backend places anywhere but position 0 of its block,
+ * and a reveal whose envelope does not bind to its commit output. The loops record
  * any of them as that attempt producing no usable answer and lead the next
  * attempt with another backend. It never reaches the CLI as a refusal.
  */
@@ -341,8 +342,11 @@ export function checkTxNotAmbiguous(baseUrl: string, tx: ParsedTx, label: string
  * The rest of the parity with verification lives at the callers, because it
  * needs data this function is not given: `checkTxNotAmbiguous` on every
  * transaction a bundle will carry in a proven position, `bindRevealEnvelope`
- * on the reveal once its envelope and prev txs are in hand, and the custody
- * walk's own chain-order test on each hop it appends.
+ * on the reveal once its envelope and prev txs are in hand, the custody walk's
+ * own chain-order test on each hop it appends, and the genealogy walk's test
+ * that the terminal coinbase sits at position 0. That last one belongs to its
+ * caller because this function anchors ordinary hops too, where a nonzero
+ * position is correct.
  *
  * `powLimitBits` is the floor `checkPowLimit` applies, in the convention
  * `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables

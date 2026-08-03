@@ -392,6 +392,23 @@ export async function buildSatGenealogyBundle(
           -1,
           options.powLimitBits,
         );
+        // `verifySatGenealogy` refuses a terminal coinbase at any position
+        // other than 0, and SPEC-VERIFICATION states it as a MUST, because a
+        // coinbase is its block's first transaction and every fold is
+        // left-anchored. The position comes from whichever backend served the
+        // merkle proof, and a self-consistent block that places the coinbase
+        // elsewhere contradicts nothing else the hop carries, so the whole walk
+        // used to complete and the caller's own bundle was refused after the
+        // loop had been left, with the other members never asked. Checked here
+        // rather than in `assembleAnchoredHop`, which anchors ordinary hops
+        // where a nonzero position is correct
+        if (coinbaseHop.tx.pos !== 0) {
+          throw new HopConsistencyError(
+            `${backend.baseUrl}: placed the terminal coinbase ${tx.txid} at position ` +
+              `${coinbaseHop.tx.pos} of block ${coinbaseHop.block.hash}, and a coinbase is ` +
+              `the first transaction of its block`,
+          );
+        }
         const pos = outputSpacePosition(tx, expectVout, offset);
         // throws CustodyUnsupportedError for fee-tail positions, before the
         // caller spends anything on verification

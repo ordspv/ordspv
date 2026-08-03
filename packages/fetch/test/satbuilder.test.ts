@@ -2256,3 +2256,82 @@ describe('fetchSatIdentity on a funding step no verifier will read', () => {
     expect(res.bundle.funding).toHaveLength(2);
   });
 });
+
+/**
+ * `verifySatGenealogy` refuses a terminal coinbase at any position other than
+ * 0, and no builder checked it. The position comes from whichever backend
+ * served the merkle proof, and a block that places the coinbase elsewhere can
+ * be self-consistent in every answer the build folds, so the walk completed
+ * and the caller's own bundle was refused after the loop had been left.
+ */
+describe('fetchSatIdentity when a member places the terminal coinbase off position 0', () => {
+  it('records that member as producing no usable answer and lets the next resolve', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const honestRoutes = chainRoutes(coinbase, reveal, [commit]);
+    const honestCbHash = (honestRoutes[`${E}/tx/${coinbase.tx.txid}/status`] as {
+      block_hash: string;
+    }).block_hash;
+
+    // a block no chain could carry and no answer inside the build contradicts:
+    // the coinbase sits second, behind a filler transaction, and the status,
+    // the merkle proof, the header and the block info all agree on it
+    const filler = buildTx([{ txid: '88'.repeat(32), vout: 0 }], [{ value: 1_000n }]);
+    const badBlock = mineBlock([filler.tx, coinbase.tx]);
+    const badTxids = badBlock.txs.map((t) => t.txidLE);
+    const doctoredRoutes: Record<string, Route> = {
+      ...honestRoutes,
+      [`${E}/tx/${coinbase.tx.txid}/status`]: {
+        confirmed: true,
+        block_height: CB_HEIGHT,
+        block_hash: badBlock.blockHash,
+      },
+      [`${E}/tx/${coinbase.tx.txid}/merkle-proof`]: {
+        block_height: CB_HEIGHT,
+        merkle: buildMerkleBranch(badTxids, 1).map(internalToDisplay),
+        pos: 1,
+      },
+      [`${E}/block/${badBlock.blockHash}/header`]: badBlock.headerHex,
+      [`${E}/block/${badBlock.blockHash}`]: {
+        id: badBlock.blockHash,
+        height: CB_HEIGHT,
+        tx_count: badBlock.txCount,
+      },
+    };
+    const honest = stubFetch(honestRoutes);
+    const doctored = stubFetch(doctoredRoutes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : doctored(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(res.bundle.coinbase.tx.pos).toBe(0);
+    expect(res.bundle.coinbase.block.hash).toBe(honestCbHash);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    // the terminal hop sits inside the lead-derived span, so the class the
+    // loop records is that span's, carrying the position check's own message
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(attempts[1].cause?.message).toMatch(
+      new RegExp(`placed the terminal coinbase ${coinbase.tx.txid} at position 1`),
+    );
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+
+    // and the walk itself, driven straight against the doctored member, where
+    // no anchoring stands between the bundle and the verifier that refuses it
+    const solo = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, fetchFn, {}), {
+      powLimitBits: null,
+    });
+    await expect(solo).rejects.toThrow(HopConsistencyError);
+    await expect(solo).rejects.toThrow(/at position 1 of block/);
+  });
+});
