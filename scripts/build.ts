@@ -119,7 +119,11 @@ interface PkgJson {
   [k: string]: unknown;
 }
 
-/** publish-shaped package.json: dist exports, files whitelist, no author (pseudonymous) */
+/**
+ * publish-shaped package.json: dist exports, files whitelist, no author
+ * (pseudonymous); repository is kept, since the repo is public under the
+ * same pseudonym and the field is what links the npm page to it.
+ */
 function stagedManifest(dir: string, extra: Record<string, unknown>): void {
   const source = JSON.parse(readFileSync(join(ROOT, 'packages', dir, 'package.json'), 'utf8')) as PkgJson;
   const manifest: Record<string, unknown> = {
@@ -127,6 +131,7 @@ function stagedManifest(dir: string, extra: Record<string, unknown>): void {
     version: source.version,
     type: 'module',
     description: source.description,
+    repository: source.repository,
     license: 'ISC',
     files: ['dist'],
     sideEffects: false,

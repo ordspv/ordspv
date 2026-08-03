@@ -74,6 +74,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Staged package manifests dropped `repository`, so the published npm
+  pages would link back to nothing.** `stagedManifest` copies name,
+  version, description and dependencies into the publish-shaped manifest,
+  and its docstring names the author omission as deliberate; `repository`
+  fell out beside it with no stated reason. Every source manifest carries
+  the repository object with its per-package `directory`, and the staged
+  manifest now keeps it, because the repo is public under the same
+  pseudonym and the field is what links the npm page to the source it was
+  built from.
+
 - **A bundle missing a field one level down died as a TypeError instead of
   naming the field.** The earlier shape standard stopped at the top level
   by declaration; deleting `block.hash` from a proof bundle, `tx.hex` from
