@@ -3809,9 +3809,9 @@
   var HeaderTrustError = class extends Error {
   };
   function makeHeaderTrust(options = {}) {
-    if (options.minAgreement !== void 0 && options.minAgreement < 1) {
+    if (options.minAgreement !== void 0 && (!Number.isInteger(options.minAgreement) || options.minAgreement < 1)) {
       throw new HeaderTrustError(
-        `minAgreement ${options.minAgreement} anchors a header on no agreeing source at all; pass 1 or more, and pair 1 with checkpoints or a synced chain`
+        `minAgreement ${options.minAgreement} is not a whole number of agreeing sources; pass an integer of 1 or more, and pair 1 with checkpoints or a synced chain`
       );
     }
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
