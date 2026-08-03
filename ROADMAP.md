@@ -11,7 +11,7 @@ docs/RESEARCH.md for the full technical rationale.*
   paths (SPEC-CUSTODY.md), sat identity (SPEC-SAT.md), and a cross-chain
   embedding guide (docs/CROSS-CHAIN.md). All of it is grounded in the cited research
   synthesis (docs/RESEARCH.md).
-- Working code, 507 tests, all offline-runnable. `@ordspv/core` has the consensus
+- Working code, 508 tests, all offline-runnable. `@ordspv/core` has the consensus
   primitives, the ord-exact envelope parser, and L2/L3 proof verification.
   `@ordspv/fetch` is the verified resolver: failover backends, checkpoint and M-of-N
   header trust, delegation with dual verification, integrity pins, encoding handling.

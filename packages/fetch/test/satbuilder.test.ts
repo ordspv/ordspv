@@ -1514,6 +1514,37 @@ describe('fetchSatIdentity', () => {
       expect(e.message).toMatch(/folds to a root the header of block .* does not carry/);
     });
 
+    it('wraps a coinbase hop that disagrees with itself in the span that raised it', async () => {
+      // the terminal hop's assembly is inside the lead-derived span too, so
+      // the class the loop records there is RevealSourceError carrying the
+      // hop's own cause. Both land the attempt in noAnswer, and naming which
+      // one surfaces keeps the two rules readable together
+      const routes = chainRoutes(coinbase, reveal, [commit]);
+      const honest = stubFetch(routes);
+      const doctored = {
+        ...(routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as object),
+        block_height: CB_HEIGHT + 1,
+      };
+      const fetchFn: FetchFn = (u, init) => {
+        if (u.endsWith(`/tx/${coinbase.tx.txid}/merkle-proof`)) {
+          return Promise.resolve(
+            new Response(JSON.stringify(doctored), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          );
+        }
+        return honest(u.replace(EB, E), init);
+      };
+
+      const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+      const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+      expect(e.code).toBe('BUILD_FAILED');
+      expect(e.message).toMatch(/coinbase hop assembly failed at the leading backend/);
+      expect(e.message).toMatch(
+        new RegExp(`merkle proof for ${coinbase.tx.txid} says height ${CB_HEIGHT + 1}`),
+      );
+    });
+
     it('records the inconsistency as no usable answer beside a real refusal', async () => {
       // the three groups still account for every configured member: EB leads
       // an attempt that refuses on the chain's own shape, E leads one that
