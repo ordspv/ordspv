@@ -295,6 +295,27 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     expect(err?.message).toBe('bundle field inscriptionId is missing or not a string');
   });
 
+  it('refuses a string or absent block height, and verifies the numeric one', () => {
+    // the height reaches the verified report and the trustHeader hook; a
+    // bundle is untrusted JSON, so "height": "846000" would flow into both
+    // as a string while VerifiedInscription.height claims a number
+    const { bundle } = l2Setup();
+    (bundle.block as unknown as Record<string, unknown>).height = '846000';
+    let err: Error | undefined;
+    try {
+      verifyProofBundle(bundle, NO_POW_FLOOR);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toBe('bundle missing valid block height');
+    const absent = l2Setup().bundle;
+    delete (absent.block as unknown as Record<string, unknown>).height;
+    expect(() => verifyProofBundle(absent, NO_POW_FLOOR)).toThrow(
+      'bundle missing valid block height',
+    );
+    expect(verifyProofBundle(l2Setup().bundle, NO_POW_FLOOR).height).toBe(100);
+  });
+
   it('refuses a witness section on an L2 bundle, and verifies the same bundle without one', () => {
     const { bundle } = l2Setup();
     expect(verifyProofBundle(bundle, NO_POW_FLOOR).level).toBe('L2');

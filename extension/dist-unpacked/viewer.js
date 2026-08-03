@@ -3148,6 +3148,9 @@
     if (!Number.isInteger(bundle.block.txCount) || bundle.block.txCount < 1) {
       throw new Error("bundle missing valid txCount");
     }
+    if (!Number.isInteger(bundle.block.height) || bundle.block.height < 0) {
+      throw new Error("bundle missing valid block height");
+    }
     opts.trustHeader?.(header, bundle.block.height);
     const reveal = parseHexTx(bundle.reveal.hex, "reveal");
     if (reveal.txid !== id.txid) {

@@ -74,6 +74,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A proof bundle's block height reached the report and the `trustHeader`
+  hook unchecked.** The earlier height fix typed every height the shared
+  hop verifier reads, and `verifyProofBundle` is the one reader outside
+  that function, in a file the same round edited for other reasons; the
+  nineteenth review found it. A proof bundle with `"height": "846000"`
+  verified, the hook received a string, and `VerifiedInscription.height`
+  carried a non-number to a `--json` consumer. The proof verifier now
+  refuses a non-integer or negative height beside its txCount check,
+  before the hook runs, so all three verifiers refuse a non-integer
+  height.
+
 - **`--bundle ''` slipped the needs-a-value guard and the command exited 0
   having written nothing.** The guard refused a value flag read as boolean
   `true`, the shape parseArgs produces when the next token is another flag,
@@ -94,7 +105,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   custody hops and both genealogy endpoints in one place, and the
   chain-order comparison now runs on checked integers. The genealogy
   coinbase height was already bound tighter by the BIP34 arms, and that
-  stands; this types every other height. Separately, a bundle with
+  stands; this types every height the shared hop verifier reads. Separately, a bundle with
   `inscriptionId` absent died as a raw TypeError at exit 1, an
   internal-fault message for a defective document, the defect the witness
   section's shape check has always named. All three verifiers now refuse a

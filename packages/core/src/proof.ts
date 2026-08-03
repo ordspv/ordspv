@@ -153,6 +153,11 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   if (!Number.isInteger(bundle.block.txCount) || bundle.block.txCount < 1) {
     throw new Error('bundle missing valid txCount');
   }
+  // a bundle is untrusted JSON, so a string height would flow into the
+  // trustHeader hook and the verified report a --json consumer reads
+  if (!Number.isInteger(bundle.block.height) || bundle.block.height < 0) {
+    throw new Error('bundle missing valid block height');
+  }
   opts.trustHeader?.(header, bundle.block.height);
 
   // ---- reveal inclusion (txid tree) ----
