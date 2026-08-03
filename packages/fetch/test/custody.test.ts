@@ -814,6 +814,92 @@ describe('fetchCustody with multi-input reveals', () => {
     expect(e.message).toMatch(/folds to a root the header of block .* does not carry/);
   });
 
+  /**
+   * The same block with one byte of the coinbase's witness reserved value
+   * flipped. A txid commits to no witness byte, so the coinbase's txid, the
+   * header's merkle root and the reveal's position are all unchanged, and both
+   * of the tests the builder ran before this pass still succeed on it.
+   */
+  function flippedReservedBlock(): Uint8Array {
+    const cb = block.txs[0];
+    const reserved = cb.inputs[0].witness[0].slice();
+    reserved[0] ^= 0x01;
+    const doctored = parseTx(
+      serializeFull({
+        version: cb.version,
+        inputs: [{ ...cb.inputs[0], witness: [reserved] }],
+        outputs: cb.outputs,
+        locktime: cb.locktime,
+      }),
+    );
+    expect(doctored.txid).toBe(cb.txid);
+    return serializeBlock(hexToBytes(block.headerHex), [doctored, ...block.txs.slice(1)]);
+  }
+
+  /** a hop for the reveal, as the builder assembles it before the section */
+  function revealHop(): CustodyHopJson {
+    return {
+      block: { height: 100, hash: block.blockHash, header: block.headerHex, txCount: block.txCount },
+      tx: { hex: bytesToHex(reveal.raw), pos: 1, txidBranch: [] },
+      prevTxs: [],
+    };
+  }
+
+  it('rotates past a backend serving a rewritten witness and completes on the next', async () => {
+    const E4 = 'https://esplora4.test';
+    const r = mirror(routes(false), E, E2);
+    r[`${E}/block/${block.blockHash}/raw`] = flippedReservedBlock();
+    r[`${E2}/block/${block.blockHash}/raw`] = serializeBlock(hexToBytes(block.headerHex), block.txs);
+    r[`${E4}/block-height/100`] = block.blockHash;
+    r[`${E4}/blocks/tip/height`] = '120';
+
+    const res = await fetchCustody(id, { ...OPTS, anchorSources: [E3, E4], fetchFn: stubFetch(r) });
+    expect(res.custody.indexProof).toBe('wtxid');
+    expect(res.custody.genesis.offset).toBe(10_000n);
+  });
+
+  it('names a served block whose tx count disagrees with the hop, and rotates', async () => {
+    const extra = legacyTxOut('66'.repeat(32), 0, [{ value: 500n }]);
+    const r = routes(false);
+    r[`${E}/block/${block.blockHash}/raw`] = serializeBlock(hexToBytes(block.headerHex), [
+      ...block.txs,
+      extra,
+    ]);
+    const bad = new EsploraBackend(E, stubFetch(r));
+    const hop = revealHop();
+    // the count is named for what it is; folding a branch over three leaves
+    // against a two-leaf tree would report a branch depth instead
+    await expect(attachRevealWitnessSection([bad], reveal, hop)).rejects.toThrow(
+      /served a block of 3 transaction\(s\).*whose block info says 2/s,
+    );
+    expect(hop.witness).toBeUndefined();
+
+    const good = new EsploraBackend(E2, stubFetch(mirror(routes(true), E, E2)));
+    await attachRevealWitnessSection([bad, good], reveal, hop);
+    expect(hop.witness).toBeDefined();
+  });
+
+  it('ends at the witness-section class when every backend serves a rewritten witness', async () => {
+    const E4 = 'https://esplora4.test';
+    const flipped = flippedReservedBlock();
+    const r = mirror(routes(false), E, E2);
+    r[`${E}/block/${block.blockHash}/raw`] = flipped;
+    r[`${E2}/block/${block.blockHash}/raw`] = flipped;
+    r[`${E4}/block-height/100`] = block.blockHash;
+    r[`${E4}/blocks/tip/height`] = '120';
+
+    const p = fetchCustody(id, { ...OPTS, anchorSources: [E3, E4], fetchFn: stubFetch(r) });
+    const e = (await p.catch((x: unknown) => x)) as Error;
+    // nothing was proven and another backend may serve the honest block, which
+    // is UNPROVEN with a remedy, rather than the caller's own bundle called a
+    // forgery at exit 1
+    expect(e).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(e).not.toBeInstanceOf(CustodyError);
+    expect(e.message).toMatch(/witness commitment mismatch/);
+    expect(e.message).toMatch(new RegExp(`${E}: the witness section built from its block`));
+    expect(e.message).toMatch(new RegExp(`${E2}: the witness section built from its block`));
+  });
+
   it('names a backend that exposes no getBlockRaw as its own cause', async () => {
     const full = new EsploraBackend(E, stubFetch(routes(true)));
     // an AnchorBackend may omit getBlockRaw entirely; that is a cause too

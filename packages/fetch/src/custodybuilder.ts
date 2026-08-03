@@ -32,6 +32,10 @@ import {
   provenInputValues,
   formatSatpoint,
   verifyCustodyBundle,
+  verifyEnvelopeBinding,
+  verifyWitnessAnchoring,
+  checkPowLimit,
+  checkProofOfWork,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   SatPositionError,
@@ -253,6 +257,13 @@ export async function assembleAnchoredHop(
  * needs when the inscriber is inside its threat model: only a wtxid anchor
  * shows the witness the chain executed.
  *
+ * Each candidate section is folded against the block's own BIP-141 commitment
+ * before it is attached, through `verifyWitnessAnchoring`, the function the
+ * verifier runs on it. A backend can serve a block whose header hashes right
+ * and whose reveal sits at the right position while every witness in it has
+ * been rewritten, since a txid commits to no witness byte, and such a section
+ * is that backend's bad answer rather than a bundle to hand on.
+ *
  * A missing section is fatal at verification for a multi-input reveal, and it
  * is what the caller asked for under `'always'`, so failure is reported rather
  * than swallowed. Each backend is tried in the order the caller supplied them
@@ -294,13 +305,46 @@ export async function attachRevealWitnessSection(
         );
         continue;
       }
+      // the two tests above constrain txids and nothing else, and a txid
+      // commits to no witness byte, so every transaction in the served block
+      // can carry a rewritten witness and still pass them. The count is
+      // checked here so a disagreement is named for what it is; inside the
+      // fold it surfaces as a branch depth and names the wrong thing
+      if (block.txs.length !== hop.block.txCount) {
+        causes.push(
+          `${backend.baseUrl}: served a block of ${block.txs.length} transaction(s) for ` +
+            `${hop.block.hash}, whose block info says ${hop.block.txCount}`,
+        );
+        continue;
+      }
       const txids = block.txs.map((t) => t.txidLE);
       const wtxids = block.txs.map((t, i) => (i === 0 ? ZERO32 : t.wtxidLE));
-      hop.witness = {
+      const section = {
         coinbaseHex: bytesToHex(block.txs[0].raw),
         coinbaseTxidBranch: buildMerkleBranch(txids, 0).map(internalToDisplay),
         wtxidBranch: buildMerkleBranch(wtxids, pos).map(internalToDisplay),
       };
+      // fold the section against the block's own BIP-141 commitment before it
+      // is attached, through the function the verifier runs on it. Attaching
+      // first would put an unverifiable section into a bundle the verifier
+      // then refuses after this loop has been left, with the remaining
+      // backends never asked
+      try {
+        verifyWitnessAnchoring({
+          witness: section,
+          header: parseHeader(hexToBytes(hop.block.header.trim())),
+          txCount: hop.block.txCount,
+          reveal,
+          pos,
+        });
+      } catch (e) {
+        causes.push(
+          `${backend.baseUrl}: the witness section built from its block ${hop.block.hash} ` +
+            `does not fold against that block's own commitment: ${(e as Error).message}`,
+        );
+        continue;
+      }
+      hop.witness = section;
       return backend.baseUrl;
     } catch (e) {
       causes.push(`${backend.baseUrl}: ${(e as Error).message}`);

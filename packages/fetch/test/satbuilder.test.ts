@@ -1660,6 +1660,82 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(again.sat).toBe(SAT);
   });
 
+  /**
+   * The reveal's block with one byte of the coinbase's witness reserved value
+   * flipped. A txid commits to no witness byte, so the header hashes the same
+   * and the reveal keeps its position, and both tests the builder ran before
+   * this pass still succeed on it.
+   */
+  function flippedReservedBlock(): Uint8Array {
+    const cb = revealBlock.txs[0];
+    const reserved = cb.inputs[0].witness[0].slice();
+    reserved[0] ^= 0x01;
+    const doctored = parseTx(
+      serializeFull({
+        version: cb.version,
+        inputs: [{ ...cb.inputs[0], witness: [reserved] }],
+        outputs: cb.outputs,
+        locktime: cb.locktime,
+      }),
+    );
+    expect(doctored.txid).toBe(cb.txid);
+    return serializeBlock(hexToBytes(revealBlock.headerHex), [
+      doctored,
+      ...revealBlock.txs.slice(1),
+    ]);
+  }
+
+  it('rotates past a member serving a rewritten witness and completes on the next', async () => {
+    const rBad = routes(false);
+    rBad[`${E}/block/${revealBlock.blockHash}/raw`] = flippedReservedBlock();
+    const bad = new EsploraBackend(E, stubFetch(rBad), {});
+    const honest = stubFetch(routes(true));
+    const good = new EsploraBackend(EB, (url, init) => honest(url.replace(EB, E), init), {});
+
+    const built = await buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, {
+      witnessBackends: [bad, good],
+    });
+    expect(built.bundle.reveal.witness).toBeDefined();
+    expect(verifySatGenealogy(built.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
+    expect(verifySatGenealogy(built.bundle, NO_POW_FLOOR).sat).toBe(SAT);
+  });
+
+  it('names a served block whose tx count disagrees with the hop, and rotates', async () => {
+    const extra = buildTx([{ txid: '66'.repeat(32), vout: 0 }], [{ value: 500n }]);
+    const rBad = routes(false);
+    rBad[`${E}/block/${revealBlock.blockHash}/raw`] = serializeBlock(
+      hexToBytes(revealBlock.headerHex),
+      [...revealBlock.txs, extra.tx],
+    );
+    const bad = new EsploraBackend(E, stubFetch(rBad), {});
+    const p = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, { witnessBackends: [bad] });
+    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
+    await expect(p).rejects.toThrow(/served a block of 3 transaction\(s\).*whose block info says 2/s);
+
+    const honest = stubFetch(routes(true));
+    const good = new EsploraBackend(EB, (url, init) => honest(url.replace(EB, E), init), {});
+    const built = await buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, {
+      witnessBackends: [bad, good],
+    });
+    expect(built.bundle.reveal.witness).toBeDefined();
+  });
+
+  it('ends at the witness-section class when every member serves a rewritten witness', async () => {
+    const r = routes(false);
+    r[`${E}/block/${revealBlock.blockHash}/raw`] = flippedReservedBlock();
+    const base = stubFetch(r);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as Error;
+    expect(e).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(e).not.toBeInstanceOf(SatIdentityError);
+    expect(e.message).toMatch(/witness commitment mismatch/);
+    // the whole pool is one witness backend here, so the cause is named for
+    // the pool rather than a member, which is the wrapper's existing shape
+    expect(e.message).toMatch(/pool\(.*\): the witness section built from its block/);
+  });
+
   it('walks again on the next lead member when one names a wrong block for the reveal', async () => {
     // a member's own status names a real but WRONG block for the reveal. The
     // block it named is not the block its own merkle proof folds into, so the
