@@ -44,6 +44,7 @@ import {
   type CustodyHopJson,
   type Satpoint,
   type VerifiedCustody,
+  type Inscription,
   type ParsedTx,
 } from '@ordspv/core';
 import {
@@ -285,6 +286,39 @@ export async function assembleAnchoredHop(
 }
 
 /**
+ * Bind the reveal's envelope to txid-committed data at build time, through
+ * `verifyEnvelopeBinding`, which both verifiers run over the same three
+ * arguments. A backend serving a reveal whose witness was rewritten under a
+ * matching txid otherwise buys a whole bundle and dies at verification, after
+ * the build loop has been left and with no other backend asked.
+ *
+ * A failure is `HopConsistencyError`, recorded as that backend producing no
+ * usable answer, and the loop leads the next attempt. The reasoning lands
+ * differently from the one the ninth run applied to `SatPositionError`. At
+ * build the reveal's witness is unbound, so a binding failure cannot be
+ * attributed to the chain and the honest move is to ask another backend.
+ * `SatPositionError` needed a row per output context because a verifier raises
+ * it too, over a pointer the bundle had bound, where it means a forgery. A
+ * binding failure has no such second life here: the verifier's own binding
+ * failure already surfaces through `VERIFY_FAILED`. When every backend fails
+ * this way, no refusal was recorded, `sharedDomainRefusal` returns undefined,
+ * and the caller gets `BUILD_FAILED`, which reports INCOMPLETE, says nothing
+ * was verified and names `--esplora`.
+ */
+export function bindRevealEnvelope(
+  baseUrl: string,
+  reveal: ParsedTx,
+  inscription: Inscription,
+  prevTxs: string[],
+): void {
+  try {
+    verifyEnvelopeBinding(reveal, inscription, prevTxs, 'hop 0 (reveal)');
+  } catch (e) {
+    throw new HopConsistencyError(`${baseUrl}: ${(e as Error).message}`);
+  }
+}
+
+/**
  * Attach the reveal's wtxid proof to its hop, so the verifier can prove the
  * envelope's index through the block's BIP-141 witness commitment. The whole
  * added cost is one raw block request, the same request `buildProofBundle`
@@ -443,6 +477,7 @@ export async function buildCustodyBundle(
     inscription.input,
     options.powLimitBits,
   );
+  bindRevealEnvelope(backend.baseUrl, reveal, inscription, revealHop.prevTxs);
   // the walker has served bytes by now, and the raw-block server serves more
   const servedBaseUrls = new Set<string>([backend.baseUrl]);
   const witnessServer = await attachRevealWitnessSection(

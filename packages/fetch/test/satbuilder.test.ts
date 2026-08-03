@@ -12,6 +12,7 @@ import {
   internalToDisplay,
   parseHeader,
   parseTx,
+  tapLeafHash,
   satName,
   serializeBlock,
   serializeFull,
@@ -216,24 +217,42 @@ function routesFor(block: MinedBlock, height: number, tipHeight: number): Record
 }
 
 const SCRIPT = envelopeScript({ fields: [[1, 'text/plain']], body: ['sat'] }, { checksigPrefix: true });
-const TAP = taprootCommit(SCRIPT);
+/**
+ * An envelope ord treats as UNBOUND: tag 22 is even and unrecognized. The
+ * commit output below commits BOTH leaves, so a member serving this witness
+ * under the honest reveal's txid is choosing among leaves the inscriber
+ * committed rather than rewriting a witness the commit output never bound.
+ * Only the first is a claim a domain refusal can rest on; the second is
+ * caught by the build's own envelope binding and recorded as no usable answer.
+ */
+const UNBOUND_SCRIPT = envelopeScript(
+  { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+  { checksigPrefix: true },
+);
+const TAP = taprootCommit(SCRIPT, [tapLeafHash(UNBOUND_SCRIPT, 0xc0)]);
+const TAP_UNBOUND = taprootCommit(UNBOUND_SCRIPT, [tapLeafHash(SCRIPT, 0xc0)]);
 const WITNESS = [new Uint8Array(64).fill(7), SCRIPT, TAP.controlBlock];
+const UNBOUND_WITNESS = [new Uint8Array(64).fill(7), UNBOUND_SCRIPT, TAP_UNBOUND.controlBlock];
 
 /**
  * Envelope script carrying a pointer (tag 2, trimmed little-endian), with the
  * commit scriptPubKey the envelope input has to spend for the binding to hold.
  */
-function pointerCommit(pointer: number): { witness: Uint8Array[]; scriptPubKey: Uint8Array } {
+function pointerScript(pointer: number): Uint8Array {
   const le: number[] = [];
   let p = pointer;
   while (p > 0) {
     le.push(p & 0xff);
     p = Math.floor(p / 256);
   }
-  const script = envelopeScript(
+  return envelopeScript(
     { fields: [[1, 'text/plain'], [2, new Uint8Array(le)]], body: ['sat'] },
     { checksigPrefix: true },
   );
+}
+
+function pointerCommit(pointer: number): { witness: Uint8Array[]; scriptPubKey: Uint8Array } {
+  const script = pointerScript(pointer);
   const tap = taprootCommit(script);
   return {
     witness: [new Uint8Array(64).fill(7), script, tap.controlBlock],
@@ -432,17 +451,13 @@ describe('fetchSatIdentity', () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     // one sat more on the output, so the stripped txid differs from the id's
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 547n }],
@@ -745,6 +760,61 @@ describe('fetchSatIdentity', () => {
     ).toThrow(CoinbaseHeightUnprovenError);
   });
 
+  it('asks the next member when one serves a reveal whose tapscript is not committed', async () => {
+    // a witness the commit output never committed, served under the honest
+    // reveal's txid. Nothing in the txid binds it, so it is that member's word
+    // and the next member leads, rather than a whole walk and a bundle the
+    // verifier refuses at exit 1 with nobody else asked
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const rogue = envelopeScript({ fields: [[1, 'text/plain']], body: ['rogue'] }, { checksigPrefix: true });
+    const poisoned = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), rogue, taprootCommit(rogue).controlBlock],
+        },
+      ],
+      [{ value: 546n }],
+    );
+    expect(poisoned.tx.txid).toBe(reveal.tx.txid);
+
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const base = stubFetch({ ...routes, [`${E}/tx/${reveal.tx.txid}/hex`]: poisoned.hex });
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : base(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    // the binding sits inside the lead-derived span, so the loop records the
+    // span's class carrying the binding failure
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(attempts[1].cause?.message).toMatch(/taproot commitment/);
+
+    // with every member serving it, nothing was refused and nothing verified
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn: (url, init) => base(url.replace(EB, E), init),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*taproot commitment`));
+    expect(e.message).toMatch(new RegExp(`${EB}: .*taproot commitment`));
+  });
+
   it('asks the next backend when one serves an unbound envelope', async () => {
     // the reveal's envelope is read out of a witness the txid does not commit
     // to, so E can serve an unbound one and keep the txid. EB serves the
@@ -753,16 +823,12 @@ describe('fetchSatIdentity', () => {
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
     // tag 22 is even and unrecognized, which is what makes ord call it unbound
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 546n }],
@@ -791,13 +857,35 @@ describe('fetchSatIdentity', () => {
     // word. A position outside the reveal's sat space used to end the whole
     // build at attempt 0, with every other member unasked
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
-    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    // both leaves are committed by the same output, so the poisoned witness
+    // binds and what the member chose is which committed leaf to serve
+    const outsideScript = pointerScript(40_000);
+    const tapHonest = taprootCommit(SCRIPT, [tapLeafHash(outsideScript, 0xc0)]);
+    const tapOutside = taprootCommit(outsideScript, [tapLeafHash(SCRIPT, 0xc0)]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: tapHonest.scriptPubKey }],
+    );
     // outputs past the inputs, so a pointer can be inside output space and
     // still past every sat the reveal spends
-    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 50_000n }]);
-    const outside = pointerCommit(40_000);
+    const reveal = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), SCRIPT, tapHonest.controlBlock],
+        },
+      ],
+      [{ value: 50_000n }],
+    );
     const poisoned = segwitTx(
-      [{ txid: commit.tx.txid, vout: 0, witness: outside.witness }],
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), outsideScript, tapOutside.controlBlock],
+        },
+      ],
       [{ value: 50_000n }],
     );
     expect(poisoned.tx.txid).toBe(reveal.tx.txid);
@@ -838,16 +926,12 @@ describe('fetchSatIdentity', () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 546n }],
@@ -884,16 +968,12 @@ describe('fetchSatIdentity', () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 546n }],
@@ -940,16 +1020,12 @@ describe('fetchSatIdentity', () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 546n }],
@@ -1001,16 +1077,12 @@ describe('fetchSatIdentity', () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
-    const evenField = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
     const poisoned = segwitTx(
       [
         {
           txid: commit.tx.txid,
           vout: 0,
-          witness: [new Uint8Array(64).fill(7), evenField, taprootCommit(evenField).controlBlock],
+          witness: UNBOUND_WITNESS,
         },
       ],
       [{ value: 546n }],

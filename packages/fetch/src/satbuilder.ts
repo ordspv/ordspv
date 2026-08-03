@@ -50,6 +50,7 @@ import {
 import {
   assembleAnchoredHop,
   attachRevealWitnessSection,
+  bindRevealEnvelope,
   HopConsistencyError,
   type AnchorBackend,
   type WitnessSectionMode,
@@ -303,6 +304,7 @@ export async function buildSatGenealogyBundle(
       revealHop,
       options.witnessSection,
     );
+    bindRevealEnvelope(lead?.baseUrl ?? backend.baseUrl, reveal, inscription, revealHop.prevTxs);
     const revealValues = provenInputValues(reveal, revealHop.prevTxs, k);
     if (inscription.unboundByEvenField || revealValues[k] === 0n) {
       throw new CustodyUnsupportedError(

@@ -8,6 +8,7 @@ import {
   internalToDisplay,
   parseTx,
   serializeBlock,
+  tapLeafHash,
   serializeFull,
   verifyCustodyBundle,
   type CustodyHopJson,
@@ -638,18 +639,45 @@ describe('fetchCustody build-time domain refusals', () => {
   }
 
   /** an envelope ord treats as UNBOUND: tag 22 is even and unrecognized */
-  function evenFieldWitness(): Uint8Array[] {
-    const script = envelopeScript(
-      { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
-      { checksigPrefix: true },
-    );
-    return [new Uint8Array(64).fill(7), script, taprootCommit(script).controlBlock];
+  const UNBOUND_SCRIPT = envelopeScript(
+    { fields: [[1, 'text/plain'], [22, new Uint8Array([1])]], body: ['unbound'] },
+    { checksigPrefix: true },
+  );
+  const HONEST_SCRIPT = envelopeScript(
+    { fields: [[1, 'text/plain']], body: ['custody'] },
+    { checksigPrefix: true },
+  );
+
+  /**
+   * A reveal whose commit output committed TWO leaves, the honest envelope and
+   * the unbound one. Both witnesses satisfy BIP-341 against the same
+   * scriptPubKey, so the build's own envelope binding accepts either and what
+   * a backend serving the unbound leaf is doing is choosing among leaves the
+   * inscriber committed. That is the shape a domain refusal can rest on; a
+   * witness the commit output never committed is caught at build now and
+   * recorded as no usable answer instead.
+   */
+  function twoLeafSetup() {
+    const honest = taprootCommit(HONEST_SCRIPT, [tapLeafHash(UNBOUND_SCRIPT, 0xc0)]);
+    const unbound = taprootCommit(UNBOUND_SCRIPT, [tapLeafHash(HONEST_SCRIPT, 0xc0)]);
+    const commit = commitTx(honest.scriptPubKey);
+    const reveal = revealTx([{ script: HONEST_SCRIPT, controlBlock: honest.controlBlock }], {
+      prevTxidLE: commit.txidLE,
+      vout: 0,
+    });
+    return {
+      commit,
+      reveal,
+      block: buildBlock([reveal]),
+      id: `${reveal.txid}i0`,
+      unboundWitness: [new Uint8Array(64).fill(7), UNBOUND_SCRIPT, unbound.controlBlock],
+    };
   }
 
   /** E serves a reveal whose envelope is unbound; E2 serves the honest one */
   function poisonedSetup() {
-    const { commit, reveal, block, id } = inscriptionSetup();
-    const poisoned = withWitness(reveal, evenFieldWitness());
+    const { commit, reveal, block, id, unboundWitness } = twoLeafSetup();
+    const poisoned = withWitness(reveal, unboundWitness);
     expect(poisoned.txid).toBe(reveal.txid);
     let routes = routesForBlock(block, 100, 120);
     routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
@@ -661,6 +689,57 @@ describe('fetchCustody build-time domain refusals', () => {
     routes[`${E}/tx/${reveal.txid}/hex`] = bytesToHex(poisoned.raw);
     return { commit, reveal, block, id, routes };
   }
+
+  /**
+   * A witness the commit output never committed: an envelope under a taptree
+   * of its own, served under the honest reveal's txid. Nothing in the txid
+   * binds it, so the honest move is to ask another backend rather than to
+   * build a whole bundle and let the verifier call it a forgery at exit 1.
+   */
+  function uncommittedWitness(): Uint8Array[] {
+    const rogue = envelopeScript(
+      { fields: [[1, 'text/plain']], body: ['rogue'] },
+      { checksigPrefix: true },
+    );
+    return [new Uint8Array(64).fill(7), rogue, taprootCommit(rogue).controlBlock];
+  }
+
+  it('asks the next backend when one serves a reveal whose tapscript is not committed', async () => {
+    const { commit, reveal, block, id } = twoLeafSetup();
+    const poisoned = withWitness(reveal, uncommittedWitness());
+    expect(poisoned.txid).toBe(reveal.txid);
+    let routes = routesForBlock(block, 100, 120);
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    routes[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    routes[`${E4}/block-height/100`] = block.blockHash;
+    routes[`${E4}/blocks/tip/height`] = '120';
+    routes = mirror(routes, E, E2);
+    routes[`${E}/tx/${reveal.txid}/hex`] = bytesToHex(poisoned.raw);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...OPTS,
+      ...ANCHORS,
+      fetchFn: stubFetch(routes),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    expect(attempts[1].cause?.message).toMatch(/taproot commitment/);
+
+    // and with every backend serving it, nothing was refused and nothing was
+    // verified: INCOMPLETE with each cause named, rather than exit 1 on a
+    // bundle the caller's own build produced
+    routes[`${E2}/tx/${reveal.txid}/hex`] = bytesToHex(poisoned.raw);
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(routes) });
+    const e = (await p.catch((x: unknown) => x)) as CustodyError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*taproot commitment`));
+    expect(e.message).toMatch(new RegExp(`${E2}: .*taproot commitment`));
+  });
 
   it('asks the next backend when one serves an unbound envelope', async () => {
     const { reveal, id, routes } = poisonedSetup();
@@ -706,12 +785,12 @@ describe('fetchCustody build-time domain refusals', () => {
     // both backends land in noAnswer and no CustodyUnsupportedError is ever
     // recorded, where before the check the build called the refusal
     // unanimous, the exit 4 upgrade
-    const { commit, reveal, block, id } = inscriptionSetup();
+    const { commit, reveal, block, id, unboundWitness } = twoLeafSetup();
     // one sat more on the output, so the stripped txid differs from the id's
     const poisoned = parseTx(
       serializeFull({
         version: reveal.version,
-        inputs: reveal.inputs.map((inp, n) => (n === 0 ? { ...inp, witness: evenFieldWitness() } : inp)),
+        inputs: reveal.inputs.map((inp, n) => (n === 0 ? { ...inp, witness: unboundWitness } : inp)),
         outputs: reveal.outputs.map((o, n) => (n === 0 ? { ...o, value: o.value + 1n } : o)),
         locktime: reveal.locktime,
       }),
