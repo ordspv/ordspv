@@ -262,11 +262,6 @@ export class EsploraBackend {
   async getBlockRaw(blockHash: string): Promise<Uint8Array> {
     return (await this.get(`/block/${blockHash}/raw`, this.limits.blockMaxBytes)).bytes;
   }
-
-  /** txid of the transaction at index `pos` in the block (esplora /txid endpoint) */
-  getTxidAtBlockIndex(blockHash: string, pos: number): Promise<string> {
-    return this.text(`/block/${blockHash}/txid/${pos}`, this.limits.smallMaxBytes);
-  }
 }
 
 /**
@@ -366,10 +361,6 @@ export class PooledEsploraBackend {
 
   getBlockRaw(blockHash: string): Promise<Uint8Array> {
     return this.run(`raw block ${blockHash}`, (m) => m.getBlockRaw(blockHash));
-  }
-
-  getTxidAtBlockIndex(blockHash: string, pos: number): Promise<string> {
-    return this.run(`txid ${blockHash}#${pos}`, (m) => m.getTxidAtBlockIndex(blockHash, pos));
   }
 }
 

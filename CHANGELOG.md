@@ -64,6 +64,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   swallow no value, and `proof` and `parse` already emit JSON, so its intent
   is satisfied rather than ignored.
 
+### Removed
+
+- **`getTxidAtBlockIndex` on both backend classes.** Nothing in any package
+  source, test, script, or the extension source called it; the only
+  reference outside the built artifacts was the pooled variant delegating
+  to the plain one. It is unpublished code with no user, so it goes with no
+  replacement and no deprecation period.
+
 ### Fixed
 
 - **`--bundle ''` slipped the needs-a-value guard and the command exited 0

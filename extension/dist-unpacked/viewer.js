@@ -3689,10 +3689,6 @@
     async getBlockRaw(blockHash) {
       return (await this.get(`/block/${blockHash}/raw`, this.limits.blockMaxBytes)).bytes;
     }
-    /** txid of the transaction at index `pos` in the block (esplora /txid endpoint) */
-    getTxidAtBlockIndex(blockHash, pos) {
-      return this.text(`/block/${blockHash}/txid/${pos}`, this.limits.smallMaxBytes);
-    }
   };
   var OrdBackend = class {
     constructor(baseUrl, fetchFn = (u, i) => fetch(u, i), limits = {}) {
