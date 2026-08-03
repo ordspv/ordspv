@@ -129,6 +129,38 @@ const VALUE_FLAGS = new Set([
 ]);
 
 /**
+ * Which commands consult each value flag. A value flag on any other command
+ * is a misplaced flag, refused the way --max-hops outside custody always was:
+ * a flag that changes nothing must not be accepted in silence, because the
+ * caller believes it changed something. Unknown flags are refused for the
+ * same reason, and for a sharper one: parseArgs reads the token after any
+ * --name as its value, so a typo like --bundel swallows the filename it was
+ * meant to receive and the command runs with neither.
+ */
+const FLAG_COMMANDS: Record<string, readonly string[]> = {
+  'esplora': ['proof', 'custody', 'sat', 'resolve'],
+  'gateway': ['resolve'],
+  'anchor-source': ['custody', 'sat', 'resolve'],
+  'witness-section': ['custody', 'sat'],
+  'level': ['proof'],
+  'max-hops': ['custody'],
+  'max-steps': ['sat', 'verify'],
+  'timeout-ms': ['proof', 'custody', 'sat', 'resolve'],
+  'bundle': ['custody', 'sat'],
+  'verify': ['resolve'],
+  'out': ['resolve'],
+};
+
+/** Commands with their own dispatch arm; any other first token resolves. */
+const COMMANDS = new Set(['parse', 'proof', 'custody', 'sat', 'verify']);
+
+/** A table row as the refusal names it: `the sat and verify commands`. */
+function flagCommandList(row: readonly string[]): string {
+  if (row.length === 1) return `the ${row[0]} command`;
+  return `the ${row.slice(0, -1).join(', ')} and ${row[row.length - 1]} commands`;
+}
+
+/**
  * The one transport limit with a flag. The whole-request deadline bounds the
  * caller's own patience against the caller's own link, and the caller is the
  * only one who knows what that link can do. The byte caps and the retry
@@ -248,26 +280,18 @@ async function main(): Promise<void> {
 
   const [command] = positional;
 
-  // the flag bounds the custody walk alone: verify reads no custody cap and
-  // sat has --max-steps, so anywhere else it is a misplaced flag, refused the
-  // way verify refuses --max-steps on a bundle it does not bound
-  if (flags.has('max-hops') && command !== 'custody') {
-    fail('--max-hops applies to the custody command', 2);
-  }
-
-  // the deadline bounds requests, and parse and verify open no socket: parse
-  // reads its argument and verify reads a file, so the flag there is
-  // misplaced the same way and refused the same way
-  if (flags.has('timeout-ms') && (command === 'parse' || command === 'verify')) {
-    fail('--timeout-ms applies to the network commands: proof, custody, sat and resolve', 2);
-  }
-
-  // sat bounds its funding walk with the flag and verify bounds its read of
-  // a genealogy bundle under it; custody has --max-hops for its own walk,
-  // and proof, resolve and parse follow no funding walk at all, so the flag
-  // bounds nothing there and is refused rather than ignored
-  if (flags.has('max-steps') && command !== 'sat' && command !== 'verify') {
-    fail('--max-steps applies to the sat and verify commands', 2);
+  // the misplacement table, enforced once the command is known. --json is
+  // exempt everywhere: it is boolean, so it can swallow no value, and proof
+  // and parse already emit JSON, so its intent is satisfied rather than
+  // ignored. --help was consumed by the usage branch above
+  const flagCommand = COMMANDS.has(command) ? command : 'resolve';
+  for (const name of flags.keys()) {
+    if (name === 'json' || name === 'help') continue;
+    const row = FLAG_COMMANDS[name];
+    if (row === undefined) fail(`unknown flag --${name}`, 2);
+    if (!row.includes(flagCommand)) {
+      fail(`--${name} applies to ${flagCommandList(row)}`, 2);
+    }
   }
 
   if (command === 'parse') {

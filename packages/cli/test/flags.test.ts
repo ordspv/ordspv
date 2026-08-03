@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -31,13 +33,13 @@ describe('--timeout-ms', () => {
   it('is refused on parse, which opens no socket', () => {
     const r = run(['parse', ID, '--timeout-ms', '5000']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/--timeout-ms applies to the network commands/);
+    expect(r.stderr).toMatch(/--timeout-ms applies to the proof, custody, sat and resolve commands/);
   });
 
   it('is refused on verify, which reads a file', () => {
     const r = run(['verify', join(EXT, `${ID}.bundle.json`), '--timeout-ms', '5000']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/--timeout-ms applies to the network commands/);
+    expect(r.stderr).toMatch(/--timeout-ms applies to the proof, custody, sat and resolve commands/);
   });
 
   // validated the way --max-hops and --max-steps are; the failure fires while
@@ -57,6 +59,48 @@ describe('--max-steps placement', () => {
     const r = run(['custody', ID, ...OFFLINE, '--max-steps', '10']);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/--max-steps applies to the sat and verify commands/);
+  });
+});
+
+describe('unknown flags', () => {
+  it('is refused rather than accepted in silence', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--frobnicate', 'x']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/unknown flag --frobnicate/);
+  });
+
+  // parseArgs reads the token after any --name as its value, so a typo like
+  // --bundel swallows the filename it was meant to receive and the walk used
+  // to run with neither the flag nor the file
+  it('refuses the typo shape before any walk runs', () => {
+    const out = join(mkdtempSync(join(tmpdir(), 'ord-flags-')), 'out.json');
+    const r = run(['sat', ID, ...OFFLINE, '--bundel', out]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/unknown flag --bundel/);
+    expect(existsSync(out)).toBe(false);
+  });
+});
+
+describe('misplaced value flags', () => {
+  // the review's script-chaining failure: proof piped through --out exits 0
+  // today with the file silently absent
+  it('refuses --out on proof', () => {
+    const r = run(['proof', ID, ...OFFLINE, '--out', 'f.json']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--out applies to the resolve command/);
+  });
+
+  it('refuses --level on custody', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--level', 'L3']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--level applies to the proof command/);
+  });
+
+  // the guard the table replaced already refused this; the row keeps it
+  it('refuses --max-hops on sat', () => {
+    const r = run(['sat', ID, ...OFFLINE, '--max-hops', '5']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--max-hops applies to the custody command/);
   });
 });
 

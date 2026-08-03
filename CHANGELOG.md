@@ -23,6 +23,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them from the command line in response to a backend's behaviour weakens a
   safety property in the wrong direction.
 
+### Changed
+
+- **The CLI refuses unknown flags and misplaced value flags at exit 2
+  instead of accepting them in silence.** `parseArgs` reads the token after
+  any `--name` as its value, so a typo like `--bundel out.json` swallowed
+  the filename and `sat` ran the whole walk and wrote nothing; `proof <id>
+  --out f.json` exited 0 with the expected file silently absent. One
+  declarative table now records which commands consult each value flag, and
+  a flag outside its row is refused the way `--max-hops` outside `custody`
+  always was. The misplacements that move from exit 0 to exit 2: `--esplora`
+  on `parse` or `verify`, `--gateway` off `resolve`, `--anchor-source` on
+  `proof`, `--level` off `proof`, `--verify` off `resolve`,
+  `--witness-section` off `custody` and `sat`, `--out` off `resolve`, and
+  `--bundle` off `custody` and `sat`. Unknown flags are refused from the
+  same place. `--json` stays accepted everywhere: it is boolean, so it can
+  swallow no value, and `proof` and `parse` already emit JSON, so its intent
+  is satisfied rather than ignored.
+
 ### Fixed
 
 - **The genealogy verifier accepted prev tx bytes on the terminal coinbase
