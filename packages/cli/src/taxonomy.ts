@@ -118,7 +118,8 @@ export interface RefusalRow {
 
 const WITNESS_SECTION_NOTE =
   `No backend that answered served the raw block the reveal's witness section is ` +
-  `built from; retrying later may serve it, and --esplora names other backends.`;
+  `built from; retrying later may serve it, --esplora names other backends, and ` +
+  `--timeout-ms N raises the per-request deadline.`;
 
 export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
   CustodyUnsupportedError: {

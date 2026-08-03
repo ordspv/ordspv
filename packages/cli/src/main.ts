@@ -24,6 +24,7 @@ import {
   fetchSatIdentity,
   normalizeBaseUrl,
   type AttemptInfo,
+  type BackendLimitsInit,
   type VerificationMode,
   type WitnessSectionMode,
 } from '@ordspv/fetch';
@@ -42,7 +43,7 @@ import {
  *   ord-resolve parse <uri>                    normalize/inspect a URI
  *
  * Options: --esplora url[,url]   --gateway url[,url]   --anchor-source url[,url]
- *          --witness-section always|when-needed
+ *          --witness-section always|when-needed   --timeout-ms N
  */
 
 interface Args {
@@ -109,6 +110,28 @@ function str(v: string | boolean | undefined): string | undefined {
 }
 
 /**
+ * The one transport limit with a flag. The whole-request deadline bounds the
+ * caller's own patience against the caller's own link, and the caller is the
+ * only one who knows what that link can do. The byte caps and the retry
+ * policy stay library-only, deliberately: they bound what an untrusted
+ * backend can spend of the caller's memory and time, and raising them from
+ * the command line in response to a backend's behaviour weakens a safety
+ * property in the wrong direction.
+ */
+function timeoutLimits(
+  flags: Map<string, string | boolean>,
+  command: string,
+): BackendLimitsInit | undefined {
+  const arg = str(flags.get('timeout-ms'));
+  if (arg === undefined) return undefined;
+  const timeoutMs = Number(arg);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    fail(`${command}: --timeout-ms must be a positive integer`, 2);
+  }
+  return { timeoutMs };
+}
+
+/**
  * Say that the build moved to another backend, and why.
  *
  * A rotation can cost a whole second walk, which on a deep ancestry is
@@ -172,6 +195,8 @@ async function main(): Promise<void> {
         '      verifier reads a genealogy bundle under',
         '  --max-hops N    confirmed transfers the custody walk follows (custody only;',
         '      the custody verifier reads no cap)',
+        '  --timeout-ms N  whole-request deadline in milliseconds for each backend',
+        '      request (proof, custody, sat, resolve; parse and verify open no socket)',
         'exit codes: 0 ok  1 INVALID  2 usage  3 UNPROVEN  4 OUT OF SCOPE',
         '  5 INCOMPLETE   1 is a document that failed verification, 5 is a build',
         '      no configured backend completed, and nothing was verified',
@@ -205,6 +230,13 @@ async function main(): Promise<void> {
     fail('--max-hops applies to the custody command', 2);
   }
 
+  // the deadline bounds requests, and parse and verify open no socket: parse
+  // reads its argument and verify reads a file, so the flag there is
+  // misplaced the same way and refused the same way
+  if (flags.has('timeout-ms') && (command === 'parse' || command === 'verify')) {
+    fail('--timeout-ms applies to the network commands: proof, custody, sat and resolve', 2);
+  }
+
   if (command === 'parse') {
     const uri = positional[1] ?? fail('parse: missing uri', 2);
     console.log(JSON.stringify(parseOrdUri(uri), (_, v) => (v instanceof Uint8Array ? undefined : v), 2));
@@ -216,10 +248,11 @@ async function main(): Promise<void> {
     const level = (str(flags.get('level'))?.toUpperCase() ?? 'L2') as 'L2' | 'L3';
     if (level !== 'L2' && level !== 'L3') fail('proof: --level must be L2 or L3', 2);
     const parsed = parseOrdUri(idArg);
+    const limits = timeoutLimits(flags, 'proof');
     const errors: string[] = [];
     for (const base of esplora) {
       try {
-        const bundle = await buildProofBundle(new EsploraBackend(base), parsed.id, level);
+        const bundle = await buildProofBundle(new EsploraBackend(base, undefined, limits), parsed.id, level);
         console.log(JSON.stringify(bundle, null, 2));
         return;
       } catch (e) {
@@ -246,6 +279,7 @@ async function main(): Promise<void> {
         anchorSources,
         maxHops,
         witnessSection,
+        limits: timeoutLimits(flags, 'custody'),
         onAttempt: reportAttempt,
       });
       if (flags.has('json')) {
@@ -303,6 +337,7 @@ async function main(): Promise<void> {
         anchorSources,
         maxSteps,
         witnessSection,
+        limits: timeoutLimits(flags, 'sat'),
         onAttempt: reportAttempt,
       });
       const bundleOut = str(flags.get('bundle'));
@@ -494,7 +529,13 @@ async function main(): Promise<void> {
   const verification = (str(flags.get('verify')) ?? 'L2') as VerificationMode;
   if (!['none', 'L1', 'L2', 'L3'].includes(verification)) fail('--verify must be none|L1|L2|L3', 2);
 
-  const resolver = new OrdResolver({ esplora, anchorSources, ordGateways: gateways, verification });
+  const resolver = new OrdResolver({
+    esplora,
+    anchorSources,
+    ordGateways: gateways,
+    verification,
+    limits: timeoutLimits(flags, 'resolve'),
+  });
   try {
     const result = await resolver.resolve(uri);
     // the same residual `verify` prints, on the command that renders bytes:

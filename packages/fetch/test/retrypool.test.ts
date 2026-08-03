@@ -160,6 +160,15 @@ describe('EsploraBackend retry', () => {
     expect(limits.retry.baseDelayMs).toBe(DEFAULT_BACKEND_LIMITS.retry.baseDelayMs);
     expect(limits.timeoutMs).toBe(DEFAULT_BACKEND_LIMITS.timeoutMs);
   });
+
+  // the deadline the CLI's --timeout-ms supplies: `{ timeoutMs: N }` is what
+  // every command hands its backends, and this is the seam where it lands
+  it('resolveLimits carries a caller deadline and leaves every other bound alone', () => {
+    const limits = resolveLimits({ timeoutMs: 5 });
+    expect(limits.timeoutMs).toBe(5);
+    expect(limits.blockMaxBytes).toBe(DEFAULT_BACKEND_LIMITS.blockMaxBytes);
+    expect(limits.retry).toEqual(DEFAULT_BACKEND_LIMITS.retry);
+  });
 });
 
 describe('parseRetryAfter', () => {

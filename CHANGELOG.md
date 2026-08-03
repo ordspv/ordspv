@@ -5,6 +5,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--timeout-ms N`: the transport deadline now has a way in from the
+  command line.** `BackendLimits` carries a 20-second whole-request deadline,
+  and `fetchCustody`, `fetchSatIdentity` and `OrdResolver` have accepted a
+  `limits` option since the caps existed, but the CLI never constructed one,
+  so on a slow link `custody <id> --witness-section always` fetched a raw
+  block of up to about 4 MB against a deadline the link could not meet, and
+  the remedies on the resulting note did not address the deadline. The flag
+  applies to every command that opens a socket, which is `proof`, `custody`,
+  `sat` and `resolve`; it is validated the way the other numeric flags are
+  and refused at exit 2 on `parse` and `verify`, which read no network. The
+  witness-section note now names it beside `--esplora`. The byte caps and
+  the retry policy stay library-only, deliberately: they bound what an
+  untrusted backend can spend of the caller's memory and time, and raising
+  them from the command line in response to a backend's behaviour weakens a
+  safety property in the wrong direction.
+
 ### Fixed
 
 - **A custody path longer than 64 confirmed transfers reported INCOMPLETE at
