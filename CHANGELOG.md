@@ -29,6 +29,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from a reveal witness the txid does not commit to, so one backend can reach
   this refusal where another does not. SPEC-SAT's start-position section now
   states the fee rule itself.
+- **The member that served the raw block behind the reveal's witness section
+  can no longer vote to anchor the bundle's headers.** A regression from the
+  previous round, which handed the section loop the rotated members by name
+  instead of the pool. That was the right fix for the reason it gave, and it
+  moved the raw block request outside the pool: `PooledEsploraBackend`'s
+  `getBlockRaw` goes through `run`, which records every member that serves
+  bytes into `usedBaseUrls`, so the recording moved with the request and the
+  raw-block server landed in neither term of the barred set. The build now
+  reports the section's server by name, `witnessServer` on
+  `BuildSatGenealogyResult`, the shape the custody builder already uses, and
+  `fetchSatIdentity` adds it to the sources barred from attesting.
+  Reachability is narrow: it needs a member that serves the raw block while
+  contributing nothing the pool recorded, on a reveal that gets a witness
+  section at all. Narrow is not the same as closed, and both specs state the
+  bar as a MUST NOT.
 
 ### Changed
 

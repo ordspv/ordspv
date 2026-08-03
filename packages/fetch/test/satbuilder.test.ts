@@ -2105,6 +2105,45 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(e.message).not.toMatch(/each configured backend led an attempt/);
   });
 
+  it('bars a member that served only the raw block from attesting', async () => {
+    // the section loop asks the members directly rather than through the
+    // pool, so a member whose only contribution is the raw block behind the
+    // witness section never enters usedBaseUrls. Offered as an anchor source
+    // it could then vote on a header it helped fill in; it is barred by
+    // name, through the witnessServer the build reports
+    const eOnly = stubFetch(routes(false));
+    const honest = stubFetch(routes(true));
+    const fetchFn: FetchFn = (url, init) => {
+      if (url.startsWith(EB)) {
+        // EB serves the raw block and the attester endpoints, nothing else
+        if (
+          url.endsWith(`/block/${revealBlock.blockHash}/raw`) ||
+          url.includes('/block-height/') ||
+          url.includes('/tip/')
+        ) {
+          return honest(url.replace(EB, E), init);
+        }
+        return Promise.resolve(new Response('raw blocks only', { status: 404 }));
+      }
+      return eOnly(url, init);
+    };
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      anchorSources: [EB, E2, E3],
+      fetchFn,
+      limits: { retry: { maxAttempts: 1 } },
+    });
+    expect(res.bundle.reveal.witness).toBeDefined();
+    expect(res.identity.sat).toBe(SAT);
+    // E2 and E3 only: the member that served the raw block cannot vote on
+    // the headers of the bundle it helped build
+    expect(res.headerTrust.reveal.sourcesQueried).toBe(2);
+    expect(res.headerTrust.coinbase.sourcesQueried).toBe(2);
+    expect(res.headerTrust.reveal.builderIsSource).toBe(true);
+  });
+
   it('emits no witness section for a single-input reveal even with the block available', async () => {
     const commit1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal1 = segwitTx([{ txid: commit1.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);

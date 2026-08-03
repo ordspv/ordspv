@@ -136,6 +136,16 @@ export const DEFAULT_MAX_STEPS = 4096;
 
 export interface BuildSatGenealogyResult {
   bundle: SatGenealogyBundleJson;
+  /**
+   * Base URL of the witness backend whose raw block built the reveal's
+   * witness section, when one was attached. The section loop asks the
+   * members directly rather than through the pool, so the server is not in
+   * `usedBaseUrls`; a caller assembling header trust adds it to
+   * `proofSources` by name, the way `custodybuilder` does, because a server
+   * vouching for a header it helped build is a self-vote whichever bytes it
+   * contributed.
+   */
+  witnessServer?: string;
 }
 
 /**
@@ -263,7 +273,7 @@ export async function buildSatGenealogyBundle(
   // the lead-derived span opens here and closes after the start position is
   // resolved into the reveal's prev-tx coverage; the funding walk below runs
   // outside it against bytes a txid already fixes
-  const { reveal, revealHop, start } = await leadDerived('reveal hop assembly', async () => {
+  const { reveal, revealHop, start, witnessServer } = await leadDerived('reveal hop assembly', async () => {
     // the inscription id commits to the reveal's stripped hash, and every
     // funding step checks the served bytes against the txid its input names.
     // The root of that chain gets the same check here: bytes hashing to some
@@ -309,7 +319,7 @@ export async function buildSatGenealogyBundle(
       k,
       options.powLimitBits,
     );
-    await attachRevealWitnessSection(
+    const witnessServer = await attachRevealWitnessSection(
       options.witnessBackends ?? [backend],
       reveal,
       revealHop,
@@ -354,7 +364,7 @@ export async function buildSatGenealogyBundle(
     // txs for inputs beyond k; the verifier accepts and uses them
     const start = await prevTxsCovering(backend, reveal, position, revealHop.prevTxs);
     revealHop.prevTxs = start.prevTxs;
-    return { reveal, revealHop, start };
+    return { reveal, revealHop, start, witnessServer };
   });
 
   const funding: GenealogyStepJson[] = [];
@@ -478,6 +488,7 @@ export async function buildSatGenealogyBundle(
           coinbase: coinbaseHop,
           claimedSat: sat.toString(),
         },
+        witnessServer,
       };
     }
 
@@ -761,8 +772,14 @@ export async function fetchSatIdentity(
       // the successful attempt's lead is barred by name: the deciding
       // requests do not pass through the pool, so a lead that served only
       // them would never enter usedBaseUrls and could vote on the bytes it
-      // chose
-      proofSources: new Set([...pool.usedBaseUrls, leadBaseUrl]),
+      // chose. The raw-block server is barred by name for the same reason:
+      // the section loop asks the members directly rather than through the
+      // pool, which is what keeps usedBaseUrls from covering it
+      proofSources: new Set([
+        ...pool.usedBaseUrls,
+        leadBaseUrl,
+        ...(built.witnessServer !== undefined ? [built.witnessServer] : []),
+      ]),
       powLimitBits: options.powLimitBits,
     });
 
