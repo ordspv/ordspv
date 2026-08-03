@@ -458,8 +458,8 @@ export async function buildSatGenealogyBundle(
         // that way must not rest on a lie the build could have caught. Checked
         // here rather than in `assembleAnchoredHop` or `checkHopAnswers`, which
         // both run on ordinary hops where there is no coinbase and no height
-        // push. What stays open is the sub-boundary arm, where no push exists
-        // and only the caller's `trustHeader` hook binds hash to height
+        // push. What stays open is the sub-boundary arm, where no push is
+        // required and only the caller's `trustHeader` hook binds hash to height
         if (coinbaseHop.block.height >= BIP34_ENFORCED_FROM) {
           const embedded = bip34Height(tx);
           if (embedded === undefined) {

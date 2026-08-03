@@ -155,7 +155,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that does not parse and a push that disagrees, each as `HopConsistencyError`
   naming the backend, the transaction and the heights, which is one backend
   producing no usable answer and never a refusal, so the next configured
-  member leads the next attempt. Below block 230,000 no push exists, and that
+  member leads the next attempt. Below block 230,000 no push is required, and that
   arm still rests on the caller's `trustHeader` hook after the loop.
 - **Another member of that defect: the genealogy builder checks that the
   terminal coinbase sits at position 0 of its block.** `verifySatGenealogy`
