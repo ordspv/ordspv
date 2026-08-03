@@ -58,6 +58,20 @@ describe('ord-resolve verify notes', { timeout: 60_000 }, () => {
     expect(note).not.toMatch(/envelope numbering/);
   });
 
+  it('says a proof bundle anchored no header, the way the other two kinds do', () => {
+    // the field is how a scripted caller reads it, and it used to be
+    // undefined on one of the three kinds `verify` accepts
+    const r = spawnSync('npx', ['tsx', MAIN, 'verify', join(EXT, `${SINGLE_INPUT}.bundle.json`)], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(parsed.kind).toBe('proof');
+    expect(parsed.anchored).toBe(false);
+    expect(r.stderr).toMatch(/no header in this bundle was anchored/);
+  });
+
   it('adds the numbering warning when the reveal spends several inputs', () => {
     const res = verify(MULTI_INPUT);
     expect(res.ok).toBe(true);

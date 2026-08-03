@@ -449,12 +449,17 @@ async function main(): Promise<void> {
             contentType: result.inscription.contentType,
             contentLength: result.inscription.body?.length ?? 0,
             l2Assurances: result.l2,
+            // the same field the other two kinds carry, so a scripted caller
+            // reads one answer for every bundle `verify` accepts rather than
+            // undefined on one of the three
+            anchored: false,
             note: proofNote.join('; '),
           },
           null,
           2,
         ),
       );
+      console.error(BUNDLE_HEADERS_UNANCHORED);
       return;
     } catch (e) {
       // four refusals are not claims of forgery: a bundle that cannot prove
