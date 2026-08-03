@@ -407,9 +407,13 @@ export async function buildSatGenealogyBundle(
       // the coinbase bytes themselves are bound by the anchoring the
       // verifier re-checks, and none of them moves a domain decision
       const { coinbaseHop, sat } = await leadDerived('coinbase hop assembly', async () => {
+        // as on the reveal shim: no single name is right for every check
+        // `checkHopAnswers` runs on this hop, so the name is the attempt, the
+        // lead that served the status leading the pool that served the rest
+        const attemptName = lead ? `${lead.baseUrl} leading ${backend.baseUrl}` : backend.baseUrl;
         const coinbaseAnchor: AnchorBackend = lead
           ? {
-              baseUrl: backend.baseUrl,
+              baseUrl: attemptName,
               getTxHex: (t) => backend.getTxHex(t),
               getTxStatus: (t) => leadOnly(`coinbase status ${t}`, (m) => m.getTxStatus(t)),
               getMerkleProof: (t) => backend.getMerkleProof(t),
@@ -460,14 +464,14 @@ export async function buildSatGenealogyBundle(
           const embedded = bip34Height(tx);
           if (embedded === undefined) {
             throw new HopConsistencyError(
-              `${backend.baseUrl}: served the terminal coinbase ${tx.txid} at height ` +
+              `${attemptName}: served the terminal coinbase ${tx.txid} at height ` +
                 `${coinbaseHop.block.height}, at or above the BIP34 boundary ` +
                 `${BIP34_ENFORCED_FROM}, and its scriptSig carries no parseable height push`,
             );
           }
           if (embedded !== coinbaseHop.block.height) {
             throw new HopConsistencyError(
-              `${backend.baseUrl}: served the terminal coinbase ${tx.txid} at height ` +
+              `${attemptName}: served the terminal coinbase ${tx.txid} at height ` +
                 `${coinbaseHop.block.height}, and the coinbase's own BIP34 push says ` +
                 `${embedded}`,
             );

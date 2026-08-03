@@ -2708,6 +2708,103 @@ describe('fetchSatIdentity when a member serves a height the coinbase contradict
     await expect(solo).rejects.toThrow(/at height 700001, and the coinbase's own BIP34 push says 700000/);
   });
 
+  it('names the lead and the pool together on a coinbase hop mismatch', async () => {
+    // the coinbase shim's status is lead-only while the merkle proof, the
+    // header and the block info stay pooled, so no single name is right for
+    // every check the hop folds through; the name is the attempt. Here the
+    // lead's status alone claims 700001, the pooled proof says 700000, and
+    // the mismatch used to be attributed to the pool alone
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const honestRoutes = chainRoutes(coinbase, reveal, [commit]);
+    const cbStatus = honestRoutes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
+    const doctoredRoutes: Record<string, Route> = {
+      ...honestRoutes,
+      [`${E}/tx/${coinbase.tx.txid}/status`]: {
+        confirmed: true,
+        block_height: CB_HEIGHT + 1,
+        block_hash: cbStatus.block_hash,
+      },
+    };
+    const honest = stubFetch(honestRoutes);
+    const doctored = stubFetch(doctoredRoutes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : doctored(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(attempts[1].cause?.message).toMatch(
+      /merkle proof for .* says height 700000, its status says height 700001/,
+    );
+    expect(attempts[1].cause?.message).toContain(`${E} leading pool(${E}, ${EB})`);
+  });
+
+  it('names the lead and the pool together on a BIP34 mismatch', async () => {
+    // the same consistent 700001 lie the test above this describe drives,
+    // asserted on the name: the height in the message is the lead's served
+    // status, so the message names the attempt rather than the pool alone
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const honestRoutes = chainRoutes(coinbase, reveal, [commit]);
+    const cbStatus = honestRoutes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
+    const cbProof = honestRoutes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as {
+      merkle: string[];
+      pos: number;
+    };
+    const lie = CB_HEIGHT + 1;
+    const doctoredRoutes: Record<string, Route> = {
+      ...honestRoutes,
+      [`${E}/tx/${coinbase.tx.txid}/status`]: {
+        confirmed: true,
+        block_height: lie,
+        block_hash: cbStatus.block_hash,
+      },
+      [`${E}/tx/${coinbase.tx.txid}/merkle-proof`]: {
+        block_height: lie,
+        merkle: cbProof.merkle,
+        pos: cbProof.pos,
+      },
+      [`${E}/block/${cbStatus.block_hash}`]: {
+        id: cbStatus.block_hash,
+        height: lie,
+        tx_count: 1,
+      },
+    };
+    const honest = stubFetch(honestRoutes);
+    const doctored = stubFetch(doctoredRoutes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : doctored(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(attempts[1].cause?.message).toMatch(
+      /at height 700001, and the coinbase's own BIP34 push says 700000/,
+    );
+    expect(attempts[1].cause?.message).toContain(`${E} leading pool(${E}, ${EB})`);
+  });
+
   it('rotates on a coinbase at or above the boundary whose height push does not parse', async () => {
     // a single 0x51 is a valid script and not a valid height push, so
     // `bip34Height` returns undefined and the verifier's first arm refuses
