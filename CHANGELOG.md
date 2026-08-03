@@ -112,6 +112,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through the `trustHeader` hook. Every other note in both tables was swept
   for the same defect, a named flag the producing path cannot reach or whose
   change cannot change the outcome, and no other note fails the test.
+- **Two flag mistakes the CLI accepted in silence.** `--max-hops` outside
+  `custody` has been a usage error since the flag existed, and its mirror
+  image was not: `custody <id> --max-steps 10` exited 0 having ignored the
+  flag, since only `sat` and `verify` consult it. The same guard now covers
+  `--max-steps`. Separately, a value flag followed by another flag was read
+  as boolean `true`, which downstream code treats as the flag being absent,
+  so `sat <id> --max-steps --json` ran at the default cap the caller
+  believed they had raised, and `custody <id> --witness-section --json` ran
+  at `when-needed`, changing what the build fetches; both exited 0 and
+  neither said anything. The parser now refuses any value flag left without
+  a value, at exit 2 with `--<flag> needs a value`. Unknown flags stay
+  accepted, deliberately: rejecting them can break a caller passing a flag
+  an older version ignored, which is a larger behaviour change than this
+  round covers.
 
 ### Changed
 

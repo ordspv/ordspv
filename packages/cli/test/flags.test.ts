@@ -48,3 +48,33 @@ describe('--timeout-ms', () => {
     expect(r.stderr).toMatch(/custody: --timeout-ms must be a positive integer/);
   });
 });
+
+describe('--max-steps placement', () => {
+  // sat bounds its funding walk with it and verify bounds its read of a
+  // genealogy bundle; custody bounds nothing with it, and the mirror-image
+  // mistake, --max-hops outside custody, is already refused at exit 2
+  it('is refused on custody instead of being silently ignored', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--max-steps', '10']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--max-steps applies to the sat and verify commands/);
+  });
+});
+
+describe('a value flag followed by another flag', () => {
+  // parseArgs reads `--max-steps --json` as boolean true, str() turns that
+  // into undefined, and the command would run at the default cap the caller
+  // believed they had raised
+  it('refuses --max-steps with its value swallowed', () => {
+    const r = run(['sat', ID, ...OFFLINE, '--max-steps', '--json']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--max-steps needs a value/);
+  });
+
+  // the same silent default changes what the build fetches: a bare
+  // --witness-section falls through to when-needed
+  it('refuses --witness-section with its value swallowed', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--witness-section', '--json']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--witness-section needs a value/);
+  });
+});

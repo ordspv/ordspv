@@ -110,6 +110,25 @@ function str(v: string | boolean | undefined): string | undefined {
 }
 
 /**
+ * Flags that carry a value. `parseArgs` cannot tell `--max-steps --json` from a
+ * boolean flag, so a value flag left without one would otherwise fall through
+ * to its default and run silently at a setting the caller did not ask for.
+ */
+const VALUE_FLAGS = new Set([
+  'esplora',
+  'gateway',
+  'anchor-source',
+  'witness-section',
+  'level',
+  'max-hops',
+  'max-steps',
+  'timeout-ms',
+  'bundle',
+  'verify',
+  'out',
+]);
+
+/**
  * The one transport limit with a flag. The whole-request deadline bounds the
  * caller's own patience against the caller's own link, and the caller is the
  * only one who knows what that link can do. The byte caps and the retry
@@ -206,6 +225,12 @@ async function main(): Promise<void> {
     process.exit(positional.length === 0 ? 2 : 0);
   }
 
+  // refuse a value flag that swallowed no value before any default can stand
+  // in for what the caller left out
+  for (const name of VALUE_FLAGS) {
+    if (flags.get(name) === true) fail(`--${name} needs a value`, 2);
+  }
+
   // canonical form on the way in, so a case variant of a serving backend
   // cannot be handed to anchoring as though it were a separate operator
   const esplora = (str(flags.get('esplora'))?.split(',') ?? DEFAULT_ESPLORA).map(normalizeBaseUrl);
@@ -235,6 +260,14 @@ async function main(): Promise<void> {
   // misplaced the same way and refused the same way
   if (flags.has('timeout-ms') && (command === 'parse' || command === 'verify')) {
     fail('--timeout-ms applies to the network commands: proof, custody, sat and resolve', 2);
+  }
+
+  // sat bounds its funding walk with the flag and verify bounds its read of
+  // a genealogy bundle under it; custody has --max-hops for its own walk,
+  // and proof, resolve and parse follow no funding walk at all, so the flag
+  // bounds nothing there and is refused rather than ignored
+  if (flags.has('max-steps') && command !== 'sat' && command !== 'verify') {
+    fail('--max-steps applies to the sat and verify commands', 2);
   }
 
   if (command === 'parse') {
