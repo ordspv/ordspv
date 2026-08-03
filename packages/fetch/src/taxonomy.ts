@@ -60,11 +60,11 @@ export class WitnessSectionUnavailableError extends Error {
 export type WrapperCode = 'BUILD_FAILED' | 'VERIFY_FAILED' | 'HEADER_TRUST';
 
 /**
- * The refusal classes the CLI maps to an exit code. `SatPositionError` is
- * deliberately not here: raised by a verifier it means the bundle's own bound
- * pointer does not land in the output sat space, which is a forgery and
- * reports invalid through the generic path, and the build loops rotate on it
- * by name beside the predicate below.
+ * The refusal classes whose build-time facts the loops read. `SatPositionError`
+ * is deliberately not here, because both loops rotate on it by name beside the
+ * predicate below rather than through it. It does carry a CLI row of its own,
+ * which the CLI keys on a union of this one plus that name: what a class
+ * asserts is a presentation question, and this table answers a different one.
  */
 export type RefusalClassName =
   | 'CustodyUnsupportedError'

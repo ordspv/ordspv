@@ -52,13 +52,34 @@ describe('refusal taxonomy coverage', () => {
   it('binds each row to the class its key names, in both tables', () => {
     for (const [name, row] of Object.entries(REFUSAL_TABLE)) {
       expect(row.ctor.name).toBe(name);
-      // the CLI row and the fetch facts row describe one class
-      expect(REFUSAL_CLASS_FACTS[name as keyof typeof REFUSAL_CLASS_FACTS].ctor).toBe(row.ctor);
+      // the CLI row and the fetch facts row describe one class, for every
+      // class that carries build-time facts at all
+      const facts = REFUSAL_CLASS_FACTS[name as keyof typeof REFUSAL_CLASS_FACTS];
+      if (facts) expect(facts.ctor).toBe(row.ctor);
     }
+    // the one presentation-only row: both loops rotate on it by name rather
+    // than through the predicate, so it carries no build-time facts row
+    expect(REFUSAL_TABLE.SatPositionError.ctor).toBe(SatPositionError);
+    expect(REFUSAL_CLASS_FACTS).not.toHaveProperty('SatPositionError');
     for (const entry of EXCLUDED_ERRORS) {
       // an excluded class must not also have a row
       expect(Object.values(REFUSAL_TABLE).map((r) => r.ctor)).not.toContain(entry.ctor);
     }
+  });
+
+  it('gives every row a category in both output contexts', () => {
+    for (const row of Object.values(REFUSAL_TABLE)) {
+      for (const context of ['verify', 'live'] as const) {
+        expect(Object.keys(CATEGORY_EXIT_CODES)).toContain(row.category[context]);
+      }
+    }
+    // the one class whose category depends on which phase raised it: a
+    // verifier reads a bundle that bound its own pointer, a build loop reads
+    // one out of a witness nothing has bound
+    expect(REFUSAL_TABLE.SatPositionError.category).toEqual({
+      verify: 'INVALID',
+      live: 'UNPROVEN',
+    });
   });
 
   it('maps each category to the exit code the CLI documents', () => {
@@ -80,6 +101,7 @@ describe('refusal taxonomy coverage', () => {
     expect(REFUSAL_TABLE.SatStepLimitError.note.live).toMatch(/--max-steps/);
     expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.live).toMatch(/--anchor-source/);
     expect(REFUSAL_TABLE.WitnessSectionUnavailableError.note.live).toMatch(/--esplora/);
+    expect(REFUSAL_TABLE.SatPositionError.note.live).toMatch(/--esplora/);
     const buildFailed = WRAPPER_TABLE.BUILD_FAILED;
     if (buildFailed.category !== 'INVALID') expect(buildFailed.note).toMatch(/--esplora/);
     const headerTrust = WRAPPER_TABLE.HEADER_TRUST;

@@ -85,11 +85,14 @@ function refusalPrefix(category: RefusalCategory, context: RefusalContext, comma
  * row's note is the remedy sentence for the reporting context, and the
  * wrapper errors go through the second table keyed on their code string.
  *
- * How far a refusal reaches decides between a row's two categories. A build
- * loop marks the refusal it rethrows with `unanimous`, and a refusal that
- * only the backends that answered stand behind reports `nonUnanimousCategory`
- * and carries the partial-answer sentence. A missing marker, which is every
- * refusal a verifier raises, counts as unanimous and reports `category`.
+ * The reporting context decides which category a row asserts, since a class a
+ * verifier raises about a bound document can mean something else when a build
+ * loop raises it about a witness nothing has bound. How far a live refusal
+ * reaches decides between that category and `nonUnanimousCategory`: a build
+ * loop marks the refusal it rethrows with `unanimous`, and a refusal that only
+ * the backends that answered stand behind carries the partial-answer sentence.
+ * A missing marker, which is every refusal a verifier raises, reports the
+ * context's own category.
  *
  * Returns undefined for everything else, the wrapper VERIFY_FAILED code
  * included: a document that failed verification is the caller's own invalid
@@ -100,16 +103,21 @@ export function refusalReport(
   context: RefusalContext,
   command = '',
 ): RefusalReport | undefined {
-  const unanimous = (e as { unanimous?: boolean }).unanimous !== false;
+  // how far a refusal reached is a build-loop fact, so the weaker reading
+  // applies in the live context alone: `sharedDomainRefusal` writes the marker
+  // and a refusal a verifier raised never carries one
+  const partial = context === 'live' && (e as { unanimous?: boolean }).unanimous === false;
+  const unanimous = !partial;
   let category: RefusalCategory | undefined;
   let note: string | undefined;
   for (const row of Object.values(REFUSAL_TABLE)) {
     if (e instanceof row.ctor) {
-      category = unanimous ? row.category : row.nonUnanimousCategory;
+      // the context decides which category the class asserts, since the same
+      // class can refuse a document in one phase and one server's word in
+      // another
+      category = partial ? row.nonUnanimousCategory : row.category[context];
       note =
-        !unanimous && row.nonUnanimousNote !== undefined
-          ? row.nonUnanimousNote
-          : row.note[context];
+        partial && row.nonUnanimousNote !== undefined ? row.nonUnanimousNote : row.note[context];
       break;
     }
   }

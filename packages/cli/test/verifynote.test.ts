@@ -8,6 +8,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatPositionError,
   SatStepLimitError,
   hexToBytes,
   parseTx,
@@ -457,6 +458,38 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
         error: 'WitnessSectionUnavailableError',
       });
     }
+  });
+
+  it('reports a build-time position refusal as UNPROVEN and a verifier-raised one as INVALID', () => {
+    // the phase decides what the class means. A build loop read the pointer
+    // and the envelope input out of a served reveal witness, which the id's
+    // txid does not commit to, so exit 1 said a document had failed
+    // verification when nothing had been verified at all
+    for (const unanimous of [true, false]) {
+      const e = Object.assign(new SatPositionError('position 5000 beyond the input sats'), {
+        unanimous,
+      });
+      const live = refusalReport(e, 'live', 'sat');
+      expect(live?.code).toBe(3);
+      expect(live?.message).toMatch(/^sat UNPROVEN: position 5000 beyond the input sats\./);
+      expect(live?.note).toMatch(/txid does not commit to/);
+      expect(live?.note).toMatch(/--esplora names others/);
+      // the remedy reaches the scripted caller too, which read no note at all
+      expect(JSON.parse(refusalJson(e, live))).toEqual({
+        ok: false,
+        error: 'SatPositionError',
+        message: 'position 5000 beyond the input sats',
+        note: expect.stringMatching(/txid does not commit to/),
+      });
+    }
+
+    // a verifier raises it about a bundle whose pointer the bundle itself
+    // bound, which is a forgery and keeps exit 1
+    const forged = new SatPositionError('offset 9 outside output 0 value 5');
+    const asVerify = refusalReport(forged, 'verify');
+    expect(asVerify?.code).toBe(1);
+    expect(asVerify?.message).toMatch(/^bundle INVALID: offset 9 outside output 0 value 5\./);
+    expect(asVerify?.note).toMatch(/document contradicts itself/);
   });
 
   it('carries the partial-answer sentence on every non-unanimous class', () => {

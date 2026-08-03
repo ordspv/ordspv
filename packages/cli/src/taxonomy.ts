@@ -11,14 +11,18 @@
  * `@ordspv/fetch`, so a class or a wrapper code added there without a row
  * here fails to compile, which is the point of the table.
  *
- * A class's category holds when the refusal is proven: raised by a verifier,
- * or reached by every configured backend of a build with at least two. A
- * build-time refusal short of that strength carries `unanimous: false`
- * (`SharedRefusalError` in `@ordspv/fetch`) and reports
- * `nonUnanimousCategory` instead, which differs from `category` only for
- * `CustodyUnsupportedError`: out of scope is a claim about the chain, and on
- * the word of the backends that answered the build cannot make it, so the
- * refusal drops to unproven.
+ * A class's category is keyed by output context, because the same class can
+ * assert different things depending on which phase raised it. A verifier reads
+ * a bundle that has already bound its witness, so what it refuses is a
+ * property of the document. A build loop reads a served reveal witness that
+ * nothing has bound, so what it refuses may be one server's word. Only
+ * `SatPositionError` differs between the two today, and keying the field by
+ * context rather than special-casing that class keeps the missing-row compile
+ * error the tables exist for.
+ *
+ * Within the live context, a build-time refusal short of every configured
+ * backend carries `unanimous: false` (`SharedRefusalError` in `@ordspv/fetch`)
+ * and reports `nonUnanimousCategory` instead.
  */
 
 import {
@@ -73,12 +77,27 @@ export const CATEGORY_EXIT_CODES: Record<RefusalCategory, number> = {
 
 type ErrorClass = abstract new (...args: never[]) => Error;
 
+/**
+ * The classes the reporter maps. Every class whose build-time facts the loops
+ * read is here through `RefusalClassName`, so a class added to that union
+ * without a row fails to compile. `SatPositionError` is added on top: it
+ * carries no build-time facts row, since both loops rotate on it by name
+ * rather than through the predicate, and it still needs a category and a
+ * remedy in both contexts.
+ */
+export type ReportedRefusalName = RefusalClassName | 'SatPositionError';
+
 export interface RefusalRow {
   /** the class itself, so the reporter tests with instanceof against the table */
   ctor: ErrorClass;
-  /** what the class asserts when the refusal is proven */
-  category: 'UNPROVEN' | 'OUT OF SCOPE';
-  /** what it asserts when a build reports it short of every configured backend */
+  /** what the class asserts in each output context when the refusal is proven */
+  category: Record<RefusalContext, RefusalCategory>;
+  /**
+   * What it asserts when a build reports it short of every configured backend.
+   * It applies in the live context alone, because the `unanimous` marker is
+   * written by `sharedDomainRefusal` in the build loops and a refusal a
+   * verifier raised never carries one.
+   */
   nonUnanimousCategory: 'UNPROVEN' | 'OUT OF SCOPE';
   /**
    * The remedy sentence per output context. It names the flag that changes
@@ -98,10 +117,10 @@ const WITNESS_SECTION_NOTE =
   `No backend that answered served the raw block the reveal's witness section is ` +
   `built from; retrying later may serve it, and --esplora names other backends.`;
 
-export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
+export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
   CustodyUnsupportedError: {
     ctor: CustodyUnsupportedError,
-    category: 'OUT OF SCOPE',
+    category: { verify: 'OUT OF SCOPE', live: 'OUT OF SCOPE' },
     // out of scope says the path really does leave what v1 proves, which is
     // a statement about the chain; on the strength of the backends that
     // answered it is a claim the build cannot make
@@ -116,7 +135,7 @@ export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
   },
   EnvelopeIndexUnprovenError: {
     ctor: EnvelopeIndexUnprovenError,
-    category: 'UNPROVEN',
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
     nonUnanimousCategory: 'UNPROVEN',
     note: {
       verify:
@@ -129,7 +148,7 @@ export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
   },
   CoinbaseHeightUnprovenError: {
     ctor: CoinbaseHeightUnprovenError,
-    category: 'UNPROVEN',
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
     nonUnanimousCategory: 'UNPROVEN',
     note: {
       verify:
@@ -143,7 +162,7 @@ export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
   },
   SatStepLimitError: {
     ctor: SatStepLimitError,
-    category: 'UNPROVEN',
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
     nonUnanimousCategory: 'UNPROVEN',
     note: {
       verify: `The bundle is deeper than the verifier's cap; --max-steps N raises it.`,
@@ -152,9 +171,32 @@ export const REFUSAL_TABLE: Record<RefusalClassName, RefusalRow> = {
   },
   WitnessSectionUnavailableError: {
     ctor: WitnessSectionUnavailableError,
-    category: 'UNPROVEN',
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
     nonUnanimousCategory: 'UNPROVEN',
     note: { verify: WITNESS_SECTION_NOTE, live: WITNESS_SECTION_NOTE },
+  },
+  SatPositionError: {
+    ctor: SatPositionError,
+    // the phase decides what the class means. A verifier reads a pointer the
+    // bundle's own witness section or single input already bound, so a
+    // position outside the output sat space is a document contradicting
+    // itself. A build loop reads the pointer and the envelope input out of a
+    // served reveal witness, and the root txid check proves only that the
+    // reveal hex hashes to the id's txid, which commits to no witness byte.
+    // Only a wtxid anchor binds those, and the build has none at the point
+    // this is raised, so live it is unproven and stays unproven however many
+    // backends read the same unbound witness
+    category: { verify: 'INVALID', live: 'UNPROVEN' },
+    nonUnanimousCategory: 'UNPROVEN',
+    note: {
+      verify:
+        `The bundle's own bound pointer does not land in the output sat space, so the ` +
+        `document contradicts itself.`,
+      live:
+        `The position comes from a pointer and an envelope input read out of a reveal ` +
+        `witness the inscription id's txid does not commit to; another backend may serve ` +
+        `a reveal that binds them, and --esplora names others.`,
+    },
   },
 };
 
@@ -194,13 +236,6 @@ export const WRAPPER_ERRORS: readonly ErrorClass[] = [CustodyError, SatIdentityE
  * never reaches the CLI is a test failure rather than a silent gap.
  */
 export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = [
-  {
-    ctor: SatPositionError,
-    reason:
-      `raised by a verifier it means the bundle's own bound pointer does not land in ` +
-      `the output sat space, a forgery, reported invalid at exit 1; the build loops ` +
-      `rotate on it by name, beside the taxonomy predicate`,
-  },
   {
     ctor: GalleryEncodingError,
     reason: `a gallery document that violates its own encoding is a defective document, invalid`,
