@@ -7,7 +7,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **The last member of that defect: the genealogy builder checks that the
+- **The last member of that defect: the genealogy builder checks the terminal
+  coinbase's height against the coinbase's own BIP34 push.** From block
+  230,000 on a coinbase states its height in its scriptSig, and
+  `verifySatGenealogy` binds the claimed height to that push. No builder read
+  it, so a backend that served one wrong height across its status, its merkle
+  proof and its block info moved the subsidy boundary, numbered the sat wrong
+  by that block's subsidy, and the caller was told its own bundle was invalid
+  at exit 1 with the other configured backends never asked. The build holds
+  the coinbase's bytes, pinned by the txid the funding chain already names,
+  and it holds the height the leading backend served, so the comparison needs
+  no view of the chain beyond the bundle. It sits above `coinbaseSatAt`,
+  which reads the served height to decide the subsidy boundary, because a
+  wrong height there can turn an honest output position into a fee-tail case
+  and raise `CustodyUnsupportedError`, a refusal recorded under the backend's
+  own name. Both arms the verifier distinguishes are raised separately, a push
+  that does not parse and a push that disagrees, each as `HopConsistencyError`
+  naming the backend, the transaction and the heights, which is one backend
+  producing no usable answer and never a refusal, so the next configured
+  member leads the next attempt. Below block 230,000 no push exists, and that
+  arm still rests on the caller's `trustHeader` hook after the loop.
+- **Another member of that defect: the genealogy builder checks that the
   terminal coinbase sits at position 0 of its block.** `verifySatGenealogy`
   refuses a bundle whose terminal coinbase is anywhere else, and
   SPEC-VERIFICATION states it as a MUST, because a coinbase is its block's

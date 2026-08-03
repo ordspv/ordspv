@@ -145,9 +145,15 @@ function bip34ScriptSig(height: number): Uint8Array {
   return new Uint8Array([bytes.length, ...bytes]);
 }
 
-/** A coinbase claiming `height` (BIP34) and paying `outputs`. */
-function coinbaseTx(height: number, outputs: OutSpec[]): Chained {
-  return buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig: bip34ScriptSig(height) }], outputs);
+/**
+ * A coinbase claiming `height` (BIP34) and paying `outputs`. `scriptSig`
+ * overrides the height push, for the coinbase whose push does not parse.
+ */
+function coinbaseTx(height: number, outputs: OutSpec[], scriptSig?: Uint8Array): Chained {
+  return buildTx(
+    [{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig: scriptSig ?? bip34ScriptSig(height) }],
+    outputs,
+  );
 }
 
 /** A segwit transaction; input 0 carries the reveal witness stack. */
@@ -701,17 +707,25 @@ describe('fetchSatIdentity', () => {
     await expect(p).rejects.toThrow(/fee sats in block 700000/);
   });
 
-  it('reports a coinbase whose BIP34 height contradicts the bundle as VERIFY_FAILED', async () => {
-    // the builder trusts the status endpoint for the height; the verifier does
-    // not, and the coinbase itself says otherwise
+  it('refuses at build a coinbase whose BIP34 push contradicts the served height', async () => {
+    // the build reads the coinbase's own height push and compares it against
+    // the height the member served, so the walk stops at the member instead of
+    // completing and handing the caller a bundle its own verifier refuses
     const coinbase = coinbaseTx(CB_HEIGHT + 1, [{ value: SUBSIDY + 50_000n }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
     const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
     const routes = chainRoutes(coinbase, reveal, [commit]);
 
     const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
-    await expect(p).rejects.toThrow(SatIdentityError);
-    await expect(p).rejects.toThrow(/BIP34 height 700001 contradicts claimed height 700000/);
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(
+      new RegExp(
+        `served the terminal coinbase ${coinbase.tx.txid} at height 700000, and the ` +
+          `coinbase's own BIP34 push says 700001`,
+      ),
+    );
   });
 
   it('carries the anchor attestation into a sub-BIP34 coinbase height', async () => {
@@ -1276,7 +1290,7 @@ describe('fetchSatIdentity', () => {
     // After the fix the request is lead-only: E lands in noAnswer with its own
     // transport cause, EB's attempt decides on its own answers, and the
     // refusal is one server's word
-    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const coinbase = coinbaseTx(900_000, [{ value: SUBSIDY }]);
     const commit = buildTx(
       [{ txid: coinbase.tx.txid, vout: 0 }],
       [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
@@ -1287,14 +1301,13 @@ describe('fetchSatIdentity', () => {
     const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
     // the hop is folded against itself at build time now, so a height only the
-    // status carries is caught as that member contradicting itself. The
-    // doctored height therefore reaches the merkle proof and the block info
-    // too, which are the pooled requests every member here answers the same
-    // way. That is the shape of the limit the build cannot close: a member
-    // whose answers all agree on a wrong height is indistinguishable from an
-    // honest one inside the build, and only hash-at-height anchoring or the
-    // BIP34 push settles it. What the test is about is unchanged: one member's
-    // own answer decides the subsidy boundary inside the attempt it leads
+    // status carries is caught as that member contradicting itself, and the
+    // build reads the coinbase's own BIP34 push, so a height the coinbase
+    // bytes contradict is caught as well. The served height therefore reaches
+    // the merkle proof and the block info too, and the coinbase above claims
+    // 900,000 in its own scriptSig, which leaves the answer standing for the
+    // reason the test is about: one member's own answer decides the subsidy
+    // boundary inside the attempt it leads
     (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
       900_000;
     (routes[`${E}/block/${st.block_hash}`] as { height: number }).height = 900_000;
@@ -1383,7 +1396,7 @@ describe('fetchSatIdentity', () => {
     // and EC each serve the doctored height themselves. Two refusals and one
     // no-answer account for all three, so the refusal is reported over them
     // and stays short of unanimity
-    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const coinbase = coinbaseTx(900_000, [{ value: SUBSIDY }]);
     const commit = buildTx(
       [{ txid: coinbase.tx.txid, vout: 0 }],
       [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
@@ -1394,14 +1407,13 @@ describe('fetchSatIdentity', () => {
     const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
     // the hop is folded against itself at build time now, so a height only the
-    // status carries is caught as that member contradicting itself. The
-    // doctored height therefore reaches the merkle proof and the block info
-    // too, which are the pooled requests every member here answers the same
-    // way. That is the shape of the limit the build cannot close: a member
-    // whose answers all agree on a wrong height is indistinguishable from an
-    // honest one inside the build, and only hash-at-height anchoring or the
-    // BIP34 push settles it. What the test is about is unchanged: one member's
-    // own answer decides the subsidy boundary inside the attempt it leads
+    // status carries is caught as that member contradicting itself, and the
+    // build reads the coinbase's own BIP34 push, so a height the coinbase
+    // bytes contradict is caught as well. The served height therefore reaches
+    // the merkle proof and the block info too, and the coinbase above claims
+    // 900,000 in its own scriptSig, which leaves the answer standing for the
+    // reason the test is about: one member's own answer decides the subsidy
+    // boundary inside the attempt it leads
     (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
       900_000;
     (routes[`${E}/block/${st.block_hash}`] as { height: number }).height = 900_000;
@@ -2333,5 +2345,134 @@ describe('fetchSatIdentity when a member places the terminal coinbase off positi
     });
     await expect(solo).rejects.toThrow(HopConsistencyError);
     await expect(solo).rejects.toThrow(/at position 1 of block/);
+  });
+});
+
+/**
+ * `verifySatGenealogy` binds the terminal coinbase's claimed height to the
+ * coinbase's own BIP34 push, and no builder read that push. The build holds
+ * the coinbase bytes and the height the lead served, so the comparison needs
+ * no outside view of the chain, and without it a member's wrong height moved
+ * the subsidy boundary and numbered the sat wrong before the verifier refused
+ * the caller's own bundle.
+ */
+describe('fetchSatIdentity when a member serves a height the coinbase contradicts', () => {
+  it('records that member as producing no usable answer and lets the next resolve', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const honestRoutes = chainRoutes(coinbase, reveal, [commit]);
+    const cbStatus = honestRoutes[`${E}/tx/${coinbase.tx.txid}/status`] as {
+      block_hash: string;
+    };
+    const cbProof = honestRoutes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as {
+      merkle: string[];
+      pos: number;
+    };
+
+    // one member states height 700001 for the block that mined the sat, and
+    // states it in every answer the build folds: the status, the merkle proof
+    // and the block info agree, so nothing inside the hop contradicts it
+    const lie = CB_HEIGHT + 1;
+    const doctoredRoutes: Record<string, Route> = {
+      ...honestRoutes,
+      [`${E}/tx/${coinbase.tx.txid}/status`]: {
+        confirmed: true,
+        block_height: lie,
+        block_hash: cbStatus.block_hash,
+      },
+      [`${E}/tx/${coinbase.tx.txid}/merkle-proof`]: {
+        block_height: lie,
+        merkle: cbProof.merkle,
+        pos: cbProof.pos,
+      },
+      [`${E}/block/${cbStatus.block_hash}`]: {
+        id: cbStatus.block_hash,
+        height: lie,
+        tx_count: 1,
+      },
+    };
+    const honest = stubFetch(honestRoutes);
+    const doctored = stubFetch(doctoredRoutes);
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? honest(url.replace(EB, E), init) : doctored(url, init);
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+    expect(res.identity.coinbaseHeight).toBe(CB_HEIGHT);
+    expect(res.bundle.coinbase.block.height).toBe(CB_HEIGHT);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    // the terminal hop sits inside the lead-derived span, so the class the
+    // loop records is that span's, carrying the height check's own message
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(attempts[1].cause?.message).toMatch(
+      new RegExp(
+        `served the terminal coinbase ${coinbase.tx.txid} at height 700001, and the ` +
+          `coinbase's own BIP34 push says 700000`,
+      ),
+    );
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+
+    // and the walk itself, driven straight against the doctored member, where
+    // no anchoring stands between the bundle and the verifier that refuses it
+    const solo = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, fetchFn, {}), {
+      powLimitBits: null,
+    });
+    await expect(solo).rejects.toThrow(HopConsistencyError);
+    await expect(solo).rejects.toThrow(/at height 700001, and the coinbase's own BIP34 push says 700000/);
+  });
+
+  it('rotates on a coinbase at or above the boundary whose height push does not parse', async () => {
+    // a single 0x51 is a valid script and not a valid height push, so
+    // `bip34Height` returns undefined and the verifier's first arm refuses
+    const coinbase = coinbaseTx(
+      CB_HEIGHT,
+      [{ value: SUBSIDY + 50_000n }],
+      new Uint8Array([0x51]),
+    );
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const fetchFn = stubFetch(routes);
+
+    // every member serves the same bytes, since the txid pins them, so the
+    // whole pool rotates and the caller gets the build failure with each
+    // member's cause named
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn: (url, init) => fetchFn(url.startsWith(EB) ? url.replace(EB, E) : url, init),
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    expect(e.message).toMatch(/scriptSig carries no parseable height push/);
+
+    const solo = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, fetchFn, {}), {
+      powLimitBits: null,
+    });
+    await expect(solo).rejects.toThrow(HopConsistencyError);
+    await expect(solo).rejects.toThrow(
+      new RegExp(
+        `served the terminal coinbase ${coinbase.tx.txid} at height 700000, at or above the ` +
+          `BIP34 boundary 230000`,
+      ),
+    );
   });
 });

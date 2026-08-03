@@ -20,6 +20,8 @@
 import {
   parseTx,
   parseHeader,
+  bip34Height,
+  BIP34_ENFORCED_FROM,
   hexToBytes,
   inscriptionsFromTx,
   parseInscriptionId,
@@ -408,6 +410,38 @@ export async function buildSatGenealogyBundle(
               `${coinbaseHop.tx.pos} of block ${coinbaseHop.block.hash}, and a coinbase is ` +
               `the first transaction of its block`,
           );
+        }
+        // From BIP34_ENFORCED_FROM on the coinbase states its own height, and
+        // `verifySatGenealogy` binds the claimed height to that push. The build
+        // holds the coinbase bytes, pinned by the txid the funding chain
+        // already names, and it holds the height the lead served, so the
+        // comparison needs no outside view of the chain. This sits above
+        // `coinbaseSatAt` because that call reads the served height to decide
+        // the subsidy boundary: a wrong height can turn an honest output
+        // position into a fee-tail case and raise `CustodyUnsupportedError`,
+        // which the taxonomy records as a domain refusal under the caller's own
+        // name and which ends the walk instead of rotating. A refusal recorded
+        // that way must not rest on a lie the build could have caught. Checked
+        // here rather than in `assembleAnchoredHop` or `checkHopAnswers`, which
+        // both run on ordinary hops where there is no coinbase and no height
+        // push. What stays open is the sub-boundary arm, where no push exists
+        // and only the caller's `trustHeader` hook binds hash to height
+        if (coinbaseHop.block.height >= BIP34_ENFORCED_FROM) {
+          const embedded = bip34Height(tx);
+          if (embedded === undefined) {
+            throw new HopConsistencyError(
+              `${backend.baseUrl}: served the terminal coinbase ${tx.txid} at height ` +
+                `${coinbaseHop.block.height}, at or above the BIP34 boundary ` +
+                `${BIP34_ENFORCED_FROM}, and its scriptSig carries no parseable height push`,
+            );
+          }
+          if (embedded !== coinbaseHop.block.height) {
+            throw new HopConsistencyError(
+              `${backend.baseUrl}: served the terminal coinbase ${tx.txid} at height ` +
+                `${coinbaseHop.block.height}, and the coinbase's own BIP34 push says ` +
+                `${embedded}`,
+            );
+          }
         }
         const pos = outputSpacePosition(tx, expectVout, offset);
         // throws CustodyUnsupportedError for fee-tail positions, before the
