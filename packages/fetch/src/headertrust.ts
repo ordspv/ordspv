@@ -123,10 +123,18 @@ export class HeaderTrustError extends Error {}
  * Throws HeaderTrustError when the header cannot be anchored.
  */
 export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
-  if (options.minAgreement !== undefined && options.minAgreement < 1) {
+  // an integer, because the threshold is counted against. `NaN < 1` is false,
+  // so a bare lower bound let NaN through, `required` became NaN, every
+  // comparison against it was false, and the anchor reported hash-at-height
+  // with no attester agreeing at all. A caller reaches that through
+  // Number(process.env.X)
+  if (
+    options.minAgreement !== undefined &&
+    (!Number.isInteger(options.minAgreement) || options.minAgreement < 1)
+  ) {
     throw new HeaderTrustError(
-      `minAgreement ${options.minAgreement} anchors a header on no agreeing source at all; ` +
-        `pass 1 or more, and pair 1 with checkpoints or a synced chain`,
+      `minAgreement ${options.minAgreement} is not a whole number of agreeing sources; ` +
+        `pass an integer of 1 or more, and pair 1 with checkpoints or a synced chain`,
     );
   }
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;

@@ -89,11 +89,27 @@ describe('fail-closed header anchoring', () => {
     // `agreed.length < 0` is never true, so a zero threshold reported a header
     // as anchored on nobody's word at all
     expect(() => makeHeaderTrust({ minAgreement: 0 })).toThrow(HeaderTrustError);
-    expect(() => makeHeaderTrust({ minAgreement: 0 })).toThrow(/pass 1 or more/);
+    expect(() => makeHeaderTrust({ minAgreement: 0 })).toThrow(/pass an integer of 1 or more/);
     expect(() => makeHeaderTrust({ minAgreement: -1 })).toThrow(HeaderTrustError);
     // 1 is thin and allowed, and the default stands
     expect(() => makeHeaderTrust({ minAgreement: 1 })).not.toThrow();
     expect(() => makeHeaderTrust({})).not.toThrow();
+  });
+
+  it('refuses a threshold that is not a whole number of sources', async () => {
+    // `NaN < 1` is false, so a bare lower bound passed NaN through: `required`
+    // became NaN, `independentSources < required` was false for every value,
+    // and the anchor reported hash-at-height with nobody agreeing. A caller
+    // passing Number(process.env.X) reaches it, and a sub-BIP34 coinbase
+    // height rests on that attestation
+    expect(() => makeHeaderTrust({ minAgreement: Number.NaN })).toThrow(HeaderTrustError);
+    expect(() => makeHeaderTrust({ minAgreement: Number.NaN })).toThrow(
+      /minAgreement NaN is not a whole number of agreeing sources/,
+    );
+    expect(() => makeHeaderTrust({ minAgreement: 1.5 })).toThrow(HeaderTrustError);
+    expect(() => makeHeaderTrust({ minAgreement: 1.5 })).toThrow(
+      /minAgreement 1.5 is not a whole number/,
+    );
   });
 
   it('reports hash-at-height as what an anchor attested', async () => {
