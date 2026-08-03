@@ -12,6 +12,7 @@ import {
   type SatGenealogyBundleJson,
 } from '@ordspv/core';
 import { classifyBundle, type BundleKind } from './bundlekind.js';
+import { writeBundleFile } from './bundlewrite.js';
 import { contentResiduals, refusalJson, refusalReport, type RefusalContext } from './notes.js';
 import {
   buildProofBundle,
@@ -399,7 +400,6 @@ async function main(): Promise<void> {
         onAttempt: reportAttempt,
       });
       const bundleOut = str(flags.get('bundle'));
-      if (bundleOut) writeFileSync(bundleOut, JSON.stringify(res.bundle, null, 2));
       const { identity } = res;
       if (flags.has('json')) {
         console.log(
@@ -432,7 +432,14 @@ async function main(): Promise<void> {
           `mined       block ${identity.coinbaseHeight}, traced through ${identity.depth} funding tx${identity.depth === 1 ? '' : 's'}`,
         );
         console.log(`envelope    ${envelopeNote(identity)}`);
-        if (bundleOut) console.log(`bundle      ${bundleOut}`);
+      }
+      // the identity the walk proved is printed; from here a failure is the
+      // write's alone, on stderr under its own message, with the exit still
+      // nonzero so a script notices the missing file
+      if (bundleOut) {
+        const failure = writeBundleFile('sat', bundleOut, res.bundle);
+        if (failure) fail(failure, 1);
+        if (!flags.has('json')) console.log(`bundle      ${bundleOut}`);
       }
       return;
     } catch (e) {

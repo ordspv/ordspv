@@ -56,6 +56,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   canonical form, and a value that is no level in any case is still
   refused.
 
+- **A failed `sat --bundle` write discarded the identity the walk had
+  proved.** The bundle was written before the identity was printed, inside
+  the same try block the walk runs in, so `--bundle /no/such/dir/x.json`
+  sent the `ENOENT` through the refusal reporter and the caller lost the
+  result of a walk that can cost thousands of requests. The identity now
+  prints first, on whichever channel `--json` selects, then the bundle is
+  written, and a write failure reports `sat: cannot write bundle to <path>:
+  <message>` on stderr at exit 1, caught around the write alone so it
+  cannot be confused with a walk failure. The exit stays nonzero so a
+  script notices the missing file; the proven result is on stdout where
+  the caller can keep it.
+
 - **The genealogy verifier accepted prev tx bytes on the terminal coinbase
   that nothing examined.** `SatGenealogyBundleJson` requires `prevTxs` on
   every hop, and the terminal coinbase's list was never read, so a bundle
