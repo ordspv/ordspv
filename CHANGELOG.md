@@ -7,6 +7,52 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The reveal's witness section is folded against the block's own commitment
+  before it is attached.** The builder tested two things about the raw block a
+  backend served, that its header hashed to the hop's block hash and that the
+  reveal sat at the hop's position, and neither constrains a witness, since a
+  txid commits to no witness byte. Every transaction in the served block could
+  carry a rewritten witness and both tests still passed, so the section was
+  built from the rewritten wtxid list and attached to a bundle the verifier
+  then refused after the build loop had been left, with the remaining backends
+  never asked. Each candidate section now runs through
+  `verifyWitnessAnchoring`, the function the verifier runs on it, and is
+  attached only after it returns. A failure is that backend's bad answer: the
+  cause is recorded and the next backend is asked, so a backend serving a
+  rewritten witness rotates instead of ending the build at verification, and
+  the terminal class stays `WitnessSectionUnavailableError`, which reports
+  UNPROVEN with a remedy. The served block's transaction count is checked
+  against the hop's block info first, with its own cause, since a disagreement
+  there folds as a branch depth and that message names the wrong thing.
+- **Each hop's build-time self-check covers every check the verifier runs on
+  the same answers, including proof of work.** The self-check ran the header
+  hash match, the proof height match and the fold, and the proof-of-work pair
+  and the `txCount` validity test had no build-time equivalent anywhere. A
+  backend that fabricated a block outright, with a header hashing to the hash
+  its own status named under an easy `nBits` and a branch folding to that
+  header's root, was internally consistent, so the build accepted it, the walk
+  completed, and the verifier refused the bundle after the loop with no
+  rotation. `checkPowLimit`, `checkProofOfWork` and the `txCount` test are now
+  part of the self-check, in the order `verifyAnchoredHop` runs them, so a hop
+  that fails at build fails where it would have failed at verification. Both
+  builders take `powLimitBits` and pass it down, in the convention
+  `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables
+  the floor. `makeHeaderTrust`'s own `minAgreement` guard is tightened in the
+  same spirit, to require a whole number of agreeing sources: `NaN < 1` is
+  false, so `NaN` passed a bare lower bound and the anchor reported a header
+  as anchored at a height with no attester agreeing at all.
+- **The envelope's binding to the reveal is checked at build time.** Neither
+  builder called `verifyEnvelopeBinding`, which both verifiers run and which
+  needs only the reveal, the envelope and the reveal hop's prev txs, all three
+  in scope where the builders went straight to the arithmetic. A backend
+  serving a reveal whose witness was rewritten under a matching txid therefore
+  built a whole bundle and died at exit 1 with no rotation. Both builders now
+  bind the envelope as soon as the envelope and the reveal hop's prev txs are
+  in hand. At build the reveal's witness is unbound, so a binding failure
+  cannot be attributed to the chain: it is recorded as that backend producing
+  no usable answer and the loop leads the next attempt, and a build where
+  every backend fails this way reports the build failure with each cause
+  named.
 - **A build-time position refusal reports UNPROVEN with its remedy instead
   of INVALID.** Both build loops rotate on `SatPositionError`, and the loop
   that exhausted every configured backend rethrew it to a CLI table with no
