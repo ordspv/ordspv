@@ -56,7 +56,7 @@ export interface ProofBundleJson {
   };
   /** required for L2 (and harmless in L3): the tx whose output the reveal input spends */
   commit?: { hex: string };
-  /** required for L3 */
+  /** required for L3; refused on an L2 bundle, where nothing reads it */
   witness?: WitnessSectionJson;
 }
 
@@ -167,6 +167,12 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
   }
 
   if (bundle.level === 'L2') {
+    // presence, not truth: nothing at L2 reads the section, so a bundle
+    // carrying one would look witness-carrying to a reader of the JSON while
+    // this verifier checked none of it
+    if ((bundle as { witness?: unknown }).witness !== undefined) {
+      throw new Error('witness section on an L2 bundle; L3 is the level that reads one');
+    }
     if (!bundle.commit) throw new Error('L2 bundle missing commit tx');
     const commit = parseHexTx(bundle.commit.hex, 'commit');
     const input = reveal.inputs[inscription.input];

@@ -3159,6 +3159,9 @@
       throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
     }
     if (bundle.level === "L2") {
+      if (bundle.witness !== void 0) {
+        throw new Error("witness section on an L2 bundle; L3 is the level that reads one");
+      }
       if (!bundle.commit) throw new Error("L2 bundle missing commit tx");
       const commit = parseHexTx(bundle.commit.hex, "commit");
       const input = reveal.inputs[inscription.input];

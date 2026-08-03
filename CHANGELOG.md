@@ -23,8 +23,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them from the command line in response to a backend's behaviour weakens a
   safety property in the wrong direction.
 
-### Added
-
 - **`custody --bundle FILE` writes the custody bundle, and
   `FetchCustodyResult` carries it.** `verify` reads custody bundles and
   nothing could produce one: `fetchCustody` built and verified the bundle,
@@ -55,6 +53,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is satisfied rather than ignored.
 
 ### Fixed
+
+- **A witness section on an L2 proof bundle verified with the section read by
+  nothing.** `verifyProofBundle`'s L2 branch returns before the witness
+  handling, so a bundle carrying `"level": "L2"` and a `witness` section
+  verified at exit 0 while the file presented itself as witness-carrying to
+  anyone reading the JSON directly. The custody and genealogy verifiers
+  refuse a section in the wrong place and verify one in the right place with
+  no fallback, and the proof verifier now holds the same line: a `witness`
+  section on an L2 bundle is refused, presence tested rather than truth, the
+  way the custody guard reads. The reference builder never writes one there,
+  so no bundle it built is affected. The mirror surplus stays accepted:
+  `commit` on an L3 bundle has always been declared harmless by the type, so
+  one surplus is settled by declaration and the other by refusal.
+  SPEC-VERIFICATION states the rule: an L2 bundle MUST NOT carry a `witness`
+  section, and verifiers MUST refuse an L2 bundle that does.
 
 - **The `--timeout-ms` usage line implied one attempt per request, and
   `--verify` refused the lowercase values `--level` accepts.** The deadline

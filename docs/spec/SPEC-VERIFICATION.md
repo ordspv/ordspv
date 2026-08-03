@@ -132,6 +132,10 @@ display order (reversed) hex, matching every public API; transactions as hex.
 }
 ```
 
+An L2 bundle MUST NOT carry a `witness` section, and verifiers MUST refuse an L2
+bundle that does: nothing at L2 reads the section, so a bundle carrying one would
+present itself as witness-carrying while no check covered it.
+
 The `witness` section's shape is shared beyond this format: custody and genealogy
 bundles (SPEC-CUSTODY, SPEC-SAT) accept the same section at their reveal hop, where
 it proves envelope indexing on multi-input reveals.

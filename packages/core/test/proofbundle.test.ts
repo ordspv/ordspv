@@ -282,4 +282,15 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     bundle.commit = { hex: bytesToHex(wrongCommit.raw) };
     expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/commit tx hashes to/);
   });
+
+  it('refuses a witness section on an L2 bundle, and verifies the same bundle without one', () => {
+    const { bundle } = l2Setup();
+    expect(verifyProofBundle(bundle, NO_POW_FLOOR).level).toBe('L2');
+    // presence, not truth: nothing at L2 reads the section, so any value at
+    // all would make the file look witness-carrying while nothing checks it
+    (bundle as { witness?: unknown }).witness = { coinbaseHex: 'ff' };
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(
+      /witness section on an L2 bundle/,
+    );
+  });
 });
