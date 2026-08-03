@@ -429,9 +429,11 @@ export interface CustodyHopJson {
    * (later hops); later entries may be omitted.
    *
    * An empty string is not a permitted filler. A genealogy verifier uses
-   * every entry supplied (SPEC-SAT, "Verifiers MUST use every prev tx
-   * supplied"), so a trailing empty entry fails to parse there rather than
-   * being skipped. This builder emits trimmed non-empty hex only.
+   * every entry supplied on the reveal and on funding steps (SPEC-SAT,
+   * "Verifiers MUST use every prev tx supplied"), so a trailing empty entry
+   * fails to parse there rather than being skipped, and it refuses any entry
+   * on the terminal coinbase, whose null prevout no prev tx can fund. This
+   * builder emits trimmed non-empty hex only.
    */
   prevTxs: string[];
   /**

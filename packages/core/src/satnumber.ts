@@ -468,6 +468,22 @@ export function verifySatGenealogy(
   if ((bundle.coinbase as { witness?: unknown }).witness !== undefined) {
     throw new Error('coinbase: witness section is only accepted at the reveal');
   }
+  // a coinbase's single input is the null prevout, which no prev tx can fund,
+  // so there is no entry here a verifier could use. SPEC-SAT binds verifiers
+  // to use every prev tx supplied, and at this hop the only satisfiable form
+  // of that rule is an empty list. The type requires the field, untrusted
+  // JSON does not read types, so this reads it as unknown like the witness
+  // guard above
+  const coinbasePrevTxs = (bundle.coinbase as { prevTxs?: unknown }).prevTxs;
+  if (!Array.isArray(coinbasePrevTxs)) {
+    throw new Error('coinbase: prevTxs is not a list');
+  }
+  if (coinbasePrevTxs.length !== 0) {
+    throw new Error(
+      `coinbase: ${coinbasePrevTxs.length} prev tx(s) supplied; a coinbase ` +
+        `funds nothing from a previous transaction, so none can be used`,
+    );
+  }
   const coinbase = parseHexTxChecked(bundle.coinbase.tx.hex, 'coinbase');
   if (coinbase.txid !== expectTxid) {
     throw new Error(`coinbase hashes to ${coinbase.txid}, chain expects ${expectTxid}`);

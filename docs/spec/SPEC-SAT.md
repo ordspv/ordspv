@@ -72,6 +72,9 @@ reach the start position. Verifiers MUST use every prev tx supplied. A bundle
 MUST NOT supply more prev txs than the transaction has inputs, and verifiers
 MUST refuse a bundle that does: an entry past the input count corresponds to
 no input, so accepting it would mean accepting bytes that nothing examines.
+The terminal coinbase hop MUST carry an empty `prevTxs` list, since its only
+input is the null prevout and no supplied prev tx can be used; verifiers MUST
+refuse a coinbase hop whose list is nonempty.
 
 A start position at or past the total output sats means the inscription bound
 to fee sats (ord routes it through the block's coinbase); verifiers MUST
@@ -206,7 +209,7 @@ refusal turns on is decided by that height.
     { "tx": { "hex": "…" },          // reveal spends a coinbase directly
       "prevTxs": ["…"] }             // inputs 0..containing input
   ],
-  "coinbase": { /* CustodyHopJson, anchored; tx.pos MUST be 0 */ },
+  "coinbase": { /* CustodyHopJson, anchored; tx.pos MUST be 0, prevTxs MUST be empty */ },
   "claimedSat": "<decimal>"
 }
 ```

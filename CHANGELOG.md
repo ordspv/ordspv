@@ -25,6 +25,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The genealogy verifier accepted prev tx bytes on the terminal coinbase
+  that nothing examined.** `SatGenealogyBundleJson` requires `prevTxs` on
+  every hop, and the terminal coinbase's list was never read, so a bundle
+  padding it with arbitrary strings verified at exit 0 carrying bytes no
+  check had seen, against SPEC-SAT's rule that verifiers use every prev tx
+  supplied. The count check is not the remedy here: it admits one entry on a
+  one-input transaction, and a coinbase's single input is the null prevout,
+  which no prev tx can fund, so the only satisfiable form of the rule at
+  this hop is an empty list. `verifySatGenealogy` now refuses a coinbase hop
+  whose `prevTxs` is missing, is not an array, or is nonempty. This is a
+  verifier tightening: the reference builder has always written an empty
+  list there, so no bundle it built is affected. SPEC-SAT states the rule
+  and the bundle sketch says `prevTxs MUST be empty` beside `tx.pos MUST
+  be 0`.
+
 - **A custody path longer than 64 confirmed transfers reported INCOMPLETE at
   exit 5, with a remedy naming other backends for a fact no backend can
   change.** The walk's cap raised `CustodyBuildError`, which the build loop

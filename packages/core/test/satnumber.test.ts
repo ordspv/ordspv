@@ -357,6 +357,24 @@ describe('verifySatGenealogy', () => {
     );
   });
 
+  it('refuses any prev tx entry on the terminal coinbase', () => {
+    // a coinbase's single input is the null prevout, which no prev tx can
+    // fund, so the only list whose every entry a verifier can use is the
+    // empty one; the count check would admit one entry on a one-input tx
+    const one = bundle();
+    one.coinbase.prevTxs.push(coinbase.hex);
+    expect(() => verifySatGenealogy(one, FIXTURE_OPTS)).toThrow(
+      /coinbase: 1 prev tx\(s\) supplied/,
+    );
+    const three = bundle();
+    three.coinbase.prevTxs.push('ff', 'ff', 'ff');
+    expect(() => verifySatGenealogy(three, FIXTURE_OPTS)).toThrow(
+      /coinbase: 3 prev tx\(s\) supplied/,
+    );
+    // the empty list the reference builder writes still verifies
+    expect(verifySatGenealogy(bundle(), FIXTURE_OPTS).coinbaseHeight).toBe(1000);
+  });
+
   it('refuses a header easier than the proof-of-work floor by default', () => {
     // the reveal hop is anchored and its branch folds; the floor objects to
     // the header's target alone
