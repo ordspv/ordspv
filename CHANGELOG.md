@@ -7,6 +7,35 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A build-time position refusal reports UNPROVEN with its remedy instead
+  of INVALID.** Both build loops rotate on `SatPositionError`, and the loop
+  that exhausted every configured backend rethrew it to a CLI table with no
+  row for the class, so the caller got exit 1, the code that means a
+  document failed verification, with no remedy sentence and nothing in the
+  JSON body to act on. Nothing had been verified. A build loop reads the
+  pointer and the envelope input out of a served reveal witness, and the
+  reveal's txid commits to no witness byte, so the position it derives is
+  unproven and stays unproven however many backends read the same unbound
+  witness. A verifier raising the class is reading a bundle that bound its
+  own pointer, which is a forgery and keeps exit 1. Each refusal row's
+  category is therefore keyed by output context, the way its remedy sentence
+  already was, so a row missing a context fails to compile and a class that
+  means different things in different phases needs no special case.
+- **Each hop's own answers are checked against each other at build time.** A
+  hop is assembled from a transaction's status, its merkle proof, the
+  block's header and the block's transaction count, and nothing makes a
+  backend keep the four consistent. The bundle verifier proves they are, and
+  it runs after the build loop has been left, so one backend's well formed
+  wrong answer used to cost the whole walk and then report the bundle
+  invalid with the other configured backends never asked. `fetchCustody` and
+  `fetchSatIdentity` now fold each hop against itself as it is assembled,
+  through the same primitives the verifier uses: the header must hash to the
+  block hash the status named, the merkle branch must fold from the
+  transaction's txid to that header's merkle root, and the proof's height
+  must be the status's height. A disagreement is that backend producing no
+  usable answer, never a domain refusal, so the build leads the next attempt
+  with another backend, and a build where every backend answers this way
+  reports the build failure with each cause named.
 - **Every recorded refusal rests on data the named backend served for the
   requested transaction.** `fetchSatIdentity` fetches the reveal's tx hex,
   its status, its merkle proof and the terminal coinbase's status from the
@@ -525,12 +554,13 @@ already binds.
   meaning a document that failed verification. On `--json` a failure the table
   does not recognize reports the error's own class name rather than the literal
   `Error`. All six codes are listed in the usage text.
-- **`ord-resolve verify` says that it anchored no header.** A custody or
-  genealogy bundle verified offline rests every hop header on the
-  proof-of-work floor alone, and the result said nothing about that. The JSON
-  carries `anchored`, false on every bundle today, and the human channel
-  carries one line saying the result holds only against the reader's own chain
-  view. SPEC-VERIFICATION section 4 now states why that is a complete remedy
+- **`ord-resolve verify` says that it anchored no header.** A bundle verified
+  offline rests every header it carries on the proof-of-work floor alone, and
+  the result said nothing about that. The JSON carries `anchored`, false on
+  every bundle today, and the human channel carries one line saying the
+  result holds only against the reader's own chain view. All three kinds the
+  command accepts carry both, the proof bundle included, so a caller keying
+  on the field never reads undefined. SPEC-VERIFICATION section 4 now states why that is a complete remedy
   here while a terminal coinbase height below the BIP34 boundary is refused
   outright: a header hash is something any reader can check against any chain
   view, and a sub-BIP34 height appears in no header at all.
