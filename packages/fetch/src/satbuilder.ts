@@ -46,6 +46,7 @@ import {
 import {
   EsploraBackend,
   PooledEsploraBackend,
+  PoolExhaustedError,
   type FetchFn,
   type BackendLimitsInit,
 } from './backends.js';
@@ -91,8 +92,10 @@ export class SatBuildError extends Error {}
  * `SatPositionError`, and the terminal `EnvelopeIndexUnprovenError` pass
  * through the span unwrapped, since each already has its own arm in the
  * loop. Pool exhaustion on a pooled request outside the span still ends the
- * whole build, because that throw already means every member failed the
- * request.
+ * whole build, and the loop reads that off the class rather than off the
+ * position: `PooledEsploraBackend.run` raises `PoolExhaustedError`, which
+ * means every member failed the request. A content failure outside the span
+ * is caught outside `run`, so it is one attempt's bad bytes and rotates.
  */
 export class RevealSourceError extends SatBuildError {}
 
@@ -603,7 +606,8 @@ export async function fetchSatIdentity(
   const neverLed: string[] = [];
   let lastCause: Error | undefined;
   for (let i = 0; i < members.length; i++) {
-    const attempt = new PooledEsploraBackend([...members.slice(i), ...members.slice(0, i)]);
+    const rotated = [...members.slice(i), ...members.slice(0, i)];
+    const attempt = new PooledEsploraBackend(rotated);
     options.onAttempt?.({
       baseUrl: members[i].baseUrl,
       attempt: i,
@@ -617,9 +621,13 @@ export async function fetchSatIdentity(
         // the same floor the verification below applies, so a header under it
         // costs one attempt rather than a whole walk plus a refused bundle
         powLimitBits: options.powLimitBits,
-        // the pool already rotates every member for the raw block request and
-        // names each one's cause, so it is the whole witness-backend list
-        witnessBackends: [attempt],
+        // the section loop applies content checks to the served block outside
+        // the pool's own failover, so it needs the members by name: the pool
+        // would hand it one entry, a block failing the fold would end the
+        // section with one cause, and that cause would name `pool(...)`
+        // rather than the member that served the bytes. Same order the pool
+        // has, so the leading member is asked first here too
+        witnessBackends: rotated,
         // the deciding requests, the reveal's three and the terminal
         // coinbase's status, come from the leading member alone, so a
         // refusal recorded under members[i] is members[i]'s word
@@ -684,27 +692,39 @@ export async function fetchSatIdentity(
         lastCause = e as Error;
         continue;
       }
-      // a transport failure on a pooled request ends the whole build here,
-      // and the reason is structural. This walk runs through a
-      // PooledEsploraBackend whose `run` throws only after every member
-      // failed that request (backends.ts), so the throw already means the
-      // pool failed, and a fresh lead member would walk to the same wall. The
-      // custody side builds through one EsploraBackend per attempt, where a
-      // transport failure is one backend's and advancing is right.
-      //
-      // What the pool does not rotate on is a content failure: a member
-      // serving bytes that hash wrong is caught outside `run`, at the txid
-      // check below the walk's getTxHex and inside provenInputValues, so one
-      // member serving garbage for one mid-walk request ends the build. That
-      // is availability only, because that check is what makes the walk sound.
+      // pool exhaustion ends the whole build here, and the class is what says
+      // so. `PooledEsploraBackend.run` raises `PoolExhaustedError` only after
+      // every member failed that request (backends.ts), so a fresh lead member
+      // would walk to the same wall. The custody side builds through one
+      // EsploraBackend per attempt, where a transport failure is one backend's
+      // and advancing is right.
       //
       // The members this loop now skips were never led, so a refusal already
       // recorded is reported over this one only when the two together account
       // for every configured member. Otherwise the build failure stands.
+      if (e instanceof PoolExhaustedError) {
+        buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+        noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
+        for (const skipped of members.slice(i + 1)) neverLed.push(skipped.baseUrl);
+        break;
+      }
+      // everything else is a content failure, which the pool does not rotate
+      // on because it is caught outside `run`: `run` returns the first answer
+      // that does not throw, and bytes for the wrong transaction are an answer
+      // it accepts. The txid check below the walk's getTxHex,
+      // `checkTxNotAmbiguous` beside it and `provenInputValues` reject them
+      // afterwards. That is one attempt's bad bytes from whichever member the
+      // pool's cursor reached, and the next attempt rotates the lead and the
+      // cursor, so the next member may well serve the request instead.
+      //
+      // It is recorded into `noAnswer` and never into `refusals`, because the
+      // bytes came from whichever member the cursor reached rather than from
+      // the member leading the attempt, and a refusal recorded under a
+      // member's name has to rest on data that member served itself.
       buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
       noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
-      for (const skipped of members.slice(i + 1)) neverLed.push(skipped.baseUrl);
-      break;
+      lastCause = e as Error;
+      continue;
     }
   }
   if (!built || !pool) {

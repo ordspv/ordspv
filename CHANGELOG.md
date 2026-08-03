@@ -7,6 +7,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The genealogy loop stopped treating the pool's failover as if it covered
+  checks that run outside it.** One defect at two sites. A pooled request
+  returns the first member's answer that does not throw, so bytes for the
+  wrong transaction are an answer the pool accepts and a check after it
+  rejects: the walk's txid test, the 64-byte test beside it and
+  `provenInputValues` all raise outside the pool. The loop read any such throw
+  as pool exhaustion, recorded it, marked every remaining member as never
+  having led and ended the build, so one member serving garbage for one
+  mid-walk request cost the whole build with the other configured members
+  never asked. `PooledEsploraBackend.run` now raises an exported
+  `PoolExhaustedError`, which means every member failed that one request, and
+  the loop breaks on that class alone. Everything else is one attempt's bad
+  bytes, recorded as that member producing no usable answer, and the next
+  member leads. It is never recorded as a refusal, because the bytes came from
+  whichever member the pool's cursor reached rather than from the member
+  leading the attempt. At the second site the loop passed the pool itself as
+  the whole witness-backend list, on the reasoning that the pool rotates every
+  member for the raw block request. It does, for the request; the four content
+  checks the section loop applies to the served block run outside it, and with
+  one entry in the list there was no next backend, so a member serving a block
+  whose witness does not fold ended the section with one cause naming
+  `pool(...)` rather than the member that served the bytes. The rotated
+  members go in by name, lead first, so each is asked in turn and each cause
+  names the member it belongs to.
 - **The last member of that defect: the genealogy builder checks the terminal
   coinbase's height against the coinbase's own BIP34 push.** From block
   230,000 on a coinbase states its height in its scriptSig, and

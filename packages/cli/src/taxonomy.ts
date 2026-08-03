@@ -39,6 +39,7 @@ import {
   HeaderTrustError,
   HopConsistencyError,
   OrdResolveError,
+  PoolExhaustedError,
   ResponseCapExceededError,
   RevealSourceError,
   SatBuildError,
@@ -262,6 +263,14 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
       `one attempt's answers about a hop disagreeing with each other, which says nothing ` +
       `about the chain; both loops record it as that backend producing no usable answer ` +
       `and rotate, so it never reaches this reporter as a refusal`,
+  },
+  {
+    ctor: PoolExhaustedError,
+    reason:
+      `every member of one attempt's pool failed one request. The class is raised inside ` +
+      `the genealogy build loop, which is the only place a pool is constructed, and that ` +
+      `loop catches it to end the build and report the causes under BUILD_FAILED, so no ` +
+      `path carries it here`,
   },
   {
     ctor: ResponseCapExceededError,

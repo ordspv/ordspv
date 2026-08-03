@@ -19,7 +19,12 @@ import {
   verifySatGenealogy,
   type ParsedTx,
 } from '@ordspv/core';
-import { EsploraBackend, type FetchFn } from '../src/backends.js';
+import {
+  EsploraBackend,
+  PooledEsploraBackend,
+  PoolExhaustedError,
+  type FetchFn,
+} from '../src/backends.js';
 import {
   buildSatGenealogyBundle,
   DEFAULT_MAX_STEPS,
@@ -1129,6 +1134,54 @@ describe('fetchSatIdentity', () => {
     expect(e.message).toMatch(new RegExp(`${EB}: .*failed at the leading backend`));
   });
 
+  it('leads the next member when a pooled mid-walk request served the wrong transaction', async () => {
+    // a content failure is caught outside the pool's `run`, which returns the
+    // first answer that does not throw and accepts well-formed bytes for
+    // another transaction. That is one attempt's bad bytes from whichever
+    // member the cursor reached, so the loop records no usable answer and
+    // leads again. Before the split it fell to the break and ended the build
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
+    const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, f1]);
+    // well-formed bytes for a transaction nobody asked for
+    const decoy = buildTx([{ txid: '77'.repeat(32), vout: 0 }], [{ value: 111n }]);
+    const base = stubFetch(routes);
+
+    const attempts: AttemptInfo[] = [];
+    let lead = 0;
+    let f1Asked = 0;
+    const fetchFn: FetchFn = (url, init) => {
+      const canonical = url.replace(EB, E);
+      // the walk covers commit's prev txs before it steps onto f1 itself, so
+      // the first hit is that coverage and the second is the walk's own
+      // request. Both members serve the decoy while the first member leads,
+      // so which one the pool's cursor reaches does not decide the test
+      if (canonical === `${E}/tx/${f1.tx.txid}/hex` && lead === 0 && ++f1Asked > 1) {
+        return Promise.resolve(new Response(decoy.hex));
+      }
+      return base(canonical, init);
+    };
+
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => {
+        lead = info.attempt;
+        attempts.push(info);
+      },
+    });
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(SatBuildError);
+    expect(attempts[1].cause?.message).toMatch(
+      new RegExp(`backend served ${decoy.tx.txid} for requested ${f1.tx.txid}`),
+    );
+    expect(res.identity.coinbaseHeight).toBe(CB_HEIGHT);
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+  });
+
   it('still ends the build through the break when a pooled request exhausts the pool', async () => {
     // both leads serve the reveal hop and its prev-tx coverage; the funding
     // tx one step past the reveal hop is served by nobody, so a pooled
@@ -1155,6 +1208,39 @@ describe('fetchSatIdentity', () => {
     expect(e.code).toBe('BUILD_FAILED');
     expect(e.message).toMatch(/all 2 pooled backend\(s\) failed/);
     // the break fired at attempt 0 and EB was never led
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
+  });
+
+  it('breaks on the class the pool raises when every member fails one request', async () => {
+    // the arm splits on PoolExhaustedError rather than on the position of the
+    // throw, so the class the pool raises is what the break rests on. Asserted
+    // at both ends: the pool raises it, and the build that meets it stops with
+    // the members behind the lead never led
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    const f1 = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 400_000_000n }]);
+    const commit = buildTx([{ txid: f1.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, f1]);
+    delete routes[`${E}/tx/${f1.tx.txid}/hex`];
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const pool = new PooledEsploraBackend([
+      new EsploraBackend(E, fetchFn, {}),
+      new EsploraBackend(EB, fetchFn, {}),
+    ]);
+    await expect(pool.getTxHex(f1.tx.txid)).rejects.toBeInstanceOf(PoolExhaustedError);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
     expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
   });
 
@@ -1809,6 +1895,40 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(built.bundle.reveal.witness).toBeDefined();
   });
 
+  it('asks the next member by name when the leading one serves a block that does not fold', async () => {
+    // the section loop's checks run outside the pool's own failover, so the
+    // members go in by name. E serves a block whose witness does not fold and
+    // EB serves the real one, and both are asked in that order. With one
+    // pooled entry the loop had no next backend, so exactly one raw-block
+    // request went out and the section was unavailable
+    const rBad = routes(false);
+    rBad[`${E}/block/${revealBlock.blockHash}/raw`] = flippedReservedBlock();
+    const bad = stubFetch(rBad);
+    const honest = stubFetch(routes(true));
+
+    const rawAsked: string[] = [];
+    const fetchFn: FetchFn = (url, init) => {
+      if (url.endsWith(`/block/${revealBlock.blockHash}/raw`)) {
+        rawAsked.push(url.startsWith(EB) ? EB : E);
+        return url.startsWith(EB) ? honest(url.replace(EB, E), init) : bad(url, init);
+      }
+      return honest(url.replace(EB, E), init);
+    };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(rawAsked).toEqual([E, EB]);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E]);
+    expect(res.bundle.reveal.witness).toBeDefined();
+    expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
+    expect(res.identity.sat).toBe(SAT);
+  });
+
   it('ends at the witness-section class when every member serves a rewritten witness', async () => {
     const r = routes(false);
     r[`${E}/block/${revealBlock.blockHash}/raw`] = flippedReservedBlock();
@@ -1820,9 +1940,11 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     expect(e).toBeInstanceOf(WitnessSectionUnavailableError);
     expect(e).not.toBeInstanceOf(SatIdentityError);
     expect(e.message).toMatch(/witness commitment mismatch/);
-    // the whole pool is one witness backend here, so the cause is named for
-    // the pool rather than a member, which is the wrapper's existing shape
-    expect(e.message).toMatch(/pool\(.*\): the witness section built from its block/);
+    // the witness-backend list is the rotated members by name, so every member
+    // is asked and each cause names the member that served the bytes
+    expect(e.message).not.toMatch(/pool\(/);
+    expect(e.message).toMatch(new RegExp(`${E}: the witness section built from its block`));
+    expect(e.message).toMatch(new RegExp(`${EB}: the witness section built from its block`));
   });
 
   it('walks again on the next lead member when one names a wrong block for the reveal', async () => {

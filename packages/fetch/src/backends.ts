@@ -270,6 +270,24 @@ export class EsploraBackend {
 }
 
 /**
+ * Every member of a pool failed one request.
+ *
+ * `PooledEsploraBackend.run` asks each member in turn and returns the first
+ * answer that does not throw, so this class is raised only after all of them
+ * have failed the same request. A caller looping over leads has nothing to
+ * gain by leading again with another member, because the pool behind each
+ * attempt holds the same members. The class exists so that caller can tell
+ * pool exhaustion from a failure raised outside `run`, which is one attempt's
+ * bad answer and worth another lead.
+ */
+export class PoolExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PoolExhaustedError';
+  }
+}
+
+/**
  * N esplora backends behind one backend-shaped surface, rotating per request.
  *
  * The genealogy walk spends thousands of requests on one build, so a failure
@@ -309,7 +327,9 @@ export class PooledEsploraBackend {
         errors.push(`${member.baseUrl}: ${(e as Error).message}`);
       }
     }
-    throw new Error(`all ${n} pooled backend(s) failed for ${label}:\n${errors.join('\n')}`);
+    throw new PoolExhaustedError(
+      `all ${n} pooled backend(s) failed for ${label}:\n${errors.join('\n')}`,
+    );
   }
 
   getTxHex(txid: string): Promise<string> {
