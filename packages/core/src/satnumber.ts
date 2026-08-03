@@ -328,6 +328,17 @@ export function verifySatGenealogy(
   if (bundle.version !== 1) {
     throw new Error(`unsupported genealogy bundle version ${(bundle as { version: unknown }).version}`);
   }
+  // a bundle is untrusted JSON, so an absent field must name itself rather
+  // than surface as a TypeError that reads as an internal fault
+  if (typeof bundle.inscriptionId !== 'string') {
+    throw new Error('bundle field inscriptionId is missing or not a string');
+  }
+  if (typeof bundle.reveal !== 'object' || bundle.reveal === null) {
+    throw new Error('bundle field reveal is missing or not an object');
+  }
+  if (typeof bundle.coinbase !== 'object' || bundle.coinbase === null) {
+    throw new Error('bundle field coinbase is missing or not an object');
+  }
   const maxSteps = opts.maxSteps ?? 10_000;
   const id = parseInscriptionId(bundle.inscriptionId);
   if (!Array.isArray(bundle.funding)) throw new Error('genealogy bundle missing funding array');

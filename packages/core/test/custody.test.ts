@@ -346,6 +346,27 @@ describe('verifyCustodyBundle', () => {
     expect(() => verifyCustodyBundle(b)).toThrow(/path folds to/);
   });
 
+  it('refuses a string hop height, and verifies the numeric one', () => {
+    // a bundle is untrusted JSON, so "height": "200" reaches the comparisons
+    // that coerce and the report a --json consumer reads as a number
+    const b = singleHopBundle();
+    (b.hops[0].block as unknown as Record<string, unknown>).height = String(expected.blockHeight);
+    expect(() => verifyCustodyBundle(b)).toThrow(/hop 0 \(reveal\): missing valid block height/);
+    expect(verifyCustodyBundle(singleHopBundle()).height).toBe(expected.blockHeight);
+  });
+
+  it('refuses a bundle without inscriptionId by naming the field', () => {
+    const b = singleHopBundle() as unknown as Record<string, unknown>;
+    delete b.inscriptionId;
+    let err: Error | undefined;
+    try {
+      verifyCustodyBundle(b as unknown as CustodyBundleJson);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toBe('bundle field inscriptionId is missing or not a string');
+  });
+
   it('refuses a reveal prev tx list longer than the input count', () => {
     // the list is aligned to the inputs, so an entry past the input count
     // corresponds to nothing; refused rather than ignored, per SPEC-CUSTODY

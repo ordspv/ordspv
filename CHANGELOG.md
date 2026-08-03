@@ -54,6 +54,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A string height on an anchored hop verified, and a bundle missing a
+  top-level field died as a TypeError.** `verifyAnchoredHop` never checked
+  the type of `hop.block.height`, so `"height": "200"` flowed through the
+  chain-order comparisons, which coerce, and into the report, where a
+  `--json` consumer read a non-number. The shared function now refuses a
+  non-integer or negative height beside the txCount check, which covers
+  custody hops and both genealogy endpoints in one place, and the
+  chain-order comparison now runs on checked integers. The genealogy
+  coinbase height was already bound tighter by the BIP34 arms, and that
+  stands; this types every other height. Separately, a bundle with
+  `inscriptionId` absent died as a raw TypeError at exit 1, an
+  internal-fault message for a defective document, the defect the witness
+  section's shape check has always named. All three verifiers now refuse a
+  non-string `inscriptionId` with a message naming the field, and the
+  containers whose absence surfaced raw TypeErrors get the same narrow
+  check: `block` and `reveal` on a proof bundle, `reveal` and `coinbase` on
+  a genealogy bundle. Every other top-level absence already produced a
+  named refusal and is unchanged. No schema validator was added; the
+  standard is that every top-level absence produces a message naming a
+  field or a rule, and nothing more.
+
 - **A witness section on an L2 proof bundle verified with the section read by
   nothing.** `verifyProofBundle`'s L2 branch returns before the witness
   handling, so a bundle carrying `"level": "L2"` and a `witness` section

@@ -530,6 +530,11 @@ export function verifyAnchoredHop(
   if (!Number.isInteger(hop.block.txCount) || hop.block.txCount < 1) {
     throw new Error(`${label}: missing valid txCount`);
   }
+  // a bundle is untrusted JSON, so a string height would flow through the
+  // comparisons that coerce and into the report a --json consumer reads
+  if (!Number.isInteger(hop.block.height) || hop.block.height < 0) {
+    throw new Error(`${label}: missing valid block height`);
+  }
   const attestation = opts.trustHeader?.(header, hop.block.height);
 
   const branch = hop.tx.txidBranch.map(displayToInternal);
@@ -554,6 +559,11 @@ export function verifyCustodyBundle(
 ): VerifiedCustody {
   if (bundle.version !== 1) {
     throw new Error(`unsupported custody bundle version ${(bundle as { version: unknown }).version}`);
+  }
+  // a bundle is untrusted JSON, so an absent field must name itself rather
+  // than surface as a TypeError that reads as an internal fault
+  if (typeof bundle.inscriptionId !== 'string') {
+    throw new Error('bundle field inscriptionId is missing or not a string');
   }
   const id = parseInscriptionId(bundle.inscriptionId);
   if (!Array.isArray(bundle.hops) || bundle.hops.length === 0) {

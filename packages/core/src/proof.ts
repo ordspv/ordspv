@@ -130,6 +130,17 @@ function parseHexTx(hex: string, label: string): ParsedTx {
 /** Verify a proof bundle. Throws with a precise reason on any failure. */
 export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions = {}): VerifiedInscription {
   if (bundle.version !== 1) throw new Error(`unsupported proof bundle version ${(bundle as { version: unknown }).version}`);
+  // a bundle is untrusted JSON, so an absent field must name itself rather
+  // than surface as a TypeError that reads as an internal fault
+  if (typeof bundle.inscriptionId !== 'string') {
+    throw new Error('bundle field inscriptionId is missing or not a string');
+  }
+  if (typeof bundle.block !== 'object' || bundle.block === null) {
+    throw new Error('bundle field block is missing or not an object');
+  }
+  if (typeof bundle.reveal !== 'object' || bundle.reveal === null) {
+    throw new Error('bundle field reveal is missing or not an object');
+  }
   const id = parseInscriptionId(bundle.inscriptionId);
 
   // ---- header ----

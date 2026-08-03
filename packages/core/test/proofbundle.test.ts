@@ -283,6 +283,18 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/commit tx hashes to/);
   });
 
+  it('refuses a bundle without inscriptionId by naming the field', () => {
+    const { bundle } = l2Setup();
+    delete (bundle as unknown as Record<string, unknown>).inscriptionId;
+    let err: Error | undefined;
+    try {
+      verifyProofBundle(bundle, NO_POW_FLOOR);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toBe('bundle field inscriptionId is missing or not a string');
+  });
+
   it('refuses a witness section on an L2 bundle, and verifies the same bundle without one', () => {
     const { bundle } = l2Setup();
     expect(verifyProofBundle(bundle, NO_POW_FLOOR).level).toBe('L2');

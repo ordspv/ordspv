@@ -3129,6 +3129,15 @@
   }
   function verifyProofBundle(bundle, opts = {}) {
     if (bundle.version !== 1) throw new Error(`unsupported proof bundle version ${bundle.version}`);
+    if (typeof bundle.inscriptionId !== "string") {
+      throw new Error("bundle field inscriptionId is missing or not a string");
+    }
+    if (typeof bundle.block !== "object" || bundle.block === null) {
+      throw new Error("bundle field block is missing or not an object");
+    }
+    if (typeof bundle.reveal !== "object" || bundle.reveal === null) {
+      throw new Error("bundle field reveal is missing or not an object");
+    }
     const id = parseInscriptionId(bundle.inscriptionId);
     const header = parseHeader(hexToBytes(bundle.block.header));
     if (header.hash !== bundle.block.hash.toLowerCase()) {

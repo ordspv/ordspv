@@ -349,6 +349,27 @@ describe('verifySatGenealogy', () => {
     );
   });
 
+  it('refuses a string height on the reveal hop, and verifies the numeric one', () => {
+    const b = bundle();
+    (b.reveal.block as unknown as Record<string, unknown>).height = '2000';
+    expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+      /reveal: missing valid block height/,
+    );
+    expect(verifySatGenealogy(bundle(), FIXTURE_OPTS).coinbaseHeight).toBe(1000);
+  });
+
+  it('refuses a bundle without inscriptionId by naming the field', () => {
+    const b = bundle() as unknown as Record<string, unknown>;
+    delete b.inscriptionId;
+    let err: Error | undefined;
+    try {
+      verifySatGenealogy(b as unknown as SatGenealogyBundleJson, FIXTURE_OPTS);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toBe('bundle field inscriptionId is missing or not a string');
+  });
+
   it('refuses the same surplus on a funding step', () => {
     const b = bundle();
     b.funding[0].prevTxs.push(funding.hex);
