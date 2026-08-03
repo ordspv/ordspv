@@ -72,6 +72,20 @@ import {
 } from './taxonomy.js';
 
 /**
+ * What a backend says about a block when asked for it directly.
+ *
+ * Only `tx_count` reaches the bundle. The other three are here because an
+ * esplora `/block/<hash>` response carries them anyway, so checking them costs
+ * no request and catches a backend contradicting itself for free.
+ */
+export interface BlockInfoAnswer {
+  id?: string;
+  height?: number;
+  tx_count: number;
+  merkle_root?: string;
+}
+
+/**
  * What it takes to anchor a transaction into a PoW-checked header. Shared with
  * the sat genealogy builder, which needs anchoring but no outspend pathfinding.
  */
@@ -81,7 +95,15 @@ export interface AnchorBackend {
   getTxStatus(txid: string): Promise<{ confirmed: boolean; block_height?: number; block_hash?: string }>;
   getMerkleProof(txid: string): Promise<{ block_height: number; merkle: string[]; pos: number }>;
   getHeaderHex(blockHash: string): Promise<string>;
-  getBlockInfo(blockHash: string): Promise<{ tx_count: number }>;
+  /**
+   * The block's own summary. `tx_count` is what the bundle carries; the other
+   * three fields arrive in the same response an esplora backend has already
+   * been paid for, and `checkHopAnswers` folds each one it is given against
+   * the answers the same backend gave elsewhere. They are optional because
+   * this interface describes what the builder needs rather than what esplora
+   * happens to send, and a backend that omits one is simply not checked on it.
+   */
+  getBlockInfo(blockHash: string): Promise<BlockInfoAnswer>;
   /**
    * Optional: the raw block, used to build the reveal's wtxid proof on
    * multi-input reveals. A backend without it still builds bundles for
@@ -124,11 +146,16 @@ export class CustodyBuildError extends Error {}
  *
  * It is not a domain refusal. It says nothing about the chain, only that one
  * backend's answers do not describe one block on the chain this build is
- * configured for. Both halves of that raise it: answers that contradict each
- * other, and answers that agree on a block whose header is under the
- * configured proof-of-work floor or fails the target it states itself. The
- * loops record either as that attempt producing no usable answer and lead the
- * next attempt with another backend. It never reaches the CLI as a refusal.
+ * configured for, or that the transaction those answers place there is one no
+ * verifier will read. Everything that raises it is one backend's word failing:
+ * answers that contradict each other, answers that agree on a block whose
+ * header is under the configured proof-of-work floor or fails the target it
+ * states itself, a block info field that disagrees with the status or the
+ * header the same backend served, a transaction whose stripped serialization
+ * is 64 bytes, a custody hop the backend places before the hop it spends, and
+ * a reveal whose envelope does not bind to its commit output. The loops record
+ * any of them as that attempt producing no usable answer and lead the next
+ * attempt with another backend. It never reaches the CLI as a refusal.
  */
 export class HopConsistencyError extends Error {
   constructor(message: string) {
@@ -154,6 +181,20 @@ export type WitnessSectionMode = 'always' | 'when-needed';
  * `trustHeader` hook, which is anchoring rather than a check on the answers
  * and which the wrappers run over the finished bundle.
  *
+ * The block info's other three fields are checked here too, and they have no
+ * counterpart at verification because the bundle never carries them. They come
+ * free in a response the build already made, and they catch one backend
+ * contradicting itself across the answers it served. State the limit plainly,
+ * since it is the part a later reader will overstate: they do not catch a
+ * backend that lies consistently. A backend can name a real block hash at a
+ * wrong height and keep its status, its merkle proof and its block info all
+ * agreeing on that wrong height, and nothing inside the build can tell,
+ * because a header commits to no height above the BIP34 coinbase push and the
+ * build has no outside view. That case is caught by `makeHeaderTrust`'s
+ * hash-at-height anchoring, which runs after the loop by design, and by
+ * `verifySatGenealogy`'s BIP34 test on the terminal coinbase. Both are
+ * terminal and neither rotates.
+ *
  * What differs is when it runs and what a failure means: raised here it is one
  * backend's answers failing and the caller rotates, and raised there it is a
  * bundle that contradicts itself or the chain.
@@ -165,9 +206,10 @@ function checkHopAnswers(
   blockHeight: number,
   proof: { block_height: number; merkle: string[]; pos: number },
   headerHex: string,
-  txCount: number,
+  blockInfo: BlockInfoAnswer,
   powLimitBits: number | null | undefined,
 ): void {
+  const txCount = blockInfo.tx_count;
   let header;
   try {
     header = parseHeader(hexToBytes(headerHex.trim()));
@@ -203,6 +245,36 @@ function checkHopAnswers(
         `its status says height ${blockHeight}`,
     );
   }
+  if (blockInfo.id !== undefined && blockInfo.id.toLowerCase() !== blockHash.toLowerCase()) {
+    throw new HopConsistencyError(
+      `${baseUrl}: block info for ${blockHash} identifies itself as ${blockInfo.id}, ` +
+        `and the status of ${tx.txid} named ${blockHash}`,
+    );
+  }
+  if (blockInfo.height !== undefined && blockInfo.height !== blockHeight) {
+    throw new HopConsistencyError(
+      `${baseUrl}: block info for ${blockHash} says height ${blockInfo.height}, ` +
+        `its status says height ${blockHeight}`,
+    );
+  }
+  if (blockInfo.merkle_root !== undefined) {
+    let served: Uint8Array;
+    try {
+      served = displayToInternal(blockInfo.merkle_root);
+    } catch (e) {
+      throw new HopConsistencyError(
+        `${baseUrl}: block info for ${blockHash} carries an unreadable merkle root ` +
+          `${blockInfo.merkle_root}: ${(e as Error).message}`,
+      );
+    }
+    if (!bytesEqual(served, header.merkleRootLE)) {
+      throw new HopConsistencyError(
+        `${baseUrl}: block info for ${blockHash} says merkle root ${blockInfo.merkle_root}, ` +
+          `and the header it served for that block carries ` +
+          `${internalToDisplay(header.merkleRootLE)}`,
+      );
+    }
+  }
   let root: Uint8Array;
   try {
     ({ root } = verifyMerkleBranch(
@@ -226,6 +298,33 @@ function checkHopAnswers(
 }
 
 /**
+ * Refuse a transaction whose stripped serialization is 64 bytes.
+ *
+ * Both verifiers apply this rule to every transaction a bundle carries in a
+ * proven position: `parseHopTx` in `custody.ts` to each custody hop, and
+ * `parseHexTxChecked` in `satnumber.ts` to the genealogy endpoints and every
+ * funding step. Nothing in the build applied it, so a backend serving such a
+ * transaction bought a whole bundle that the verifier then refused after the
+ * loop had been left, with the other configured backends never asked.
+ *
+ * The reason is `parseHopTx`'s: the txid-tree leaf preimage is the stripped
+ * serialization, so a 64-byte stripped transaction can be read as an inner
+ * node of that tree, and the ambiguity class is stripped length 64 whether or
+ * not the transaction carries a witness.
+ *
+ * Raised as `HopConsistencyError` naming the backend, so the loops record it
+ * as that backend producing no usable answer and lead the next attempt.
+ */
+export function checkTxNotAmbiguous(baseUrl: string, tx: ParsedTx, label: string): void {
+  if (tx.strippedRaw.length === 64) {
+    throw new HopConsistencyError(
+      `${baseUrl}: ${label} has a 64-byte stripped serialization, which is rejected ` +
+        `for leaf/node ambiguity in the txid tree`,
+    );
+  }
+}
+
+/**
  * Anchor a transaction: fetch its inclusion proof, header, and block tx count,
  * plus the prev txs for inputs 0..prevTxsUpTo (pass -1 for none, as a coinbase
  * needs).
@@ -234,9 +333,16 @@ function checkHopAnswers(
  * the verifier cannot do is rotate, because it runs after the build loop has
  * been left, so the hop is checked against itself here as well, through
  * `checkHopAnswers`, which covers every check `verifyAnchoredHop` runs on the
- * same answers. A failure is one backend's answers failing
- * (`HopConsistencyError`), which the loops rotate on instead of spending the
- * rest of the walk on it, and a hop that fails here would have failed there.
+ * same answers and adds the block info fields the bundle does not carry. A
+ * failure is one backend's answers failing (`HopConsistencyError`), which the
+ * loops rotate on instead of spending the rest of the walk on it, and a hop
+ * that fails here would have failed there.
+ *
+ * The rest of the parity with verification lives at the callers, because it
+ * needs data this function is not given: `checkTxNotAmbiguous` on every
+ * transaction a bundle will carry in a proven position, `bindRevealEnvelope`
+ * on the reveal once its envelope and prev txs are in hand, and the custody
+ * walk's own chain-order test on each hop it appends.
  *
  * `powLimitBits` is the floor `checkPowLimit` applies, in the convention
  * `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables
@@ -266,7 +372,7 @@ export async function assembleAnchoredHop(
     status.block_height,
     proof,
     headerHex,
-    blockInfo.tx_count,
+    blockInfo,
     powLimitBits,
   );
   const prevTxs: string[] = [];
@@ -391,6 +497,19 @@ export async function attachRevealWitnessSection(
         );
         continue;
       }
+      // the section carries this coinbase's bytes, and `verifyWitnessAnchoring`
+      // applies the same 64-byte rule to them. A cause and the next backend is
+      // this loop's contract, so the rule is applied the same way here
+      try {
+        checkTxNotAmbiguous(
+          backend.baseUrl,
+          block.txs[0],
+          `the coinbase of block ${hop.block.hash}`,
+        );
+      } catch (e) {
+        causes.push((e as Error).message);
+        continue;
+      }
       const txids = block.txs.map((t) => t.txidLE);
       const wtxids = block.txs.map((t, i) => (i === 0 ? ZERO32 : t.wtxidLE));
       const section = {
@@ -465,6 +584,7 @@ export async function buildCustodyBundle(
   if (reveal.txid !== id.txid) {
     throw new CustodyBuildError(`backend served ${reveal.txid} for requested ${id.txid}`);
   }
+  checkTxNotAmbiguous(backend.baseUrl, reveal, `reveal ${reveal.txid}`);
   const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
   if (!inscription) {
     throw new CustodyBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);
@@ -512,6 +632,7 @@ export async function buildCustodyBundle(
     if (h > maxHops) throw new CustodyBuildError(`custody path exceeds ${maxHops} hops`);
     const hex = await backend.getTxHex(outspend.txid);
     const tx = parseTx(hexToBytes(hex.trim()));
+    checkTxNotAmbiguous(backend.baseUrl, tx, `hop ${h} transaction ${tx.txid}`);
     const j = tx.inputs.findIndex((inp) => inp.prevTxid === current.txid && inp.vout === current.vout);
     if (j === -1) {
       throw new CustodyBuildError(
@@ -519,6 +640,23 @@ export async function buildCustodyBundle(
       );
     }
     const hop = await assembleAnchoredHop(backend, tx, hex, j, options.powLimitBits);
+    // `verifyCustodyBundle` requires strict chain order, increasing height or
+    // equal height with strictly increasing position, and SPEC-CUSTODY states
+    // it as a MUST on verifiers. The walk follows a backend's own outspend
+    // answers, so a backend can point it at a spend it places before the hop
+    // it spends. Checked here the pair costs one attempt; checked only at
+    // verification it costs the walk and a bundle refused after the loop
+    const previous = hops[hops.length - 1];
+    if (
+      hop.block.height < previous.block.height ||
+      (hop.block.height === previous.block.height && hop.tx.pos <= previous.tx.pos)
+    ) {
+      throw new HopConsistencyError(
+        `${backend.baseUrl}: hop ${h} sits at height ${hop.block.height} position ` +
+          `${hop.tx.pos} and hop ${h - 1} at height ${previous.block.height} position ` +
+          `${previous.tx.pos}, so the spend does not come after what it spends`,
+      );
+    }
     hops.push(hop);
     current = transferSatpoint(
       tx,

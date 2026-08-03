@@ -1275,3 +1275,180 @@ describe('fetchCustody with multi-input reveals', () => {
     await expect(p).rejects.toThrow(/always/);
   });
 });
+
+/**
+ * Three checks the verifier runs that the build had no equivalent for. Each is
+ * the same shape as the ones the tenth review closed: one backend's well
+ * formed wrong answer used to buy the whole walk and then a bundle the
+ * verifier refused at exit 1, with the other configured backends never asked.
+ */
+describe('fetchCustody on answers the verifier refuses and the build did not', () => {
+  const E4 = 'https://esplora4.test';
+  const ANCHORS = { anchorSources: [E3, E4] };
+  const { commit, reveal, block, id } = inscriptionSetup();
+
+  /** both backends honest, plus attesters that served nothing */
+  function honestRoutes(): Record<string, Route> {
+    const r = routesForBlock(block, 100, 120);
+    r[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    r[`${E2}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    const m = mirror(r, E, E2);
+    m[`${E4}/block-height/100`] = block.blockHash;
+    m[`${E4}/blocks/tip/height`] = '120';
+    return m;
+  }
+
+  /**
+   * A legacy spend whose stripped serialization is exactly 64 bytes: 4 version,
+   * 1 input count, 36 outpoint, 2 scriptSig, 4 sequence, 1 output count, 8
+   * value, 4 scriptPubKey, 4 locktime. That length is the leaf/node ambiguity
+   * class the txid tree has, and both verifiers reject it.
+   */
+  function spend64(prevTxidDisplay: string, vout: number, value: bigint): ParsedTx {
+    const parts: Uint8Array[] = [u32le(2), new Uint8Array([1])];
+    parts.push(hexToBytes(prevTxidDisplay).reverse(), u32le(vout), new Uint8Array([1, 0x51]), u32le(0xffffffff));
+    parts.push(new Uint8Array([1]), u64le(value), new Uint8Array([3, 0x51, 0x51, 0x51]));
+    parts.push(u32le(0));
+    const tx = parseTx(cat(...parts));
+    expect(tx.strippedRaw.length).toBe(64);
+    return tx;
+  }
+
+  it('rotates past a 64-byte hop transaction and resolves through the next backend', async () => {
+    const value = reveal.outputs[0].value;
+    const bad = spend64(reveal.txid, 0, value);
+    const blockB = buildBlock([bad]);
+    const r = honestRoutes();
+    // only E claims the reveal was spent, and it names a transaction no
+    // verifier will read; E2 answers that the reveal is still unspent
+    for (const [url, route] of Object.entries(routesForBlock(blockB, 105, 120))) {
+      if (url.startsWith(E)) r[url] = route;
+    }
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = {
+      spent: true,
+      txid: bad.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 105, block_hash: blockB.blockHash },
+    };
+    // the rest of E's story is complete, so without the build-time rule the
+    // walk finished and the caller's own bundle was refused at verification
+    r[`${E}/tx/${bad.txid}/outspend/0`] = { spent: false };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...OPTS,
+      ...ANCHORS,
+      fetchFn: stubFetch(r),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.hops).toBe(1);
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    expect(attempts[1].cause?.message).toMatch(/64-byte stripped serialization/);
+    expect(attempts[1].cause?.message).toMatch(new RegExp(`^${E}: hop 1 transaction`));
+  });
+
+  it('rotates past a hop the backend places before the hop it spends', async () => {
+    // strict chain order is a MUST on verifiers (SPEC-CUSTODY): increasing
+    // height, or equal height with strictly increasing position. The walk
+    // follows this backend's own outspend answers, so it can be pointed at a
+    // spend it also claims was mined five blocks BEFORE the reveal
+    const value = reveal.outputs[0].value;
+    const spend = legacySpend(reveal.txid, 0, [value]);
+    const blockB = buildBlock([spend]);
+    const r = honestRoutes();
+    for (const [url, route] of Object.entries(routesForBlock(blockB, 95, 120))) {
+      if (url.startsWith(E)) r[url] = route;
+    }
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = {
+      spent: true,
+      txid: spend.txid,
+      vin: 0,
+      status: { confirmed: true, block_height: 95, block_hash: blockB.blockHash },
+    };
+    // the rest of E's story is complete, so without the build-time rule the
+    // walk finished and the caller's own bundle was refused at verification
+    r[`${E}/tx/${spend.txid}/outspend/0`] = { spent: false };
+
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...OPTS,
+      ...ANCHORS,
+      fetchFn: stubFetch(r),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.hops).toBe(1);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    expect(attempts[1].cause?.message).toMatch(
+      /hop 1 sits at height 95 position 1 and hop 0 at height 100 position 1/,
+    );
+    expect(attempts[1].cause?.message).toMatch(/does not come after what it spends/);
+  });
+
+  /**
+   * The block info a backend already served carries three fields past
+   * `tx_count`, and the build discarded them. Each is checked against another
+   * answer the same backend gave. What this cannot catch is a backend that
+   * lies consistently; that is the BIP34 residual, and it is closed by
+   * hash-at-height anchoring after the loop instead.
+   */
+  describe('block info fields the same backend contradicts', () => {
+    const trueRoot = internalToDisplay(parseHeader(hexToBytes(block.headerHex)).merkleRootLE);
+
+    /** the block info E serves, complete and honest unless a field is doctored */
+    function blockInfo(over: Record<string, unknown> = {}): object {
+      return {
+        id: block.blockHash,
+        height: 100,
+        tx_count: block.txCount,
+        merkle_root: trueRoot,
+        ...over,
+      };
+    }
+
+    const cases: [string, Record<string, unknown>, RegExp][] = [
+      [
+        'an id naming another block',
+        { id: 'aa'.repeat(32) },
+        /identifies itself as aa+, and the status of .* named/,
+      ],
+      ['a height contradicting the status', { height: 101 }, /says height 101, its status says height 100/],
+      [
+        'a merkle root the header does not carry',
+        { merkle_root: 'bb'.repeat(32) },
+        /says merkle root bb+, and the header it served for that block carries/,
+      ],
+    ];
+
+    for (const [what, over, message] of cases) {
+      it(`rotates past ${what}`, async () => {
+        const r = honestRoutes();
+        // E2's copy stays honest and complete, so only the named field differs
+        r[`${E2}/block/${block.blockHash}`] = blockInfo();
+        r[`${E}/block/${block.blockHash}`] = blockInfo(over);
+        const attempts: AttemptInfo[] = [];
+        const res = await fetchCustody(id, {
+          ...OPTS,
+          ...ANCHORS,
+          fetchFn: stubFetch(r),
+          onAttempt: (info) => attempts.push(info),
+        });
+        expect(res.custody.hops).toBe(1);
+        expect(res.custody.satpoint.txid).toBe(reveal.txid);
+        expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+        expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+        expect(attempts[1].cause?.message).toMatch(message);
+      });
+    }
+
+    it('builds when all three agree with the other answers', async () => {
+      const r = honestRoutes();
+      r[`${E}/block/${block.blockHash}`] = blockInfo();
+      const res = await fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(r) });
+      expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    });
+  });
+});

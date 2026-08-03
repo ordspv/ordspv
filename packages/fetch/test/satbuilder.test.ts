@@ -1288,12 +1288,16 @@ describe('fetchSatIdentity', () => {
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
     // the hop is folded against itself at build time now, so a height only the
     // status carries is caught as that member contradicting itself. The
-    // doctored height therefore reaches the merkle proof too, which is the
-    // pooled request every member here answers the same way. What the test is
-    // about is unchanged: one member's own answer decides the subsidy boundary
-    // inside the attempt that member leads
+    // doctored height therefore reaches the merkle proof and the block info
+    // too, which are the pooled requests every member here answers the same
+    // way. That is the shape of the limit the build cannot close: a member
+    // whose answers all agree on a wrong height is indistinguishable from an
+    // honest one inside the build, and only hash-at-height anchoring or the
+    // BIP34 push settles it. What the test is about is unchanged: one member's
+    // own answer decides the subsidy boundary inside the attempt it leads
     (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
       900_000;
+    (routes[`${E}/block/${st.block_hash}`] as { height: number }).height = 900_000;
     const fetchFn: FetchFn = (url, init) => {
       if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
         return Promise.resolve(new Response('no coinbase status', { status: 404 }));
@@ -1391,12 +1395,16 @@ describe('fetchSatIdentity', () => {
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
     // the hop is folded against itself at build time now, so a height only the
     // status carries is caught as that member contradicting itself. The
-    // doctored height therefore reaches the merkle proof too, which is the
-    // pooled request every member here answers the same way. What the test is
-    // about is unchanged: one member's own answer decides the subsidy boundary
-    // inside the attempt that member leads
+    // doctored height therefore reaches the merkle proof and the block info
+    // too, which are the pooled requests every member here answers the same
+    // way. That is the shape of the limit the build cannot close: a member
+    // whose answers all agree on a wrong height is indistinguishable from an
+    // honest one inside the build, and only hash-at-height anchoring or the
+    // BIP34 push settles it. What the test is about is unchanged: one member's
+    // own answer decides the subsidy boundary inside the attempt it leads
     (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
       900_000;
+    (routes[`${E}/block/${st.block_hash}`] as { height: number }).height = 900_000;
     const fetchFn: FetchFn = (url, init) => {
       if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
         return Promise.resolve(new Response('no coinbase status', { status: 404 }));
@@ -2172,5 +2180,79 @@ describe('fetchSatIdentity when a member answers off the configured chain', () =
       fetchFn,
     });
     expect(ok.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+  });
+});
+
+/**
+ * `parseHexTxChecked` rejects a 64-byte stripped serialization at the reveal,
+ * at every funding step and at the terminal coinbase, and no builder applied
+ * the rule. A genealogy walk has no pathfinder to misdirect, so such a
+ * transaction can only be a real member of the chain: every txid the walk asks
+ * for is named by an input it has already proven, and a substitute is caught
+ * by the txid check instead. That makes the fix's whole effect the terminal
+ * report. Each member records the transaction as no usable answer and the
+ * caller is told INCOMPLETE with both causes named, where before the walk
+ * completed and the caller's own bundle was called invalid at exit 1.
+ */
+describe('fetchSatIdentity on a funding step no verifier will read', () => {
+  it('records the 64-byte step under each member and ends at the build-failure path', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+    // 4 version, 1 input count, 36 outpoint, 2 scriptSig, 4 sequence, 1 output
+    // count, 8 value, 4 scriptPubKey, 4 locktime
+    const f64 = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: SUBSIDY, spk: new Uint8Array([0x51, 0x51, 0x51]) }],
+    );
+    expect(f64.tx.strippedRaw.length).toBe(64);
+    const commit = buildTx(
+      [{ txid: f64.tx.txid, vout: 0 }],
+      [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit, f64]);
+    const honest = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => honest(url.replace(EB, E), init);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    // nothing was refused on domain grounds, so nothing claims to be the
+    // chain's answer
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(/64-byte stripped serialization/);
+    expect(e.message).toMatch(new RegExp(`${E}: `));
+    expect(e.message).toMatch(new RegExp(`${EB}: `));
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    // the commit is funding[0], so the 64-byte step is the one behind it
+    expect(attempts[1].cause?.message).toMatch(/funding\[1\]/);
+
+    // and the same chain with a step of any other length builds
+    const wide = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: SUBSIDY, spk: new Uint8Array([0x51, 0x51, 0x51, 0x51]) }],
+    );
+    expect(wide.tx.strippedRaw.length).toBe(65);
+    const commitW = buildTx(
+      [{ txid: wide.tx.txid, vout: 0 }],
+      [{ value: 400_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const revealW = segwitTx(
+      [{ txid: commitW.tx.txid, vout: 1, witness: WITNESS }],
+      [{ value: 546n }],
+    );
+    const res = await fetchSatIdentity(`${revealW.tx.txid}i0`, {
+      ...OPTS,
+      fetchFn: stubFetch(chainRoutes(coinbase, revealW, [commitW, wide])),
+    });
+    expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT) + 400_000_000n);
+    expect(res.bundle.funding).toHaveLength(2);
   });
 });

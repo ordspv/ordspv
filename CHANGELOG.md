@@ -7,6 +7,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Three more verifier checks now have a build-time equivalent, so one
+  backend's wrong answer costs one attempt.** The same defect at three sites:
+  a check the verifier runs had nothing behind it in either builder, so a
+  backend serving an answer that was well formed and wrong bought the whole
+  walk, and the caller was told its own bundle was invalid at exit 1 with the
+  other configured backends never asked. The 64-byte transaction rule now runs
+  at build on every transaction a bundle will carry in a proven position: the
+  reveal in both builders, each custody hop, each genealogy funding step, the
+  terminal coinbase, and the coinbase the reveal's witness section is built
+  from. The custody walk tests each hop it appends against the one before it
+  for strict chain order, increasing height or equal height with strictly
+  increasing position, which is what `verifyCustodyBundle` requires and what
+  SPEC-CUSTODY states as a MUST on verifiers. And `AnchorBackend.getBlockInfo`
+  returns the whole block summary rather than the transaction count alone, so
+  the block's own `id`, `height` and `merkle_root` are checked against the
+  status and the header the same backend served, at no extra request. Each
+  failure is `HopConsistencyError`, which is one backend producing no usable
+  answer and never a refusal. What the block info checks do not catch is a
+  backend that lies consistently: a real block hash presented at a wrong
+  height, with that backend's status, merkle proof and block info all agreeing
+  on it, is indistinguishable from an honest answer inside the build, because
+  a header commits to no height above the BIP34 coinbase push. That case is
+  settled after the loop by `makeHeaderTrust`'s hash-at-height anchoring and by
+  `verifySatGenealogy`'s BIP34 test on the terminal coinbase.
 - **The reveal's witness section is folded against the block's own commitment
   before it is attached.** The builder tested two things about the raw block a
   backend served, that its header hashed to the hop's block hash and that the

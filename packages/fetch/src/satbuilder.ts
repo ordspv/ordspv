@@ -51,6 +51,7 @@ import {
   assembleAnchoredHop,
   attachRevealWitnessSection,
   bindRevealEnvelope,
+  checkTxNotAmbiguous,
   HopConsistencyError,
   type AnchorBackend,
   type WitnessSectionMode,
@@ -270,6 +271,7 @@ export async function buildSatGenealogyBundle(
       if (tx.txid !== id.txid) {
         throw new SatBuildError(`backend served ${tx.txid} for requested ${id.txid}`);
       }
+      checkTxNotAmbiguous(m.baseUrl, tx, `reveal ${tx.txid}`);
       return { revealHex: hex, reveal: tx };
     });
     const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
@@ -355,6 +357,14 @@ export async function buildSatGenealogyBundle(
     if (tx.txid !== expectTxid) {
       throw new SatBuildError(`backend served ${tx.txid} for requested ${expectTxid}`);
     }
+    // `parseHexTxChecked` applies the 64-byte rule to every element the bundle
+    // carries, the funding steps as well as the terminal coinbase, so both
+    // reach it here at the one point the walk parses them
+    checkTxNotAmbiguous(
+      backend.baseUrl,
+      tx,
+      isCoinbaseTx(tx) ? `coinbase ${tx.txid}` : `funding[${funding.length}] ${tx.txid}`,
+    );
 
     if (isCoinbaseTx(tx)) {
       // the lead-derived span reopens for the terminal hop: the coinbase's
