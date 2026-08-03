@@ -346,6 +346,32 @@ describe('verifyCustodyBundle', () => {
     expect(() => verifyCustodyBundle(b)).toThrow(/path folds to/);
   });
 
+  it('refuses a reveal prev tx list longer than the input count', () => {
+    // the list is aligned to the inputs, so an entry past the input count
+    // corresponds to nothing; refused rather than ignored, per SPEC-CUSTODY
+    const b = singleHopBundle();
+    b.hops[0].prevTxs.push(commitHex);
+    expect(() => verifyCustodyBundle(b)).toThrow(
+      /hop 0 \(reveal\): 2 prev txs supplied for 1 input/,
+    );
+  });
+
+  it('refuses the same surplus on a later hop', () => {
+    const outValue = revealTx.outputs[0].value;
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const bundle = singleHopBundle();
+    bundle.hops.push({
+      block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+      tx: { hex: spend.hex, pos: 0, txidBranch: [] },
+      prevTxs: [revealHex, revealHex],
+    });
+    bundle.finalSatpoint = `${spend.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(bundle, NO_POW_FLOOR)).toThrow(
+      /hop 1: 2 prev txs supplied for 1 input/,
+    );
+  });
+
   it('rejects a tampered txCount (branch depth hardening)', () => {
     const b = singleHopBundle();
     b.hops[0].block.txCount = 5000;

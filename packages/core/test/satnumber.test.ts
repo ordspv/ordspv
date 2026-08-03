@@ -339,6 +339,24 @@ describe('verifySatGenealogy', () => {
     expect(TOTAL_SATS > res.sat).toBe(true);
   });
 
+  it('refuses a reveal prev tx list longer than the input count', () => {
+    // SPEC-SAT: verifiers MUST use every prev tx supplied, so an entry past
+    // the input count, which nothing can read, is refused rather than ignored
+    const b = bundle();
+    b.reveal.prevTxs.push(commit.hex);
+    expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+      /reveal: 2 prev txs supplied for 1 input/,
+    );
+  });
+
+  it('refuses the same surplus on a funding step', () => {
+    const b = bundle();
+    b.funding[0].prevTxs.push(funding.hex);
+    expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
+      /funding\[0\]: 2 prev txs supplied for 1 input/,
+    );
+  });
+
   it('refuses a header easier than the proof-of-work floor by default', () => {
     // the reveal hop is anchored and its branch folds; the floor objects to
     // the header's target alone

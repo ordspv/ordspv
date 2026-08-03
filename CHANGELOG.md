@@ -126,6 +126,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accepted, deliberately: rejecting them can break a caller passing a flag
   an older version ignored, which is a larger behaviour change than this
   round covers.
+- **SPEC-SAT's "verifiers MUST use every prev tx supplied" was a MUST the
+  code did not keep.** Both verifiers truncated a prev tx list to the
+  transaction's input count, so a bundle padded with entries past it
+  verified with the surplus read by nothing, while the builder refuses the
+  same surplus before writing a bundle. No value either verifier uses was
+  affected. The sentence is now literal rather than narrowed: a shared
+  `checkPrevTxCount` beside `provenInputValues` refuses a list longer than
+  the input count, at the reveal and each funding step on the genealogy side
+  and at the reveal and each later hop on the custody side. A bundle the
+  reference builder never writes is now refused rather than ignored. Both
+  specs state the rule normatively: a bundle MUST NOT supply more prev txs
+  than the transaction has inputs, and verifiers MUST refuse one that does.
+  Entries within the input count beyond what a custody position needs stay
+  legitimately ignored, since SPEC-SAT allows a bundle to supply more than
+  the floor.
 
 ### Changed
 

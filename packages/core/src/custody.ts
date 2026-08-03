@@ -143,9 +143,27 @@ function mapToOutputs(tx: ParsedTx, position: bigint): Satpoint | undefined {
 }
 
 /**
+ * A bundle's prev tx list is aligned to the transaction's inputs, so an entry
+ * past the input count corresponds to nothing and would be read by nothing.
+ * Both verifiers refuse it rather than ignore it, so that SPEC-SAT's "verifiers
+ * MUST use every prev tx supplied" is a rule the code keeps and not a rule the
+ * code narrows in silence.
+ */
+export function checkPrevTxCount(tx: ParsedTx, prevTxsHex: string[], label: string): void {
+  if (prevTxsHex.length > tx.inputs.length) {
+    throw new Error(
+      `${label}: ${prevTxsHex.length} prev txs supplied for ${tx.inputs.length} input(s); ` +
+        `an entry past the input count corresponds to no input`,
+    );
+  }
+}
+
+/**
  * Values of a transaction's inputs 0..upTo (inclusive), proven by the previous
  * transactions themselves: prevTxs[i] must hash to the txid named by input i.
- * prevTxs entries beyond upTo are ignored (they cannot affect the position).
+ * prevTxs entries within the input count but beyond upTo are ignored, because
+ * they cannot affect the position; entries past the input count are refused by
+ * checkPrevTxCount before this function is reached.
  */
 export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: number): bigint[] {
   if (upTo >= tx.inputs.length) throw new Error(`input index ${upTo} out of range`);
@@ -582,6 +600,7 @@ export function verifyCustodyBundle(
   }
   // the txid anchor above does not cover the witness the envelope came out of;
   // bind it before the pointer or the envelope input index is used for anything
+  checkPrevTxCount(reveal, revealHop.prevTxs, 'hop 0 (reveal)');
   const binding = verifyEnvelopeBinding(reveal, inscription, revealHop.prevTxs, 'hop 0 (reveal)');
   const revealValues = provenInputValues(reveal, revealHop.prevTxs, inscription.input);
   const genesis = genesisSatpoint(reveal, inscription, revealValues, revealHop.block.height);
@@ -625,6 +644,7 @@ export function verifyCustodyBundle(
     if (j === -1) {
       throw new Error(`${label}: transaction does not spend tracked satpoint ${formatSatpoint(current)}`);
     }
+    checkPrevTxCount(tx, hop.prevTxs, label);
     const values = provenInputValues(tx, hop.prevTxs, j);
     if (current.offset >= values[j]) {
       throw new Error(

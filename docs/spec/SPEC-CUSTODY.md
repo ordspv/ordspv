@@ -223,6 +223,12 @@ Previous transactions need no 64-byte check: none of them is folded into a
 tree, and each is pinned by the txid the input spending it names, so hashing to
 that txid is the whole of what they have to satisfy.
 
+A hop's `prevTxs` list is aligned to its transaction's inputs, entry `i` to
+input `i`. A bundle MUST NOT supply more `prevTxs` entries than the hop's
+transaction has inputs, since an entry past the input count corresponds to no
+input, and verifiers MUST refuse a hop that supplies one rather than ignore
+the surplus.
+
 Builders carry a hop cap, since the walk spends requests per hop against a
 live backend; the reference builder defaults to 64 confirmed transfers and
 exposes it as `--max-hops`. A builder that stops at its cap MUST report that

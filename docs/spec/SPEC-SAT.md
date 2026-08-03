@@ -68,7 +68,10 @@ get wrong: a valid pointer can place the start position in an input *later*
 than the one carrying the envelope. Proving inputs `0..k` is therefore a floor
 and not a ceiling. A bundle MUST supply prev txs for inputs `0..k` so the
 envelope input's value is proven, MAY supply more, and MUST supply enough to
-reach the start position. Verifiers MUST use every prev tx supplied.
+reach the start position. Verifiers MUST use every prev tx supplied. A bundle
+MUST NOT supply more prev txs than the transaction has inputs, and verifiers
+MUST refuse a bundle that does: an entry past the input count corresponds to
+no input, so accepting it would mean accepting bytes that nothing examines.
 
 A start position at or past the total output sats means the inscription bound
 to fee sats (ord routes it through the block's coinbase); verifiers MUST

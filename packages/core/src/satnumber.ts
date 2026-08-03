@@ -26,6 +26,7 @@ import { hexToBytes } from './bytes.js';
 import { parseHeader } from './header.js';
 import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
 import {
+  checkPrevTxCount,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   isCoinbaseTx,
@@ -379,11 +380,12 @@ export function verifySatGenealogy(
   // the reveal is anchored by txid, which does not cover the witness carrying
   // this envelope; bind it to the commit output before its pointer or its
   // input index is used to derive a position
+  checkPrevTxCount(reveal, bundle.reveal.prevTxs, 'reveal');
   const binding = verifyEnvelopeBinding(reveal, inscription, bundle.reveal.prevTxs, 'reveal');
   // prevTxs must cover at least inputs 0..k so the envelope input's value is
   // proven; a pointer can push the start position into a LATER input, so any
   // additional prev txs the bundle supplies are used too
-  const revealUpTo = Math.min(bundle.reveal.prevTxs.length, reveal.inputs.length) - 1;
+  const revealUpTo = bundle.reveal.prevTxs.length - 1;
   if (revealUpTo < k) {
     throw new Error(
       `reveal needs prev txs for inputs 0..${k}, got ${bundle.reveal.prevTxs.length}`,
@@ -450,7 +452,8 @@ export function verifySatGenealogy(
       );
     }
     const pos = outputSpacePosition(tx, expectVout, offset);
-    const upTo = Math.min(bundle.funding[i].prevTxs.length, tx.inputs.length) - 1;
+    checkPrevTxCount(tx, bundle.funding[i].prevTxs, label);
+    const upTo = bundle.funding[i].prevTxs.length - 1;
     if (upTo < 0) throw new Error(`${label}: no prev txs provided`);
     const values = provenInputValues(tx, bundle.funding[i].prevTxs, upTo);
     step = containingInput(tx, values, pos);
