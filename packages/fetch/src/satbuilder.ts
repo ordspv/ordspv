@@ -336,6 +336,19 @@ export async function buildSatGenealogyBundle(
       position = 0n;
       for (let i = 0; i < k; i++) position += revealValues[i];
     }
+    // a position at or past the total output sats binds the inscription to
+    // fee sats, which ord routes through the block's coinbase. The pointer
+    // branch cannot reach this, because `pointer < totalOut` is its own gate,
+    // so the check covers the default branch and states the rule once for
+    // both. The class is recordable and the loop rotates on it, which is
+    // right here: `k` comes from a reveal witness the txid does not commit
+    // to, so one backend can reach this refusal where another does not
+    if (position >= totalOut) {
+      throw new CustodyUnsupportedError(
+        'inscription is bound to fee sats at reveal; v1 does not track sats through fees',
+        revealHop.block.height,
+      );
+    }
 
     // a pointer can land past the envelope input, so the reveal may need prev
     // txs for inputs beyond k; the verifier accepts and uses them

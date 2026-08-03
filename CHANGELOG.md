@@ -5,6 +5,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sat` answered where `custody` refuses: an inscription whose start
+  position is in the reveal's fee region got a sat number, a name and a
+  rarity at exit 0, while `custody` refuses the same inscription at exit 4.**
+  The number was not forgeable and it was wrong. The condition is a real
+  on-chain one rather than a served lie: the reveal's own proven input values
+  and its own outputs decide it, so every honest backend produced the same
+  answer, and the sat ord actually assigns depends on block-level fee
+  accounting the walk never does. SPEC-CUSTODY has always made the refusal a
+  MUST on the custody side, and SPEC-SAT deferred to it by cross-reference
+  without restating the fee rule, which is how the gap survived: the
+  genealogy verifier computed the start position and never compared it to the
+  reveal's total output sats. `verifySatGenealogy` and the genealogy builder
+  now refuse a start position at or past the total output sats with
+  `CustodyUnsupportedError`, the class the custody side raises for the same
+  inscription. The check sits after the position branch, because the pointer
+  branch cannot reach it: a pointer at or past the total output sats is
+  ignored, so the rule bites on the default position summed from the inputs
+  ahead of the envelope. At build the refusal is recorded under the leading
+  member's name and the loop rotates, since the envelope's input index comes
+  from a reveal witness the txid does not commit to, so one backend can reach
+  this refusal where another does not. SPEC-SAT's start-position section now
+  states the fee rule itself.
+
 ### Changed
 
 - **The genealogy loop stopped treating the pool's failover as if it covered

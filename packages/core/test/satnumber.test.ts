@@ -11,6 +11,7 @@ import {
   coinbaseSatAt,
   bip34Height,
   verifySatGenealogy,
+  verifyCustodyBundle,
   verifyEnvelopeBinding,
   inscriptionsFromTx,
   serializeFull,
@@ -22,6 +23,7 @@ import {
   TOTAL_SATS,
   LAST_SAT,
   type SatGenealogyBundleJson,
+  type CustodyBundleJson,
   type CustodyHopJson,
   type ParsedTx,
   bytesToHex,
@@ -1010,6 +1012,113 @@ describe('wtxid-anchored reveals (genealogy)', () => {
     (b.reveal as { witness?: unknown }).witness = null;
     expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(
       /witness section: must be a non-null object/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fee-bound reveals: both verifiers refuse the same inscription with one class
+// ---------------------------------------------------------------------------
+
+describe('fee-bound reveals', () => {
+  // the wrong-answer repro: a two-input reveal, envelope on input 1, input 0
+  // worth 1000 sats, 500 total output sats, wtxid anchored. The default start
+  // position is sum(inputValue[0..0]) = 1000, at or past the 500 output sats,
+  // so the inscription bound to fee sats and the sat ord assigns depends on
+  // block-level fee accounting the walk never does. The genealogy verifier
+  // used to return a sat number for this at exit 0 while the custody verifier
+  // refused it at exit 4
+  const SIG = new Uint8Array(64).fill(7);
+  const env = envelopeScript({ fields: [[1, 'text/plain']], body: ['fee'] }, { checksigPrefix: true });
+  const tapFee = taprootCommit(env);
+  const cb = buildCoinbase([{ value: 3_000_000_000n }]);
+  const commit = buildTx(
+    [{ txid: cb.tx.txid, vout: 0 }],
+    [
+      { value: 1000n },
+      { value: 20_000n, spk: tapFee.scriptPubKey },
+    ],
+  );
+  const reveal = buildSegwitTx(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [SIG] },
+      { txid: commit.tx.txid, vout: 1, witness: [SIG, env, tapFee.controlBlock] },
+    ],
+    [{ value: 500n }],
+  );
+  const block = buildBlock([reveal.tx]);
+  const witnessSection = {
+    coinbaseHex: bytesToHex(block.txs[0].raw),
+    coinbaseTxidBranch: block.txidBranch(0),
+    wtxidBranch: block.wtxidBranch(1),
+  };
+
+  function genealogyBundle(): SatGenealogyBundleJson {
+    return {
+      version: 1,
+      inscriptionId: `${reveal.tx.txid}i0`,
+      reveal: {
+        block: { height: 2000, hash: block.blockHash, header: block.headerHex, txCount: block.txCount },
+        tx: { hex: reveal.hex, pos: 1, txidBranch: block.txidBranch(1) },
+        prevTxs: [commit.hex, commit.hex],
+        witness: { ...witnessSection },
+      },
+      funding: [{ tx: { hex: commit.hex }, prevTxs: [cb.hex] }],
+      coinbase: anchoredHop(cb.tx.txidLE, cb.hex, 1000, []),
+      claimedSat: '0',
+    };
+  }
+
+  function custodyBundle(): CustodyBundleJson {
+    return {
+      version: 1,
+      inscriptionId: `${reveal.tx.txid}i0`,
+      hops: [
+        {
+          block: { height: 2000, hash: block.blockHash, header: block.headerHex, txCount: block.txCount },
+          tx: { hex: reveal.hex, pos: 1, txidBranch: block.txidBranch(1) },
+          prevTxs: [commit.hex, commit.hex],
+          witness: { ...witnessSection },
+        },
+      ],
+      finalSatpoint: `${reveal.tx.txid}:0:0`,
+    };
+  }
+
+  it('refuses the genealogy with the fee message and the reveal height', () => {
+    expect(() => verifySatGenealogy(genealogyBundle(), FIXTURE_OPTS)).toThrow(CustodyUnsupportedError);
+    expect(() => verifySatGenealogy(genealogyBundle(), FIXTURE_OPTS)).toThrow(
+      /inscription is bound to fee sats at reveal; v1 does not track sats through fees/,
+    );
+    let thrown: unknown;
+    try {
+      verifySatGenealogy(genealogyBundle(), FIXTURE_OPTS);
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as CustodyUnsupportedError).height).toBe(2000);
+  });
+
+  it('is refused by both verifiers with the same class', () => {
+    // the finding's actual shape: two commands disagreeing about one
+    // inscription. This is also the first coverage of the custody side's own
+    // fee refusal
+    let fromSat: unknown;
+    try {
+      verifySatGenealogy(genealogyBundle(), FIXTURE_OPTS);
+    } catch (e) {
+      fromSat = e;
+    }
+    let fromCustody: unknown;
+    try {
+      verifyCustodyBundle(custodyBundle(), NO_POW_FLOOR);
+    } catch (e) {
+      fromCustody = e;
+    }
+    expect(fromSat).toBeInstanceOf(CustodyUnsupportedError);
+    expect(fromCustody).toBeInstanceOf(CustodyUnsupportedError);
+    expect((fromCustody as Error).message).toMatch(
+      /inscription is bound to fee sats at reveal; custody v1 does not track sats through fees/,
     );
   });
 });

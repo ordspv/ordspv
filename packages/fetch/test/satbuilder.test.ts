@@ -2176,6 +2176,69 @@ describe('fetchSatIdentity with multi-input reveals', () => {
   });
 });
 
+describe('fetchSatIdentity with a fee-bound reveal', () => {
+  // the wrong-answer repro at the builder: a two-input reveal, envelope on
+  // input 1, input 0 worth 1000 sats, 500 total output sats. The default
+  // start position is 1000, at or past the total output sats, so the
+  // inscription bound to fee sats. `k` comes from a reveal witness the txid
+  // does not commit to, so the refusal is one backend's word: the loop
+  // records it under the lead's name and rotates, and two members refusing
+  // alike is the shared-refusal path
+  const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
+  const commit = buildTx(
+    [{ txid: coinbase.tx.txid, vout: 0 }],
+    [
+      { value: 1000n },
+      { value: 20_000n, spk: TAP.scriptPubKey },
+    ],
+  );
+  const reveal = segwitTx(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [new Uint8Array(64).fill(7)] },
+      { txid: commit.tx.txid, vout: 1, witness: WITNESS },
+    ],
+    [{ value: 500n }],
+  );
+  const revealBlock = buildBlock([reveal.tx]);
+  const cbBlock = mineBlock([coinbase.tx]);
+  const routes: Record<string, Route> = {
+    ...routesFor(cbBlock, CB_HEIGHT, TIP),
+    ...routesFor(revealBlock, REVEAL_HEIGHT, TIP),
+    [`${E}/tx/${commit.tx.txid}/hex`]: commit.hex,
+    [`${E}/block/${revealBlock.blockHash}/raw`]: serializeBlock(
+      hexToBytes(revealBlock.headerHex),
+      revealBlock.txs,
+    ),
+  };
+
+  it('records the refusal under each lead and reports it shared', async () => {
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const attempts: AttemptInfo[] = [];
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, {
+      ...OPTS,
+      esplora: [E, EB],
+      fetchFn,
+      onAttempt: (info) => attempts.push(info),
+    });
+    const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+    // the shared-refusal path rethrows the domain class itself, never a
+    // wrapper code
+    expect(e).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e).not.toBeInstanceOf(SatIdentityError);
+    expect(e.message).toMatch(
+      /inscription is bound to fee sats at reveal; v1 does not track sats through fees/,
+    );
+    // recorded as the first lead's refusal, so the second member led an
+    // attempt of its own and refused the same way
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+    expect(attempts[1].cause).toBeInstanceOf(CustodyUnsupportedError);
+    expect(e.unanimous).toBe(true);
+    expect(e.message).toMatch(/each configured backend led an attempt that ended this way/);
+  });
+});
+
 /**
  * The build-time self-check now covers every check the verifier runs on the
  * same four answers, so a member that fabricates a whole block, internally

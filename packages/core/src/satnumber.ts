@@ -409,6 +409,16 @@ export function verifySatGenealogy(
     position = 0n;
     for (let i = 0; i < k; i++) position += revealValues[i];
   }
+  // a position at or past the total output sats binds the inscription to fee
+  // sats, which ord routes through the block's coinbase. The pointer branch
+  // cannot reach this, because `pointer < totalOut` is its own gate, so the
+  // check covers the default branch and states the rule once for both
+  if (position >= totalOut) {
+    throw new CustodyUnsupportedError(
+      'inscription is bound to fee sats at reveal; v1 does not track sats through fees',
+      bundle.reveal.block.height,
+    );
+  }
   const revealPosition = position;
 
   // find the reveal input that carried the sat in

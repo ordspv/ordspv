@@ -70,6 +70,12 @@ and not a ceiling. A bundle MUST supply prev txs for inputs `0..k` so the
 envelope input's value is proven, MAY supply more, and MUST supply enough to
 reach the start position. Verifiers MUST use every prev tx supplied.
 
+A start position at or past the total output sats means the inscription bound
+to fee sats (ord routes it through the block's coinbase); verifiers MUST
+refuse (`CustodyUnsupportedError`), not guess. The pointer form cannot reach
+this case, since a pointer at or past the total output sats is ignored, so the
+rule bites on the default `sum(inputValue[0..k-1])` position.
+
 Unbound inscriptions (zero-value envelope input, or an unrecognized even field
 in the envelope) have no chain location and therefore no sat to name. v1 MUST
 refuse (`CustodyUnsupportedError`).
