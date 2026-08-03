@@ -31,6 +31,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pool(...)` rather than the member that served the bytes. The rotated
   members go in by name, lead first, so each is asked in turn and each cause
   names the member it belongs to.
+- **A caller whose backends all answered is no longer told that none of them
+  did.** Both build loops reach `BUILD_FAILED` when the refusals they recorded
+  are of unlike classes, and the note beside that code said no configured
+  backend produced a usable answer. A refusal is a usable answer, and the
+  causes printed above the note said so. The note now says that no configured
+  backend produced an answer the build could stand on, that the causes above
+  name what each one did, and that `--esplora` names others. The code and the
+  category are unchanged, because two backends refusing for different reasons
+  is a case where a third may well succeed. Four changelog entries that stated
+  a class-to-code mapping without the condition it carries, which is that
+  every configured attempt ended in that same class, are narrowed to say so.
 - **The last member of that defect: the genealogy builder checks the terminal
   coinbase's height against the coinbase's own BIP34 push.** From block
   230,000 on a coinbase states its height in its scriptSig, and
@@ -103,7 +114,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cause is recorded and the next backend is asked, so a backend serving a
   rewritten witness rotates instead of ending the build at verification, and
   the terminal class stays `WitnessSectionUnavailableError`, which reports
-  UNPROVEN with a remedy. The served block's transaction count is checked
+  UNPROVEN with a remedy when every configured backend led an attempt that
+  ended in that same class. A build whose backends refused for unlike reasons
+  reports INCOMPLETE at exit 5 with every cause named, since a third backend
+  may well answer. The served block's transaction count is checked
   against the hop's block info first, with its own cause, since a disagreement
   there folds as a branch depth and that message names the wrong thing.
 - **Each hop's build-time self-check covers every check the verifier runs on
@@ -136,7 +150,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every backend fails this way reports the build failure with each cause
   named.
 - **A build-time position refusal reports UNPROVEN with its remedy instead
-  of INVALID.** Both build loops rotate on `SatPositionError`, and the loop
+  of INVALID.** The mapping is what the caller reads when every configured
+  backend led an attempt that ended in this same class; a build whose
+  backends refused for unlike reasons reports INCOMPLETE at exit 5 with every
+  cause named. Both build loops rotate on `SatPositionError`, and the loop
   that exhausted every configured backend rethrew it to a CLI table with no
   row for the class, so the caller got exit 1, the code that means a
   document failed verification, with no remedy sentence and nothing in the
@@ -513,8 +530,9 @@ already binds.
   because a path leaving what v1 proves is a claim about the chain that the
   backends that answered cannot settle; the other refusal classes assert
   nothing about the chain and keep their codes. A verifier's own refusal
-  carries no marker and stays proven. A build where nothing was refused reports
-  `BUILD_FAILED` with every cause joined. The same class raised by
+  carries no marker and stays proven. A build where nothing was refused, and a
+  build whose refusals were of unlike classes, report `BUILD_FAILED` with every
+  cause joined. The same class raised by
   `verifyCustodyBundle` or `verifySatGenealogy` stays terminal and now passes
   through `fetchCustody`
   unwrapped as it already did through `fetchSatIdentity`, because a bundle a
@@ -617,13 +635,15 @@ already binds.
   `verifyCustodyBundle` still has no hop cap of its own; the asymmetry is known
   and tolerable because each forged hop costs a header meeting the mainnet
   proof-of-work floor, where a forged funding step costs nothing.
-- **A refusal keeps its exit code whichever command raised it.** The refusal
+- **The class-to-code mapping is one table every command reads, with rows keyed
+  by output context.** The refusal
   taxonomy existed on `ord-resolve verify` alone, so a path outside v1's domain
   exited 4 when a bundle was read back and 1 when the same inscription was
   resolved live, and neither `custody --json` nor `sat --json` emitted anything
   at all on the error path. The class-to-code mapping is now one table read by
-  all three commands, with only the prefix and the remedy sentence varying, and
-  `SatStepLimitError` joins it at exit code 3. On `--json` every command prints
+  all three commands, and a class that means one thing to a verifier and
+  another to a build loop carries a row per output context, which is what
+  `SatPositionError` needs. `SatStepLimitError` joins the table at exit code 3. On `--json` every command prints
   one JSON object carrying `ok: false`, the error class, the message and the
   remedy, and exits on the same code, with the same shape for a failure the
   table does not recognize.
@@ -677,7 +697,8 @@ already binds.
   outage, an anchoring shortfall and a genuinely forged bundle were one report
   at exit code 1, which the usage text documents as `INVALID`.
   `CustodyError('BUILD_FAILED')` and `SatIdentityError('BUILD_FAILED')` now
-  exit 5 and say that no configured backend produced a usable answer, the two
+  exit 5 and say that no configured backend produced an answer the build could
+  stand on, with the causes above the sentence naming what each one did, the two
   `HEADER_TRUST` codes exit 3 and name `--anchor-source`, and exit code 1 keeps
   meaning a document that failed verification. On `--json` a failure the table
   does not recognize reports the error's own class name rather than the literal

@@ -372,7 +372,7 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
       const human = cli(args);
       expect(human.status).toBe(5);
       expect(human.stderr).toMatch(new RegExp(`error: ${command} INCOMPLETE: `));
-      expect(human.stderr).toMatch(/No configured backend produced a usable answer/);
+      expect(human.stderr).toMatch(/No configured backend produced an answer this build could stand on/);
       expect(human.stderr).toMatch(/--esplora names others/);
 
       const json = cli([...args, '--json']);
@@ -381,7 +381,39 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.error).toBe(command === 'custody' ? 'CustodyError' : 'SatIdentityError');
       expect(String(parsed.message)).toMatch(/fetch failed/);
-      expect(String(parsed.note)).toMatch(/nothing was verified/);
+      expect(String(parsed.note)).toMatch(/the causes above name what each one did/);
+    }
+  });
+
+  it('does not tell a caller whose backends both refused that neither answered', () => {
+    // both configured backends answered and both refused, for different domain
+    // reasons, so the loop has no one class to report and reaches BUILD_FAILED.
+    // Driving that pair through the CLI needs backends serving crafted reveal
+    // witnesses, which this file has no way to run offline; the fetch suite
+    // drives the loop (satbuilder.test.ts, refusals of unlike classes) and the
+    // sentence it produces is checked here at the reporter both commands share
+    const causes =
+      `build failed:\n` +
+      `https://a.test: inscription is unbound at reveal\n` +
+      `https://b.test: position beyond the transaction's total input sats`;
+    for (const command of ['custody', 'sat']) {
+      const e =
+        command === 'custody'
+          ? new CustodyError('BUILD_FAILED', causes)
+          : new SatIdentityError('BUILD_FAILED', causes);
+      const report = refusalReport(e, 'live', command);
+      expect(report?.code).toBe(5);
+      expect(report?.note).toMatch(/No configured backend produced an answer this build could stand on/);
+      expect(report?.note).toMatch(/the causes above name what each one did/);
+      expect(report?.note).not.toMatch(/produced a usable answer/);
+      // the causes are in the message the human channel prints ahead of the note
+      const message = String(report?.message);
+      expect(message).toMatch(/https:\/\/a\.test: inscription is unbound at reveal/);
+      expect(message).toMatch(/https:\/\/b\.test: position beyond/);
+      expect(message.indexOf('https://b.test')).toBeLessThan(
+        message.indexOf('the causes above name what each one did'),
+      );
+      expect(JSON.parse(refusalJson(e, report))).toMatchObject({ ok: false, error: e.name });
     }
   });
 

@@ -213,11 +213,15 @@ export type WrapperRow =
   | { category: 'UNPROVEN' | 'INCOMPLETE'; note: string };
 
 export const WRAPPER_TABLE: Record<WrapperCode, WrapperRow> = {
+  // a refusal is a usable answer, and both loops reach this code with a set of
+  // refusals whose classes differ, so the sentence has to be true of that case
+  // as well as of a total outage. The error's own message carries every cause
+  // and the human channel prints it ahead of this note
   BUILD_FAILED: {
     category: 'INCOMPLETE',
     note:
-      `No configured backend produced a usable answer, so nothing was verified; ` +
-      `--esplora names others.`,
+      `No configured backend produced an answer this build could stand on; ` +
+      `the causes above name what each one did, and --esplora names others.`,
   },
   HEADER_TRUST: {
     category: 'UNPROVEN',

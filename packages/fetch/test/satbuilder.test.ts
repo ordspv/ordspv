@@ -936,6 +936,59 @@ describe('fetchSatIdentity', () => {
     expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
   });
 
+  it('reports refusals of unlike classes as a build failure carrying both causes', async () => {
+    // both members answered, and both refused on domain grounds, but for
+    // different reasons. There is no one class to report, so the loop reaches
+    // BUILD_FAILED, whose note used to tell the caller that no backend
+    // produced a usable answer while the causes beside it said otherwise
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const outsideScript = pointerScript(40_000);
+    // one output commits both leaves, so each member's witness binds and what
+    // it chose is which committed leaf to serve
+    const tapUnbound = taprootCommit(UNBOUND_SCRIPT, [tapLeafHash(outsideScript, 0xc0)]);
+    const tapOutside = taprootCommit(outsideScript, [tapLeafHash(UNBOUND_SCRIPT, 0xc0)]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: tapUnbound.scriptPubKey }],
+    );
+    const unbound = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), UNBOUND_SCRIPT, tapUnbound.controlBlock],
+        },
+      ],
+      [{ value: 50_000n }],
+    );
+    const outside = segwitTx(
+      [
+        {
+          txid: commit.tx.txid,
+          vout: 0,
+          witness: [new Uint8Array(64).fill(7), outsideScript, tapOutside.controlBlock],
+        },
+      ],
+      [{ value: 50_000n }],
+    );
+    expect(outside.tx.txid).toBe(unbound.tx.txid);
+
+    const routes = chainRoutes(coinbase, unbound, [commit]);
+    const eRoutes = stubFetch({ ...routes, [`${E}/tx/${unbound.tx.txid}/hex`]: unbound.hex });
+    const ebRoutes = stubFetch({ ...routes, [`${E}/tx/${unbound.tx.txid}/hex`]: outside.hex });
+    const fetchFn: FetchFn = (url, init) =>
+      url.startsWith(EB) ? ebRoutes(url.replace(EB, E), init) : eRoutes(url, init);
+
+    const p = fetchSatIdentity(`${unbound.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(new RegExp(`${E}: .*unbound at reveal`));
+    expect(e.message).toMatch(
+      new RegExp(`${EB}: .*beyond the transaction's total input sats`),
+    );
+  });
+
   it('keeps the class when the next lead member could not be reached at all', async () => {
     // E serves an unbound reveal, so its attempt ends in the domain refusal.
     // The attempt led by EB reads the honest reveal and then walks into a
