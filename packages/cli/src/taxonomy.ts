@@ -36,6 +36,7 @@ import {
 import {
   CustodyBuildError,
   CustodyError,
+  CustodyHopLimitError,
   HeaderTrustError,
   HopConsistencyError,
   OrdResolveError,
@@ -174,6 +175,18 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
     note: {
       verify: `The bundle is deeper than the verifier's cap; --max-steps N raises it.`,
       live: `The ancestry is deeper than the walk's cap; --max-steps N raises it.`,
+    },
+  },
+  // build-only: the custody verifier reads no cap, so no verify path raises
+  // the class, and the verify sentence states the build-time fact the way
+  // WitnessSectionUnavailableError's does
+  CustodyHopLimitError: {
+    ctor: CustodyHopLimitError,
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
+    nonUnanimousCategory: 'UNPROVEN',
+    note: {
+      verify: `The walk that built the bundle stopped at its hop cap; the custody verifier reads no cap of its own.`,
+      live: `The custody path is longer than the walk's cap; --max-hops N raises it.`,
     },
   },
   WitnessSectionUnavailableError: {

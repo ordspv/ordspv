@@ -66,6 +66,7 @@ import {
   type OnAttempt,
 } from './failover.js';
 import {
+  CustodyHopLimitError,
   isRecordableBuildRefusal,
   WitnessSectionUnavailableError,
   type WrapperCode,
@@ -635,8 +636,17 @@ export async function buildCustodyBundle(
     }
     // the cap bounds how many transfers the walk will follow; it only fires
     // when a further confirmed spend exists, so a path that COMPLETES at
-    // exactly maxHops transfers still builds
-    if (h > maxHops) throw new CustodyBuildError(`custody path exceeds ${maxHops} hops`);
+    // exactly maxHops transfers still builds. The class is its own rather
+    // than CustodyBuildError so a caller can tell a path longer than the cap
+    // from a backend that failed, and the remedy it names is the cap
+    if (h > maxHops) {
+      throw new CustodyHopLimitError(
+        `custody path exceeds ${maxHops} confirmed transfers; raise the cap with ` +
+          `--max-hops (or the maxHops option) if the path really is this long`,
+        maxHops,
+        h,
+      );
+    }
     const hex = await backend.getTxHex(outspend.txid);
     const tx = parseTx(hexToBytes(hex.trim()));
     checkTxNotAmbiguous(backend.baseUrl, tx, `hop ${h} transaction ${tx.txid}`);
@@ -808,11 +818,12 @@ export async function fetchCustody(
       // the rest came out of bytes nothing has bound, and which classes those
       // are is the taxonomy table's committedAtBuild answer rather than a
       // list kept here: a v1-domain refusal is read out of the served
-      // witness, and an unavailable witness section out of the block hash
-      // and the position this backend's own status and merkle proof named,
-      // either of which a hostile backend can point at a real but wrong
-      // block. Record it and ask the next backend; the verifier's own
-      // refusal, after the bundle proved its witness, stays terminal.
+      // witness, a hop cap is reached through this backend's own outspend
+      // answers, and an unavailable witness section comes out of the block
+      // hash and the position this backend's own status and merkle proof
+      // named, any of which a hostile backend can steer. Record it and ask
+      // the next backend; the verifier's own refusal, after the bundle
+      // proved its witness, stays terminal.
       // `SatPositionError` stays beside the predicate by name so both build
       // loops classify the same condition the same way, and because it
       // carries no build-time facts row of its own. Its row lives in the CLI

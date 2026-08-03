@@ -13,7 +13,12 @@ import {
   hexToBytes,
   parseTx,
 } from '@ordspv/core';
-import { CustodyError, SatIdentityError, WitnessSectionUnavailableError } from '@ordspv/fetch';
+import {
+  CustodyError,
+  CustodyHopLimitError,
+  SatIdentityError,
+  WitnessSectionUnavailableError,
+} from '@ordspv/fetch';
 import { contentResiduals, refusalJson, refusalReport } from '../src/notes.js';
 
 /**
@@ -491,6 +496,45 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
     });
     // a verifier raises the class with no marker at all, and that is proven
     expect(refusalReport(new CustodyUnsupportedError('fees x'), 'verify')?.code).toBe(4);
+  });
+
+  it('reports the custody hop cap as UNPROVEN at exit 3, naming --max-hops', () => {
+    // reaching the class live needs a backend serving a 65-transfer chain,
+    // which this file has no way to run offline; the fetch suite drives the
+    // loop and the code and the note are checked here at the reporter both
+    // channels read. Both unanimity states report the same category, since
+    // the cap is the walk's own bound rather than a claim about the chain
+    for (const unanimous of [true, false]) {
+      const e = Object.assign(
+        new CustodyHopLimitError('custody path exceeds 64 confirmed transfers', 64, 65),
+        { unanimous },
+      );
+      const report = refusalReport(e, 'live', 'custody');
+      expect(report?.code).toBe(3);
+      expect(report?.message).toMatch(
+        /^custody UNPROVEN: custody path exceeds 64 confirmed transfers\./,
+      );
+      expect(report?.note).toMatch(/--max-hops N raises it/);
+      expect(JSON.parse(refusalJson(e, report))).toMatchObject({
+        ok: false,
+        error: 'CustodyHopLimitError',
+        note: expect.stringMatching(/--max-hops N raises it/),
+      });
+    }
+  });
+
+  it('rejects --max-hops on a command other than custody, exit 2', () => {
+    // the flag bounds the custody walk alone; misplaced it is refused the way
+    // verify refuses --max-steps on a bundle it does not bound, before any
+    // command runs, so neither call below touches the network
+    const p = cli(['parse', 'not-consulted', '--max-hops', '5']);
+    expect(p.status).toBe(2);
+    expect(p.stderr).toMatch(/--max-hops applies to the custody command/);
+
+    // --esplora keeps the call off the network even if the guard regresses
+    const s = cli(['sat', `${'ab'.repeat(32)}i0`, '--max-hops', '5', '--esplora', OFFLINE]);
+    expect(s.status).toBe(2);
+    expect(s.stderr).toMatch(/--max-hops applies to the custody command/);
   });
 
   it('gives the witness-section refusal its own unproven code on both channels', () => {

@@ -223,6 +223,16 @@ Previous transactions need no 64-byte check: none of them is folded into a
 tree, and each is pinned by the txid the input spending it names, so hashing to
 that txid is the whole of what they have to satisfy.
 
+Builders carry a hop cap, since the walk spends requests per hop against a
+live backend; the reference builder defaults to 64 confirmed transfers and
+exposes it as `--max-hops`. A builder that stops at its cap MUST report that
+refusal distinguishably from a backend failure and as unproven rather than as
+a statement about the chain, since the path may honestly be longer and the
+caller may raise the cap and walk it. Verifiers carry no hop cap: every forged
+custody hop costs a header that clears the proof-of-work floor, so a hostile
+bundle is bounded by work rather than by a counter, which is the asymmetry the
+genealogy verifier's 10,000-step cap in SPEC-SAT exists to cover.
+
 `finalSatpoint` is a claim; verifiers MUST recompute the path and reject on
 mismatch.
 

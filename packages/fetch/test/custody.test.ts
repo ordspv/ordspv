@@ -19,6 +19,7 @@ import {
   buildCustodyBundle,
   fetchCustody,
   CustodyError,
+  CustodyHopLimitError,
   HopConsistencyError,
   WitnessSectionUnavailableError,
   type AnchorBackend,
@@ -275,8 +276,66 @@ describe('fetchCustody', () => {
     };
 
     const p = fetchCustody(id, { ...OPTS, maxHops: 1, fetchFn: stubFetch(routes) });
-    await expect(p).rejects.toThrow(CustodyError);
-    await expect(p).rejects.toThrow(/exceeds 1 hops/);
+    await expect(p).rejects.toThrow(CustodyHopLimitError);
+    await expect(p).rejects.toThrow(/exceeds 1 confirmed transfers/);
+    await expect(p).rejects.toThrow(/--max-hops/);
+  });
+
+  /** a chain of `n` confirmed transfers of the tracked sat, one per block */
+  function longPathSetup(n: number) {
+    const { commit, reveal, block, id } = inscriptionSetup();
+    const value = reveal.outputs[0].value;
+    const routes = routesForBlock(block, 100, 300);
+    routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    let prev: ParsedTx = reveal;
+    const spends: ParsedTx[] = [];
+    for (let i = 0; i < n; i++) {
+      const spend = legacySpend(prev.txid, 0, [value]); // no fee: offset preserved
+      const b = buildBlock([spend]);
+      Object.assign(routes, routesForBlock(b, 105 + i, 300));
+      routes[`${E}/tx/${prev.txid}/outspend/0`] = {
+        spent: true,
+        txid: spend.txid,
+        vin: 0,
+        status: { confirmed: true, block_height: 105 + i, block_hash: b.blockHash },
+      };
+      spends.push(spend);
+      prev = spend;
+    }
+    routes[`${E}/tx/${prev.txid}/outspend/0`] = { spent: false };
+    routes[`${E2}/tx/${prev.txid}/outspend/0`] = { spent: false };
+    // E2 answers everything E answers, so both backends walk the same chain
+    const base = stubFetch(routes);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(E2, E), init);
+    return { id, spends, fetchFn };
+  }
+
+  it('reports a path past the default cap in its own class, unanimous over both backends', async () => {
+    // 65 confirmed transfers, one past the default cap of 64. The length is
+    // the chain's and every backend walks to the same wall, so the refusal
+    // must be tellable from a backend failure and must name the remedy the
+    // caller actually has, which is the cap rather than another backend
+    const { id, fetchFn } = longPathSetup(65);
+    const p = fetchCustody(id, { ...OPTS, fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as CustodyHopLimitError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyHopLimitError);
+    expect(e.unanimous).toBe(true);
+    expect(e.cap).toBe(64);
+    expect(e.hops).toBe(65);
+    expect(e.message).toMatch(/custody path exceeds 64 confirmed transfers/);
+    expect(e.message).toMatch(/raise the cap with --max-hops/);
+    expect(e.message).toMatch(/each configured backend led an attempt that ended this way/);
+  });
+
+  it('completes the path the default refuses when maxHops raises the cap', async () => {
+    // the remedy the refusal names has to work: the same 65-transfer chain,
+    // refused at the default, builds and verifies under the raised cap
+    const { id, spends, fetchFn } = longPathSetup(65);
+    const res = await fetchCustody(id, { ...OPTS, maxHops: 65, fetchFn });
+    expect(res.custody.hops).toBe(66);
+    expect(res.custody.satpoint.txid).toBe(spends[spends.length - 1].txid);
+    expect(res.custody.satpoint.offset).toBe(0n);
+    expect(res.pendingSpendTxid).toBeUndefined();
   });
 
   it('surfaces a fee-spillover path as CustodyUnsupportedError once every backend reports it', async () => {

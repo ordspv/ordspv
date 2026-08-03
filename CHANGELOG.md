@@ -7,6 +7,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A custody path longer than 64 confirmed transfers reported INCOMPLETE at
+  exit 5, with a remedy naming other backends for a fact no backend can
+  change.** The walk's cap raised `CustodyBuildError`, which the build loop
+  records as one backend's failure, so every backend walked to the same wall
+  and the caller got `BUILD_FAILED` with a note ending in `--esplora` naming
+  others. The path length is chain truth; the only remedy is the cap, and
+  nothing supplied it: `fetchCustody` accepted `maxHops` and no flag passed it
+  through. The walk now raises `CustodyHopLimitError`, carrying the cap and
+  the hop count reached, recordable in the taxonomy the way
+  `SatStepLimitError` is, so the refusal rotates and a wall every configured
+  backend reached reports as a shared, unanimous refusal. The CLI reports it
+  UNPROVEN at exit 3 with a note naming `--max-hops N`, the new `custody`
+  flag, validated the way `--max-steps` is and refused at exit 2 on any other
+  command. The default stays at 64; raising it is a separate decision that
+  needs a measurement of how many confirmed transfers real inscriptions
+  accumulate, and none exists. SPEC-CUSTODY now states the builder cap and
+  that the custody verifier has no cap of its own, since every forged hop
+  costs a header that clears the proof-of-work floor.
 - **`sat` answered where `custody` refuses: an inscription whose start
   position is in the reveal's fee region got a sat number, a name and a
   rarity at exit 0, while `custody` refuses the same inscription at exit 4.**

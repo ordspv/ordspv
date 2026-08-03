@@ -53,6 +53,36 @@ export class WitnessSectionUnavailableError extends Error {
 }
 
 /**
+ * The custody walk hit its hop cap with a further confirmed spend still
+ * ahead, so a caller can tell a path that is merely longer than the cap from
+ * a backend that failed. It carries the cap that fired and the hop count the
+ * walk had reached. `SatStepLimitError` is the same fact on the sat side; the
+ * class differs because the custody verifier has no cap and core therefore
+ * has no stake in it, so it lives in this package alone.
+ *
+ * The count that reaches the cap follows the backend's own outspend answers,
+ * which the reveal txid does not commit to, so the build loop records the
+ * refusal as that backend's cause and rotates, at the cost of a second walk.
+ *
+ * Defined here rather than beside `CustodyBuildError` in `custodybuilder.ts`
+ * for the same reason `WitnessSectionUnavailableError` is: the facts table
+ * below holds its constructor, and it cannot import from a module that
+ * imports this one back.
+ */
+export class CustodyHopLimitError extends Error {
+  constructor(
+    message: string,
+    /** the cap that fired */
+    public readonly cap: number,
+    /** the hop count the walk had reached when it fired */
+    public readonly hops: number,
+  ) {
+    super(message);
+    this.name = 'CustodyHopLimitError';
+  }
+}
+
+/**
  * The code strings `CustodyError` and `SatIdentityError` carry. They are one
  * named union so the CLI's code-to-category table can be keyed on it and fail
  * to compile when a code is added without a row.
@@ -71,6 +101,7 @@ export type RefusalClassName =
   | 'EnvelopeIndexUnprovenError'
   | 'CoinbaseHeightUnprovenError'
   | 'SatStepLimitError'
+  | 'CustodyHopLimitError'
   | 'WitnessSectionUnavailableError';
 
 export interface RefusalClassFacts {
@@ -100,6 +131,9 @@ export const REFUSAL_CLASS_FACTS: Record<RefusalClassName, RefusalClassFacts> = 
   // the depth that reaches the cap follows from a start position read out of
   // an unbound reveal witness
   SatStepLimitError: { ctor: SatStepLimitError, committedAtBuild: false },
+  // the hop count that reaches the cap follows the backend's own outspend
+  // answers, which the reveal txid does not commit to
+  CustodyHopLimitError: { ctor: CustodyHopLimitError, committedAtBuild: false },
   // the block hash and the in-block position come from the leading backend's
   // own status and merkle proof
   WitnessSectionUnavailableError: {

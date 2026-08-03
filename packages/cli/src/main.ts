@@ -161,7 +161,7 @@ async function main(): Promise<void> {
         '                                              proof, custody or sat genealogy',
         '      a successful verify prints its JSON report whether or not --json is',
         '      passed; the flag controls the failure channel',
-        '  ord-resolve custody <inscription-id> [--json]',
+        '  ord-resolve custody <inscription-id> [--json] [--max-hops N]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
         'options: --esplora url[,url]  --gateway url[,url]  --anchor-source url[,url]',
@@ -170,6 +170,8 @@ async function main(): Promise<void> {
         '      proof, which proves the envelope index and the witness the chain ran',
         '  --max-steps N   funding steps the sat walk follows, and the bound the',
         '      verifier reads a genealogy bundle under',
+        '  --max-hops N    confirmed transfers the custody walk follows (custody only;',
+        '      the custody verifier reads no cap)',
         'exit codes: 0 ok  1 INVALID  2 usage  3 UNPROVEN  4 OUT OF SCOPE',
         '  5 INCOMPLETE   1 is a document that failed verification, 5 is a build',
         '      no configured backend completed, and nothing was verified',
@@ -195,6 +197,13 @@ async function main(): Promise<void> {
   const witnessSection = witnessSectionArg as WitnessSectionMode;
 
   const [command] = positional;
+
+  // the flag bounds the custody walk alone: verify reads no custody cap and
+  // sat has --max-steps, so anywhere else it is a misplaced flag, refused the
+  // way verify refuses --max-steps on a bundle it does not bound
+  if (flags.has('max-hops') && command !== 'custody') {
+    fail('--max-hops applies to the custody command', 2);
+  }
 
   if (command === 'parse') {
     const uri = positional[1] ?? fail('parse: missing uri', 2);
@@ -224,9 +233,18 @@ async function main(): Promise<void> {
     const idArg = positional[1] ?? fail('custody: missing inscription id', 2);
     const parsed = parseOrdUri(idArg);
     try {
+      const maxHopsArg = str(flags.get('max-hops'));
+      let maxHops: number | undefined;
+      if (maxHopsArg !== undefined) {
+        maxHops = Number(maxHopsArg);
+        if (!Number.isInteger(maxHops) || maxHops < 1) {
+          fail('custody: --max-hops must be a positive integer', 2);
+        }
+      }
       const res = await fetchCustody(`${parsed.id.txid}i${parsed.id.index}`, {
         esplora,
         anchorSources,
+        maxHops,
         witnessSection,
         onAttempt: reportAttempt,
       });

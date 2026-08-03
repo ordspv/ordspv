@@ -9,6 +9,7 @@ import {
   SatStepLimitError,
 } from '@ordspv/core';
 import {
+  CustodyHopLimitError,
   isRecordableBuildRefusal,
   REFUSAL_CLASS_FACTS,
   WitnessSectionUnavailableError,
@@ -99,6 +100,7 @@ describe('refusal taxonomy coverage', () => {
     expect(REFUSAL_TABLE.EnvelopeIndexUnprovenError.note.live).toMatch(/--witness-section/);
     expect(REFUSAL_TABLE.SatStepLimitError.note.verify).toMatch(/--max-steps/);
     expect(REFUSAL_TABLE.SatStepLimitError.note.live).toMatch(/--max-steps/);
+    expect(REFUSAL_TABLE.CustodyHopLimitError.note.live).toMatch(/--max-hops/);
     expect(REFUSAL_TABLE.CoinbaseHeightUnprovenError.note.live).toMatch(/--anchor-source/);
     expect(REFUSAL_TABLE.WitnessSectionUnavailableError.note.live).toMatch(/--esplora/);
     expect(REFUSAL_TABLE.SatPositionError.note.live).toMatch(/--esplora/);
@@ -113,6 +115,7 @@ describe('the build-time rotate predicate', () => {
   it('records exactly the classes whose deciding data the txid does not commit', () => {
     expect(isRecordableBuildRefusal(new CustodyUnsupportedError('x'))).toBe(true);
     expect(isRecordableBuildRefusal(new SatStepLimitError('x'))).toBe(true);
+    expect(isRecordableBuildRefusal(new CustodyHopLimitError('x', 64, 65))).toBe(true);
     expect(isRecordableBuildRefusal(new WitnessSectionUnavailableError('x'))).toBe(true);
     // no builder raises the class today; the row says what would hold if one did
     expect(isRecordableBuildRefusal(new CoinbaseHeightUnprovenError('x'))).toBe(true);
