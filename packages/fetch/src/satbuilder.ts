@@ -191,6 +191,13 @@ export async function buildSatGenealogyBundle(
     witnessBackends?: AnchorBackend[];
     witnessSection?: WitnessSectionMode;
     /**
+     * Proof-of-work floor for both endpoint headers, in `checkPowLimit`'s
+     * convention: `undefined` is the mainnet limit and `null` disables it.
+     * The caller's verification applies the same floor, so passing it here is
+     * what lets a header under it cost one attempt rather than a whole walk.
+     */
+    powLimitBits?: number | null;
+    /**
      * The backend the walk's deciding requests are made against: the
      * reveal's tx hex, its status, its merkle proof, and the terminal
      * coinbase's status, whose answers decide every domain refusal the walk
@@ -283,7 +290,13 @@ export async function buildSatGenealogyBundle(
           getBlockInfo: (h) => backend.getBlockInfo(h),
         }
       : backend;
-    const revealHop = await assembleAnchoredHop(revealAnchor, reveal, revealHex, k);
+    const revealHop = await assembleAnchoredHop(
+      revealAnchor,
+      reveal,
+      revealHex,
+      k,
+      options.powLimitBits,
+    );
     await attachRevealWitnessSection(
       options.witnessBackends ?? [backend],
       reveal,
@@ -360,7 +373,13 @@ export async function buildSatGenealogyBundle(
               getBlockInfo: (h) => backend.getBlockInfo(h),
             }
           : backend;
-        const coinbaseHop = await assembleAnchoredHop(coinbaseAnchor, tx, hex, -1);
+        const coinbaseHop = await assembleAnchoredHop(
+          coinbaseAnchor,
+          tx,
+          hex,
+          -1,
+          options.powLimitBits,
+        );
         const pos = outputSpacePosition(tx, expectVout, offset);
         // throws CustodyUnsupportedError for fee-tail positions, before the
         // caller spends anything on verification
@@ -532,6 +551,9 @@ export async function fetchSatIdentity(
       built = await buildSatGenealogyBundle(inscriptionId, attempt, {
         maxSteps: options.maxSteps,
         witnessSection: options.witnessSection,
+        // the same floor the verification below applies, so a header under it
+        // costs one attempt rather than a whole walk plus a refused bundle
+        powLimitBits: options.powLimitBits,
         // the pool already rotates every member for the raw block request and
         // names each one's cause, so it is the whole witness-backend list
         witnessBackends: [attempt],

@@ -217,8 +217,31 @@ export interface TestBlock {
   wtxidBranch(pos: number): string[];
 }
 
-/** Build a consensus-shaped block: coinbase with witness commitment + mined header. */
-export function buildBlock(nonCoinbaseTxs: ParsedTx[]): TestBlock {
+/**
+ * Mine a header over `merkleRootLE` at the given compact target. Regtest
+ * (0x207fffff) is one hash; a floor test needs a header harder than the floor
+ * it is testing, and 0x2000ffff costs about 256 hashes.
+ */
+export function mineHeader(merkleRootLE: Uint8Array, bits: number): Uint8Array {
+  for (let nonce = 0; nonce < 1_000_000; nonce++) {
+    const h = new Uint8Array(80);
+    const view = new DataView(h.buffer);
+    view.setInt32(0, 4, true);
+    // prev block: zeros
+    h.set(merkleRootLE, 36);
+    view.setUint32(68, 1_700_000_000, true);
+    view.setUint32(72, bits, true);
+    view.setUint32(76, nonce, true);
+    if (checkProofOfWork(parseHeader(h))) return h;
+  }
+  throw new Error(`failed to mine test header at bits 0x${bits.toString(16)}`);
+}
+
+/**
+ * Build a consensus-shaped block: coinbase with witness commitment + mined
+ * header. `opts.bits` mines at another target; the default is regtest.
+ */
+export function buildBlock(nonCoinbaseTxs: ParsedTx[], opts: { bits?: number } = {}): TestBlock {
   const reserved = sha256(new TextEncoder().encode('reserved'));
   const wtxids = [ZERO32, ...nonCoinbaseTxs.map((t) => t.wtxidLE)];
   const witnessRoot = computeWitnessRootFromWtxids(wtxids);
@@ -247,24 +270,7 @@ export function buildBlock(nonCoinbaseTxs: ParsedTx[]): TestBlock {
   const txids = txs.map((t) => t.txidLE);
   const txidRoot = computeMerkleRoot(txids);
 
-  // mine a regtest-difficulty header
-  const bits = 0x207fffff;
-  let headerBytes: Uint8Array | undefined;
-  for (let nonce = 0; nonce < 100_000; nonce++) {
-    const h = new Uint8Array(80);
-    const view = new DataView(h.buffer);
-    view.setInt32(0, 4, true);
-    // prev block: zeros
-    h.set(txidRoot, 36);
-    view.setUint32(68, 1_700_000_000, true);
-    view.setUint32(72, bits, true);
-    view.setUint32(76, nonce, true);
-    if (checkProofOfWork(parseHeader(h))) {
-      headerBytes = h;
-      break;
-    }
-  }
-  if (!headerBytes) throw new Error('failed to mine test header');
+  const headerBytes = mineHeader(txidRoot, opts.bits ?? 0x207fffff);
   const header = parseHeader(headerBytes);
 
   const wtxidLeaves = wtxids;

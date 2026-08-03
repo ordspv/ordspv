@@ -122,9 +122,12 @@ export class CustodyBuildError extends Error {}
  * returning, and this class is what it raises.
  *
  * It is not a domain refusal. It says nothing about the chain, only that one
- * backend's answers do not describe one block, so the loops record it as that
- * attempt producing no usable answer and lead the next attempt with another
- * backend. It never reaches the CLI as a refusal.
+ * backend's answers do not describe one block on the chain this build is
+ * configured for. Both halves of that raise it: answers that contradict each
+ * other, and answers that agree on a block whose header is under the
+ * configured proof-of-work floor or fails the target it states itself. The
+ * loops record either as that attempt producing no usable answer and lead the
+ * next attempt with another backend. It never reaches the CLI as a refusal.
  */
 export class HopConsistencyError extends Error {
   constructor(message: string) {
@@ -137,13 +140,22 @@ export class HopConsistencyError extends Error {
 export type WitnessSectionMode = 'always' | 'when-needed';
 
 /**
- * Fold one hop's four answers against each other, naming which two disagreed.
+ * Fold one hop's four answers against each other, naming which one failed.
  *
- * Each check is the one `verifyAnchoredHop` runs, through the same core
- * primitives, so nothing here is a second implementation of the rules. What
- * differs is when it runs and what a failure means: raised here it is one
- * backend's inconsistency and the caller rotates, and raised there it is a
- * bundle that contradicts itself.
+ * This covers every check `verifyAnchoredHop` runs on the same four answers,
+ * in the order it runs them, through the same core primitives, so nothing here
+ * is a second implementation of the rules and a hop that fails at build fails
+ * at the place it would have failed at verification. The header hash match,
+ * the proof-of-work floor, the header's own target, `txCount` validity and the
+ * branch depth and fold are all here; the branch depth comes through
+ * `verifyMerkleBranch`, which enforces it when `txCount` is passed. The one
+ * thing `verifyAnchoredHop` does that this does not is call the caller's
+ * `trustHeader` hook, which is anchoring rather than a check on the answers
+ * and which the wrappers run over the finished bundle.
+ *
+ * What differs is when it runs and what a failure means: raised here it is one
+ * backend's answers failing and the caller rotates, and raised there it is a
+ * bundle that contradicts itself or the chain.
  */
 function checkHopAnswers(
   baseUrl: string,
@@ -153,6 +165,7 @@ function checkHopAnswers(
   proof: { block_height: number; merkle: string[]; pos: number },
   headerHex: string,
   txCount: number,
+  powLimitBits: number | null | undefined,
 ): void {
   let header;
   try {
@@ -166,6 +179,21 @@ function checkHopAnswers(
     throw new HopConsistencyError(
       `${baseUrl}: served a header hashing to ${header.hash} for block ${blockHash}, ` +
         `which the status of ${tx.txid} named`,
+    );
+  }
+  try {
+    checkPowLimit(header, powLimitBits, `${baseUrl}: header for block ${blockHash}`);
+  } catch (e) {
+    throw new HopConsistencyError((e as Error).message);
+  }
+  if (!checkProofOfWork(header)) {
+    throw new HopConsistencyError(
+      `${baseUrl}: header for block ${blockHash} fails the proof-of-work target it states itself`,
+    );
+  }
+  if (!Number.isInteger(txCount) || txCount < 1) {
+    throw new HopConsistencyError(
+      `${baseUrl}: block ${blockHash} has no valid transaction count (got ${txCount})`,
     );
   }
   if (proof.block_height !== blockHeight) {
@@ -203,20 +231,23 @@ function checkHopAnswers(
  *
  * Nothing here is trusted, and the bundle verifier re-proves all of it. What
  * the verifier cannot do is rotate, because it runs after the build loop has
- * been left, so the hop is folded against itself here as well: the header must
- * hash to the block hash the status named, the merkle branch must fold from
- * this transaction's txid to that header's merkle root, and the proof's height
- * must be the status's height. The checks use the same primitives
- * `verifyAnchoredHop` uses, so a hop that passes here is not proven, and a hop
- * that fails here would have failed there. A failure is one backend's answers
- * disagreeing with each other (`HopConsistencyError`), which the loops rotate
- * on instead of spending the rest of the walk on it.
+ * been left, so the hop is checked against itself here as well, through
+ * `checkHopAnswers`, which covers every check `verifyAnchoredHop` runs on the
+ * same answers. A failure is one backend's answers failing
+ * (`HopConsistencyError`), which the loops rotate on instead of spending the
+ * rest of the walk on it, and a hop that fails here would have failed there.
+ *
+ * `powLimitBits` is the floor `checkPowLimit` applies, in the convention
+ * `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables
+ * it. Pass the caller's own option, so the build refuses at the same bar the
+ * caller's verification will.
  */
 export async function assembleAnchoredHop(
   backend: AnchorBackend,
   tx: ParsedTx,
   hex: string,
   prevTxsUpTo: number,
+  powLimitBits?: number | null,
 ): Promise<CustodyHopJson> {
   const status = await backend.getTxStatus(tx.txid);
   if (!status.confirmed || !status.block_hash || status.block_height === undefined) {
@@ -227,7 +258,16 @@ export async function assembleAnchoredHop(
     backend.getHeaderHex(status.block_hash),
     backend.getBlockInfo(status.block_hash),
   ]);
-  checkHopAnswers(backend.baseUrl, tx, status.block_hash, status.block_height, proof, headerHex, blockInfo.tx_count);
+  checkHopAnswers(
+    backend.baseUrl,
+    tx,
+    status.block_hash,
+    status.block_height,
+    proof,
+    headerHex,
+    blockInfo.tx_count,
+    powLimitBits,
+  );
   const prevTxs: string[] = [];
   for (let i = 0; i <= prevTxsUpTo; i++) {
     prevTxs.push(await backend.getTxHex(tx.inputs[i].prevTxid));
@@ -369,6 +409,13 @@ export async function buildCustodyBundle(
     maxHops?: number;
     witnessBackends?: AnchorBackend[];
     witnessSection?: WitnessSectionMode;
+    /**
+     * Proof-of-work floor for every hop header, in `checkPowLimit`'s
+     * convention: `undefined` is the mainnet limit and `null` disables it.
+     * The caller's verification applies the same floor, so passing it here is
+     * what lets a header under it cost one attempt instead of the whole walk.
+     */
+    powLimitBits?: number | null;
   } = {},
 ): Promise<BuildCustodyResult> {
   const maxHops = options.maxHops ?? 64;
@@ -389,7 +436,13 @@ export async function buildCustodyBundle(
     throw new CustodyBuildError(`reveal ${id.txid} has no envelope with index ${id.index}`);
   }
 
-  const revealHop = await assembleAnchoredHop(backend, reveal, revealHex, inscription.input);
+  const revealHop = await assembleAnchoredHop(
+    backend,
+    reveal,
+    revealHex,
+    inscription.input,
+    options.powLimitBits,
+  );
   // the walker has served bytes by now, and the raw-block server serves more
   const servedBaseUrls = new Set<string>([backend.baseUrl]);
   const witnessServer = await attachRevealWitnessSection(
@@ -430,7 +483,7 @@ export async function buildCustodyBundle(
         `${outspend.txid} claimed to spend ${formatSatpoint(current)} but does not`,
       );
     }
-    const hop = await assembleAnchoredHop(backend, tx, hex, j);
+    const hop = await assembleAnchoredHop(backend, tx, hex, j, options.powLimitBits);
     hops.push(hop);
     current = transferSatpoint(
       tx,
@@ -553,6 +606,9 @@ export async function fetchCustody(
       built = await buildCustodyBundle(inscriptionId, backend, {
         maxHops: options.maxHops,
         witnessSection: options.witnessSection,
+        // the same floor the verification below applies, so a header under it
+        // costs one attempt rather than the walk plus a refused bundle
+        powLimitBits: options.powLimitBits,
         // the witness section is worth every backend's attempt, not just the
         // one walking the path; a refusal here means none of them served it
         witnessBackends: backends,

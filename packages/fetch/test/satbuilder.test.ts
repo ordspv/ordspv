@@ -25,6 +25,7 @@ import {
   fetchCustody,
   fetchSatIdentity,
   RevealSourceError,
+  HopConsistencyError,
   SatBuildError,
   SatIdentityError,
   perHeaderAttestation,
@@ -36,6 +37,7 @@ import {
 import {
   buildBlock,
   envelopeScript,
+  mineHeader,
   taprootCommit,
   NO_POW_FLOOR,
 } from '../../core/test/helpers.js';
@@ -179,22 +181,10 @@ interface MinedBlock {
  * Mine a regtest-difficulty header over the given transactions. Genealogy
  * proofs only use the txid tree, so no witness commitment is needed here.
  */
-function mineBlock(txs: ParsedTx[]): MinedBlock {
+function mineBlock(txs: ParsedTx[], bits = 0x207fffff): MinedBlock {
   const root = computeMerkleRoot(txs.map((t) => t.txidLE));
-  for (let nonce = 0; nonce < 200_000; nonce++) {
-    const h = new Uint8Array(80);
-    const view = new DataView(h.buffer);
-    view.setInt32(0, 4, true);
-    h.set(root, 36);
-    view.setUint32(68, 1_700_000_000, true);
-    view.setUint32(72, 0x207fffff, true);
-    view.setUint32(76, nonce, true);
-    const header = parseHeader(h);
-    if (checkProofOfWork(header)) {
-      return { headerHex: bytesToHex(h), blockHash: header.hash, txs, txCount: txs.length };
-    }
-  }
-  throw new Error('failed to mine test header');
+  const h = mineHeader(root, bits);
+  return { headerHex: bytesToHex(h), blockHash: parseHeader(h).hash, txs, txCount: txs.length };
 }
 
 function routesFor(block: MinedBlock, height: number, tipHeight: number): Record<string, Route> {
@@ -395,7 +385,7 @@ describe('fetchSatIdentity', () => {
       new Response(served++ === 0 ? commit.hex : decoy.hex);
 
     const backend = new EsploraBackend(E, stubFetch(routes), {});
-    const p = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, backend);
+    const p = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, backend, { powLimitBits: null });
     await expect(p).rejects.toThrow(SatBuildError);
     await expect(p).rejects.toThrow(/backend served/);
   });
@@ -820,7 +810,9 @@ describe('fetchSatIdentity', () => {
 
     // the position the poisoned witness implies is refused in its own class
     await expect(
-      buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, base)),
+      buildSatGenealogyBundle(`${reveal.tx.txid}i0`, new EsploraBackend(E, base), {
+        powLimitBits: null,
+      }),
     ).rejects.toThrow(SatPositionError);
 
     const attempts: AttemptInfo[] = [];
@@ -1694,6 +1686,7 @@ describe('fetchSatIdentity with multi-input reveals', () => {
 
     const built = await buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, {
       witnessBackends: [bad, good],
+      powLimitBits: null,
     });
     expect(built.bundle.reveal.witness).toBeDefined();
     expect(verifySatGenealogy(built.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
@@ -1708,7 +1701,10 @@ describe('fetchSatIdentity with multi-input reveals', () => {
       [...revealBlock.txs, extra.tx],
     );
     const bad = new EsploraBackend(E, stubFetch(rBad), {});
-    const p = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, { witnessBackends: [bad] });
+    const p = buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, {
+      witnessBackends: [bad],
+      powLimitBits: null,
+    });
     await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
     await expect(p).rejects.toThrow(/served a block of 3 transaction\(s\).*whose block info says 2/s);
 
@@ -1716,6 +1712,7 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     const good = new EsploraBackend(EB, (url, init) => honest(url.replace(EB, E), init), {});
     const built = await buildSatGenealogyBundle(`${reveal.tx.txid}i0`, bad, {
       witnessBackends: [bad, good],
+      powLimitBits: null,
     });
     expect(built.bundle.reveal.witness).toBeDefined();
   });
@@ -1879,8 +1876,11 @@ describe('fetchSatIdentity with multi-input reveals', () => {
 
     // when-needed emits the same bytes the default does
     const backend = new EsploraBackend(E, stubFetch(r));
-    const needed = await buildSatGenealogyBundle(id, backend, { witnessSection: 'when-needed' });
-    const dflt = await buildSatGenealogyBundle(id, backend);
+    const needed = await buildSatGenealogyBundle(id, backend, {
+      witnessSection: 'when-needed',
+      powLimitBits: null,
+    });
+    const dflt = await buildSatGenealogyBundle(id, backend, { powLimitBits: null });
     expect(JSON.stringify(needed.bundle)).toBe(JSON.stringify(dflt.bundle));
     expect('witness' in needed.bundle.reveal).toBe(false);
   });
@@ -1906,5 +1906,199 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     await expect(p).rejects.toThrow(/HTTP 404/);
     await expect(p).rejects.toThrow(new RegExp(E));
     await expect(p).rejects.toThrow(/always/);
+  });
+});
+
+/**
+ * The build-time self-check now covers every check the verifier runs on the
+ * same four answers, so a member that fabricates a whole block, internally
+ * consistent and off the chain this build is configured for, costs one attempt
+ * rather than the whole walk plus a bundle refused at exit 1.
+ */
+describe('fetchSatIdentity when a member answers off the configured chain', () => {
+  // an intermediate floor: the fixtures are mined at it, so a regtest header
+  // over the same merkle root is under the floor and the honest one is not
+  const FLOOR = 0x2000ffff;
+  const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+  const commit = buildTx(
+    [{ txid: coinbase.tx.txid, vout: 0 }],
+    [{ value: 10_000n, spk: TAP.scriptPubKey }],
+  );
+  const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+  const cbBlock = mineBlock([coinbase.tx], FLOOR);
+  const revealBlock = mineBlock(
+    [coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY }]).tx, reveal.tx],
+    FLOOR,
+  );
+  const id = `${reveal.tx.txid}i0`;
+
+  function honestRoutes(): Record<string, Route> {
+    return {
+      ...routesFor(cbBlock, CB_HEIGHT, TIP),
+      ...routesFor(revealBlock, REVEAL_HEIGHT, TIP),
+      [`${E}/tx/${commit.tx.txid}/hex`]: commit.hex,
+    };
+  }
+
+  const FLOORED = { ...OPTS, powLimitBits: FLOOR };
+  const root = hexToBytes(revealBlock.headerHex).slice(36, 68);
+
+  /** the reveal block's merkle root under an easier target than the floor */
+  function weakHeader(): Uint8Array {
+    return mineHeader(root, 0x207fffff);
+  }
+
+  /** the honest reveal header with its nonce spoiled, so it fails its target */
+  function badNonceHeader(): Uint8Array {
+    const h = hexToBytes(revealBlock.headerHex).slice();
+    const view = new DataView(h.buffer, h.byteOffset, h.byteLength);
+    for (let nonce = 0; nonce < 1_000_000; nonce++) {
+      view.setUint32(76, nonce, true);
+      if (!checkProofOfWork(parseHeader(h))) return h;
+    }
+    throw new Error('every nonce satisfied the target');
+  }
+
+  /**
+   * Serve the doctored header and its block info to everyone, and point the
+   * reveal's status at it for the leading member alone. The status is a
+   * lead-only deciding request, so the attempt EB leads ends on it and the
+   * attempt E leads does not; the header and the block info are pooled and
+   * have to answer for whoever asks.
+   */
+  function leadNamesHeader(headerBytes: Uint8Array): FetchFn {
+    const r = honestRoutes();
+    const hash = parseHeader(headerBytes).hash;
+    r[`${E}/block/${hash}/header`] = bytesToHex(headerBytes);
+    r[`${E}/block/${hash}`] = {
+      id: hash,
+      height: REVEAL_HEIGHT,
+      tx_count: revealBlock.txCount,
+    };
+    const base = stubFetch(r);
+    return (url, init) => {
+      if (url === `${EB}/tx/${reveal.tx.txid}/status`) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ confirmed: true, block_height: REVEAL_HEIGHT, block_hash: hash }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      return base(url.replace(EB, E), init);
+    };
+  }
+
+  for (const [what, header, pattern] of [
+    ['is under the configured floor', weakHeader, /easier than the proof-of-work limit/],
+    ['fails the target it states itself', badNonceHeader, /fails the proof-of-work target it states itself/],
+  ] as const) {
+    it(`leads again when the leading member's header ${what}`, async () => {
+      const attempts: AttemptInfo[] = [];
+      const res = await fetchSatIdentity(id, {
+        ...FLOORED,
+        esplora: [EB, E],
+        fetchFn: leadNamesHeader(header()),
+        onAttempt: (info) => attempts.push(info),
+      });
+      expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+      expect(res.bundle.reveal.block.hash).toBe(revealBlock.blockHash);
+      expect(attempts.map((a) => a.baseUrl)).toEqual([EB, E]);
+      // the reveal hop sits inside the lead-derived span, so what the loop
+      // records is the span's class carrying the hop's own cause
+      expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+      expect(attempts[1].cause?.message).toMatch(pattern);
+    });
+  }
+
+  it('records a zero transaction count as that member producing no usable answer', async () => {
+    // the block info is a pooled request rather than a lead-only one, so both
+    // members answer it the same way and both attempts end here. Nothing was
+    // refused on domain grounds, so the report is the build failure with each
+    // cause named, where before this pass the bundle reached the verifier
+    const r = honestRoutes();
+    r[`${E}/block/${revealBlock.blockHash}`] = {
+      id: revealBlock.blockHash,
+      height: REVEAL_HEIGHT,
+      tx_count: 0,
+    };
+    const base = stubFetch(r);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(id, { ...FLOORED, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*has no valid transaction count \\(got 0\\)`));
+    expect(e.message).toMatch(new RegExp(`${EB}: .*has no valid transaction count \\(got 0\\)`));
+  });
+
+  it('names the count directly when a single backend builds', async () => {
+    const r = honestRoutes();
+    r[`${E}/block/${revealBlock.blockHash}`] = {
+      id: revealBlock.blockHash,
+      height: REVEAL_HEIGHT,
+      tx_count: 1.5,
+    };
+    const p = buildSatGenealogyBundle(id, new EsploraBackend(E, stubFetch(r), {}), {
+      powLimitBits: FLOOR,
+    });
+    await expect(p).rejects.toThrow(HopConsistencyError);
+    await expect(p).rejects.toThrow(/has no valid transaction count \(got 1.5\)/);
+  });
+
+  it('ends at the build-failure path when every member answers under the floor', async () => {
+    const weak = weakHeader();
+    const hash = parseHeader(weak).hash;
+    const r = honestRoutes();
+    r[`${E}/tx/${reveal.tx.txid}/status`] = {
+      confirmed: true,
+      block_height: REVEAL_HEIGHT,
+      block_hash: hash,
+    };
+    r[`${E}/block/${hash}/header`] = bytesToHex(weak);
+    r[`${E}/block/${hash}`] = { id: hash, height: REVEAL_HEIGHT, tx_count: revealBlock.txCount };
+    const base = stubFetch(r);
+    const fetchFn: FetchFn = (url, init) => base(url.replace(EB, E), init);
+
+    const p = fetchSatIdentity(id, { ...FLOORED, esplora: [E, EB], fetchFn });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    // both members answered the same way and neither refused on domain
+    // grounds, so the three accounting groups put both in noAnswer
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*easier than the proof-of-work limit`));
+    expect(e.message).toMatch(new RegExp(`${EB}: .*easier than the proof-of-work limit`));
+  });
+
+  it('refuses the regtest fixtures at the mainnet default, and builds at powLimitBits null', async () => {
+    // the genealogy suite's other fixtures are regtest-difficulty, so every
+    // endpoint they serve is under the mainnet floor
+    const regtest = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const c = buildTx([{ txid: regtest.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const rv = segwitTx([{ txid: c.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const fetchFn = stubFetch(chainRoutes(regtest, rv, [c]));
+
+    const p = fetchSatIdentity(`${rv.tx.txid}i0`, {
+      esplora: [E],
+      anchorSources: [E2, E3],
+      checkpoints: new Map<number, string>(),
+      fetchFn,
+    });
+    const e = (await p.catch((x: unknown) => x)) as SatIdentityError;
+    expect(e).toBeInstanceOf(SatIdentityError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(/easier than the proof-of-work limit 0x1d00ffff/);
+
+    const ok = await fetchSatIdentity(`${rv.tx.txid}i0`, {
+      esplora: [E],
+      anchorSources: [E2, E3],
+      checkpoints: new Map<number, string>(),
+      powLimitBits: null,
+      fetchFn,
+    });
+    expect(ok.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
   });
 });

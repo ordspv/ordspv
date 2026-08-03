@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   bytesToHex,
   buildMerkleBranch,
+  checkProofOfWork,
   hexToBytes,
+  parseHeader,
   internalToDisplay,
   parseTx,
   serializeBlock,
@@ -27,6 +29,7 @@ import {
   buildBlock,
   commitTx,
   envelopeScript,
+  mineHeader,
   revealTx,
   taprootCommit,
   NO_POW_FLOOR,
@@ -440,6 +443,178 @@ describe('fetchCustody when one backend answers inconsistently', () => {
 });
 
 /**
+ * The build-time self-check now covers every check `verifyAnchoredHop` runs on
+ * the same four answers, so a backend that fabricates a whole block, with a
+ * header hashing to the hash its own status named and a branch folding to that
+ * header's root, no longer buys the walk and then a bundle the verifier refuses
+ * at exit 1 with the other backends never asked.
+ */
+describe('fetchCustody when one backend answers off the configured chain', () => {
+  const E4 = 'https://esplora4.test';
+  const ANCHORS = { anchorSources: [E3, E4] };
+  // an intermediate floor: the fixtures are mined at it, so a regtest header
+  // over the same merkle root is under the floor and the honest one is not
+  const FLOOR = 0x2000ffff;
+  const script = envelopeScript({ fields: [[1, 'text/plain']], body: ['pow'] }, { checksigPrefix: true });
+  const tap = taprootCommit(script);
+  const commit = commitTx(tap.scriptPubKey);
+  const reveal = revealTx([{ script, controlBlock: tap.controlBlock }], {
+    prevTxidLE: commit.txidLE,
+    vout: 0,
+  });
+  const block = buildBlock([reveal], { bits: FLOOR });
+  const id = `${reveal.txid}i0`;
+  const FLOORED = { ...OPTS, ...ANCHORS, powLimitBits: FLOOR };
+
+  function honestRoutes(): Record<string, Route> {
+    const r = routesForBlock(block, 100, 120);
+    r[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    const m = mirror(r, E, E2);
+    m[`${E4}/block-height/100`] = block.blockHash;
+    m[`${E4}/blocks/tip/height`] = '120';
+    return m;
+  }
+
+  /**
+   * Point E's own answers at a header over the same merkle root, so its branch
+   * still folds and only the header itself is wrong. Everything a backend
+   * needs to be internally consistent, and nothing else.
+   */
+  function serveHeader(r: Record<string, Route>, headerBytes: Uint8Array): string {
+    const hash = parseHeader(headerBytes).hash;
+    r[`${E}/tx/${reveal.txid}/status`] = { confirmed: true, block_height: 100, block_hash: hash };
+    r[`${E}/block/${hash}/header`] = bytesToHex(headerBytes);
+    r[`${E}/block/${hash}`] = { id: hash, height: 100, tx_count: block.txCount };
+    return hash;
+  }
+
+  const root = hexToBytes(block.headerHex).slice(36, 68);
+
+  /** the same merkle root under an easier target than the configured floor */
+  function weakHeader(): Uint8Array {
+    return mineHeader(root, 0x207fffff);
+  }
+
+  /** the honest header with its nonce spoiled, so it fails its own target */
+  function badNonceHeader(): Uint8Array {
+    const h = hexToBytes(block.headerHex).slice();
+    const view = new DataView(h.buffer, h.byteOffset, h.byteLength);
+    for (let nonce = 0; nonce < 1_000_000; nonce++) {
+      view.setUint32(76, nonce, true);
+      if (!checkProofOfWork(parseHeader(h))) return h;
+    }
+    throw new Error('every nonce satisfied the target');
+  }
+
+  it('rotates past a header under the configured proof-of-work floor', async () => {
+    const r = honestRoutes();
+    serveHeader(r, weakHeader());
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...FLOORED,
+      fetchFn: stubFetch(r),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.hops).toBe(1);
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    expect(attempts[1].cause?.message).toMatch(/easier than the proof-of-work limit/);
+  });
+
+  it('rotates past a header that fails the target it states itself', async () => {
+    const r = honestRoutes();
+    serveHeader(r, badNonceHeader());
+    const attempts: AttemptInfo[] = [];
+    const res = await fetchCustody(id, {
+      ...FLOORED,
+      fetchFn: stubFetch(r),
+      onAttempt: (info) => attempts.push(info),
+    });
+    expect(res.custody.satpoint.txid).toBe(reveal.txid);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+    expect(attempts[1].cause?.message).toMatch(/fails the proof-of-work target it states itself/);
+  });
+
+  for (const [what, count] of [['zero', 0], ['fractional', 1.5]] as const) {
+    it(`rotates past a ${what} transaction count`, async () => {
+      const r = honestRoutes();
+      r[`${E}/block/${block.blockHash}`] = { id: block.blockHash, height: 100, tx_count: count };
+      const attempts: AttemptInfo[] = [];
+      const res = await fetchCustody(id, {
+        ...FLOORED,
+        fetchFn: stubFetch(r),
+        onAttempt: (info) => attempts.push(info),
+      });
+      expect(res.custody.satpoint.txid).toBe(reveal.txid);
+      expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+      expect(attempts[1].cause?.message).toMatch(
+        new RegExp(`has no valid transaction count \\(got ${count}\\)`),
+      );
+    });
+  }
+
+  it('ends at the build-failure path when every backend answers under the floor', async () => {
+    const r = honestRoutes();
+    const weak = weakHeader();
+    const hash = serveHeader(r, weak);
+    // E2 answers the same way, so no backend produced a usable answer and
+    // nothing was refused on domain grounds
+    r[`${E2}/tx/${reveal.txid}/status`] = { confirmed: true, block_height: 100, block_hash: hash };
+    r[`${E2}/block/${hash}/header`] = bytesToHex(weak);
+    r[`${E2}/block/${hash}`] = { id: hash, height: 100, tx_count: block.txCount };
+
+    const p = fetchCustody(id, { ...FLOORED, fetchFn: stubFetch(r) });
+    const e = (await p.catch((x: unknown) => x)) as CustodyError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyError);
+    expect(e.code).toBe('BUILD_FAILED');
+    // the three accounting groups still sum: both backends are noAnswer, so
+    // nothing claims to be the chain's answer
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*easier than the proof-of-work limit`));
+    expect(e.message).toMatch(new RegExp(`${E2}: .*easier than the proof-of-work limit`));
+  });
+
+  it('refuses every regtest fixture at the mainnet default, and builds at powLimitBits null', async () => {
+    // the only new test that runs with the floor at its mainnet default. The
+    // fixtures elsewhere in this suite are regtest-difficulty, so every hop
+    // they serve is under it and every attempt ends the same way
+    const setup = inscriptionSetup();
+    const r = routesForBlock(setup.block, 100, 120);
+    r[`${E}/tx/${setup.commit.txid}/hex`] = bytesToHex(setup.commit.raw);
+    r[`${E}/tx/${setup.reveal.txid}/outspend/0`] = { spent: false };
+    const m = mirror(r, E, E2);
+    m[`${E4}/block-height/100`] = setup.block.blockHash;
+    m[`${E4}/blocks/tip/height`] = '120';
+    const routes = stubFetch(m);
+
+    const p = fetchCustody(setup.id, {
+      esplora: [E, E2],
+      ...ANCHORS,
+      checkpoints: new Map<number, string>(),
+      fetchFn: routes,
+    });
+    const e = (await p.catch((x: unknown) => x)) as CustodyError;
+    expect(e).toBeInstanceOf(CustodyError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(/easier than the proof-of-work limit 0x1d00ffff/);
+    expect(e.message).toMatch(new RegExp(`${E}: `));
+    expect(e.message).toMatch(new RegExp(`${E2}: `));
+
+    // and the same fixtures build when the caller disables the floor
+    const ok = await fetchCustody(setup.id, {
+      esplora: [E, E2],
+      ...ANCHORS,
+      checkpoints: new Map<number, string>(),
+      powLimitBits: null,
+      fetchFn: routes,
+    });
+    expect(ok.custody.satpoint.txid).toBe(setup.reveal.txid);
+  });
+});
+
+/**
  * A domain refusal the builder raises comes out of the reveal witness, and the
  * txid does not commit to that witness, so one backend can produce it where
  * another does not. Until a verifier has bound the witness, such a refusal is
@@ -707,7 +882,9 @@ describe('fetchCustody with multi-input reveals', () => {
   }
 
   it('builds the reveal wtxid proof and verifies through it', async () => {
-    const built = await buildCustodyBundle(id, new EsploraBackend(E, stubFetch(routes(true))));
+    const built = await buildCustodyBundle(id, new EsploraBackend(E, stubFetch(routes(true))), {
+      powLimitBits: null,
+    });
     expect(built.bundle.hops[0].witness).toBeDefined();
     expect(verifyCustodyBundle(built.bundle, NO_POW_FLOOR).indexProof).toBe('wtxid');
 
@@ -933,7 +1110,9 @@ describe('fetchCustody with multi-input reveals', () => {
       hexToBytes(setup.block.headerHex),
       setup.block.txs,
     );
-    const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(r)));
+    const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(r)), {
+      powLimitBits: null,
+    });
     expect('witness' in built.bundle.hops[0]).toBe(false);
     expect(verifyCustodyBundle(built.bundle, NO_POW_FLOOR).indexProof).toBe('single-input');
   });
@@ -948,15 +1127,21 @@ describe('fetchCustody with multi-input reveals', () => {
       setup.block.txs,
     );
     const backend = new EsploraBackend(E, stubFetch(r));
-    const always = await buildCustodyBundle(setup.id, backend, { witnessSection: 'always' });
+    const always = await buildCustodyBundle(setup.id, backend, {
+      witnessSection: 'always',
+      powLimitBits: null,
+    });
     expect(always.bundle.hops[0].witness).toBeDefined();
     const verified = verifyCustodyBundle(always.bundle, NO_POW_FLOOR);
     expect(verified.indexProof).toBe('wtxid');
     expect(verified.singleInputReveal).toBe(true);
 
     // when-needed on the same reveal emits the same bytes as before the option
-    const needed = await buildCustodyBundle(setup.id, backend, { witnessSection: 'when-needed' });
-    const dflt = await buildCustodyBundle(setup.id, backend);
+    const needed = await buildCustodyBundle(setup.id, backend, {
+      witnessSection: 'when-needed',
+      powLimitBits: null,
+    });
+    const dflt = await buildCustodyBundle(setup.id, backend, { powLimitBits: null });
     expect(JSON.stringify(needed.bundle)).toBe(JSON.stringify(dflt.bundle));
     expect('witness' in needed.bundle.hops[0]).toBe(false);
   });
@@ -1002,6 +1187,7 @@ describe('fetchCustody with multi-input reveals', () => {
     const p = buildCustodyBundle(setup.id, one, {
       witnessSection: 'always',
       witnessBackends: [one, two],
+      powLimitBits: null,
     });
     await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
     await expect(p).rejects.toThrow(new RegExp(E));
