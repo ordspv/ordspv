@@ -66,10 +66,13 @@ backward every input already names its funding txid, so ancestry is a hash chain
 and a backend serving wrong bytes fails the check locally. Intermediate
 transactions need no inclusion proofs at all, since each is pinned by the txid
 its successor names, and only the reveal and terminal coinbase anchor to
-headers. Sat numbers come from the ordinal theory closed forms, and the
-coinbase's own BIP34 height is cross-checked against the bundle's claim so the
-one figure a server could otherwise choose freely is verified too. Fee-tail
-ancestries and unbound inscriptions are refused loudly, as in custody.
+headers. Sat numbers come from the ordinal theory closed forms. At heights at
+or above 230,000 the coinbase's own BIP34 height is cross-checked against the
+bundle's claim, so the one figure a server could otherwise choose freely is
+verified too; below that boundary no such push exists, and the claimed height
+is refused unless the caller's header trust hook attested the block hash at
+that height. Fee-tail ancestries and unbound inscriptions are refused loudly,
+as in custody.
 `--bundle FILE` writes the genealogy artifact, which re-verifies offline with no
 network. Rules are in [docs/spec/SPEC-SAT.md](docs/spec/SPEC-SAT.md).
 

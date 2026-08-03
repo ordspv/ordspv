@@ -159,6 +159,8 @@ async function main(): Promise<void> {
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
         '  ord-resolve verify <bundle.json> [--json] [--max-steps N]',
         '                                              proof, custody or sat genealogy',
+        '      a successful verify prints its JSON report whether or not --json is',
+        '      passed; the flag controls the failure channel',
         '  ord-resolve custody <inscription-id> [--json]',
         '  ord-resolve sat <inscription-id> [--json] [--bundle FILE] [--max-steps N]',
         '  ord-resolve parse <uri>',
