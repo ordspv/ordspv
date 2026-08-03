@@ -149,11 +149,13 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
         `against a backend that serves raw blocks supplies one.`,
     },
   },
-  // no CLI path reaches this class today: every command configures header
-  // trust that yields 'hash-at-height', and the class is raised only in the
-  // other branch. The row stays because a library caller supplying its own
-  // trustHeader hook reaches it, and the row is what makes that caller's
-  // report correct
+  // one CLI path reaches this class: a live sat build whose fee-tail refusal
+  // sits on a terminal coinbase below the BIP34 boundary raises it from the
+  // build loop, because the subsidy boundary that refusal turns on is decided
+  // by a served height nothing in the bundle binds. The verification arm
+  // still needs a library caller supplying its own trustHeader hook, since
+  // every command configures header trust that yields 'hash-at-height', and
+  // the row is what makes that caller's report correct
   CoinbaseHeightUnprovenError: {
     ctor: CoinbaseHeightUnprovenError,
     category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
@@ -163,8 +165,8 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
         `Check the coinbase block hash at that height against your own chain view; ` +
         `library callers can supply that attestation through the trustHeader hook.`,
       live:
-        `Below the BIP34 boundary the claimed height rests on an attestation of the ` +
-        `block hash at that height, and no configured anchor source gave one; ` +
+        `Below the BIP34 boundary only an attestation of the block hash at that height ` +
+        `binds the claimed height to the block, and this build has none; ` +
         `--anchor-source names others.`,
     },
   },

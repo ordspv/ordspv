@@ -2279,6 +2279,47 @@ describe('fetchSatIdentity with a fee-bound reveal', () => {
 });
 
 /**
+ * The 230,000 boundary decides what a fee-tail refusal on the terminal
+ * coinbase can honestly claim. At or above it the served height is pinned to
+ * the coinbase's own BIP34 push, so the refusal is a domain fact and OUT OF
+ * SCOPE stands. Below it no push is required, nothing in the bundle binds
+ * height to block, and the refusal path never reaches anchoring, which runs
+ * after a successful build; the height that decides the subsidy boundary is
+ * the backends' word alone, so the honest class is the one that means the
+ * claimed height is not proven.
+ */
+describe('fetchSatIdentity with a fee-tail terminal coinbase, both sides of the boundary', () => {
+  /** a chain whose traced position lands past subsidy(height), in the fee tail */
+  function feeTailChain(height: number, subsidy: bigint) {
+    const coinbase = coinbaseTx(height, [{ value: subsidy + 500_000_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: subsidy + 100_000_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 1, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit], { cbHeight: height });
+    return { reveal, routes };
+  }
+
+  it('refuses a sub-boundary fee tail as CoinbaseHeightUnprovenError, never out of scope', async () => {
+    const { reveal, routes } = feeTailChain(100_000, 5_000_000_000n);
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
+    await expect(p).rejects.toThrow(CoinbaseHeightUnprovenError);
+    await expect(p).rejects.not.toThrow(CustodyUnsupportedError);
+    await expect(p).rejects.toThrow(/below the BIP34 boundary 230000 at claimed height 100000/);
+    await expect(p).rejects.toThrow(/nothing in the bundle binds the height to the block/);
+  });
+
+  it('keeps the fee-tail refusal at or above the boundary, where the push pins the height', async () => {
+    const { reveal, routes } = feeTailChain(CB_HEIGHT, SUBSIDY);
+    const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
+    await expect(p).rejects.toThrow(CustodyUnsupportedError);
+    await expect(p).rejects.not.toThrow(CoinbaseHeightUnprovenError);
+    await expect(p).rejects.toThrow(/fee sats in block 700000/);
+  });
+});
+
+/**
  * The build-time self-check now covers every check the verifier runs on the
  * same four answers, so a member that fabricates a whole block, internally
  * consistent and off the chain this build is configured for, costs one attempt

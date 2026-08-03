@@ -182,7 +182,10 @@ reference implementation), since such a bundle can be honest and merely
 unprovable offline, and the refusal MUST name the claimed height and the
 230,000 boundary. A verifier MUST NOT report a sat number, name or rarity for
 such a bundle, because an unchecked height below 230,000 lets the server choose
-all three, including sat 0 at mythic.
+all three, including sat 0 at mythic. A builder MUST NOT report a fee-tail
+refusal as out of scope when the terminal coinbase is below 230,000 and its
+claimed height is not otherwise established, because the subsidy boundary that
+refusal turns on is decided by that height.
 
 ## Genealogy bundle
 

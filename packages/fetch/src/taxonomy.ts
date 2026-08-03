@@ -124,9 +124,10 @@ export const REFUSAL_CLASS_FACTS: Record<RefusalClassName, RefusalClassFacts> = 
   // backend cannot change the answer; no builder raises the class today and
   // the loops' terminal arms for it stay beside them with their comments
   EnvelopeIndexUnprovenError: { ctor: EnvelopeIndexUnprovenError, committedAtBuild: true },
-  // the claimed height is the serving backend's word until anchored; no
-  // builder raises the class today, so the rotate this row implies has no
-  // live build-time example
+  // the claimed height is the serving backend's word until anchored; the
+  // genealogy builder raises it for a fee-tail refusal on a terminal
+  // coinbase below the BIP34 boundary, where that word is all the subsidy
+  // boundary rests on
   CoinbaseHeightUnprovenError: { ctor: CoinbaseHeightUnprovenError, committedAtBuild: false },
   // the depth that reaches the cap follows from a start position read out of
   // an unbound reveal witness

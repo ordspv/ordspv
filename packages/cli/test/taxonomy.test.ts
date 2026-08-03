@@ -117,7 +117,8 @@ describe('the build-time rotate predicate', () => {
     expect(isRecordableBuildRefusal(new SatStepLimitError('x'))).toBe(true);
     expect(isRecordableBuildRefusal(new CustodyHopLimitError('x', 64, 65))).toBe(true);
     expect(isRecordableBuildRefusal(new WitnessSectionUnavailableError('x'))).toBe(true);
-    // no builder raises the class today; the row says what would hold if one did
+    // raised by the genealogy builder for a fee-tail refusal on a terminal
+    // coinbase below the BIP34 boundary, and rotated like the rest
     expect(isRecordableBuildRefusal(new CoinbaseHeightUnprovenError('x'))).toBe(true);
     // the input count is inside the txid, so the loops rethrow rather than rotate
     expect(isRecordableBuildRefusal(new EnvelopeIndexUnprovenError('x'))).toBe(false);

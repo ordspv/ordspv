@@ -479,8 +479,33 @@ export async function buildSatGenealogyBundle(
         }
         const pos = outputSpacePosition(tx, expectVout, offset);
         // throws CustodyUnsupportedError for fee-tail positions, before the
-        // caller spends anything on verification
-        const sat = coinbaseSatAt(tx, pos, coinbaseHop.block.height);
+        // caller spends anything on verification. Below the BIP34 boundary
+        // that refusal claims more than this build established: the subsidy
+        // boundary it rests on is decided by the served height, no push in
+        // the coinbase states that height, and the refusal path never
+        // reaches the anchoring that could bind it, because anchoring runs
+        // in fetchSatIdentity after a successful build. The class becomes
+        // the one that already means the claimed height is not proven, and
+        // its row reports UNPROVEN on both channels. At or above the
+        // boundary the height was checked against the coinbase's own push
+        // above, and the refusal passes through unchanged
+        let sat: bigint;
+        try {
+          sat = coinbaseSatAt(tx, pos, coinbaseHop.block.height);
+        } catch (e) {
+          if (
+            e instanceof CustodyUnsupportedError &&
+            coinbaseHop.block.height < BIP34_ENFORCED_FROM
+          ) {
+            throw new CoinbaseHeightUnprovenError(
+              `terminal coinbase ${tx.txid} is below the BIP34 boundary ` +
+                `${BIP34_ENFORCED_FROM} at claimed height ${coinbaseHop.block.height}; ` +
+                `that height decides the subsidy boundary the fee-tail refusal rests on, ` +
+                `and nothing in the bundle binds the height to the block`,
+            );
+          }
+          throw e;
+        }
         return { coinbaseHop, sat };
       });
       return {

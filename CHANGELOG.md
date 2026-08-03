@@ -25,6 +25,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accumulate, and none exists. SPEC-CUSTODY now states the builder cap and
   that the custody verifier has no cap of its own, since every forged hop
   costs a header that clears the proof-of-work floor.
+- **A fee-tail refusal on a terminal coinbase below the BIP34 boundary
+  claimed more than the build had established.** `coinbaseSatAt` decides the
+  subsidy boundary from the height the leading backend served. At or above
+  230,000 that height is checked against the coinbase's own BIP34 push; below
+  it nothing in the bundle binds the pair, and the refusal path never reaches
+  anchoring, which runs after a successful build. So a unanimous fee-tail
+  refusal on a pre-230,000 coinbase reported OUT OF SCOPE at exit 4, a claim
+  about the chain resting on nothing but the configured backends agreeing,
+  reachable only when the whole configured set colludes and exposed on the
+  refusal direction alone, since the answer direction is closed by anchoring
+  live and by `CoinbaseHeightUnprovenError` offline. On that arm the build now
+  raises `CoinbaseHeightUnprovenError` itself, whose row already reports
+  UNPROVEN at exit 3 on both channels; at or above the boundary
+  `CustodyUnsupportedError` passes through unchanged. Anchoring the assembled
+  coinbase header inside the build loop before recording the refusal was
+  rejected because it moves a request relative to the machinery that records
+  who served it, the shape of defect the last two rounds closed. The class's
+  live note now states the rule it turns on, true of both arms that reach it,
+  and SPEC-SAT states the MUST NOT beside the boundary it covers.
 - **`sat` answered where `custody` refuses: an inscription whose start
   position is in the reveal's fee region got a sat number, a name and a
   rarity at exit 0, while `custody` refuses the same inscription at exit 4.**
