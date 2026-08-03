@@ -1222,6 +1222,14 @@ describe('fetchSatIdentity', () => {
     const honest = stubFetch(routes);
     const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
+    // the hop is folded against itself at build time now, so a height only the
+    // status carries is caught as that member contradicting itself. The
+    // doctored height therefore reaches the merkle proof too, which is the
+    // pooled request every member here answers the same way. What the test is
+    // about is unchanged: one member's own answer decides the subsidy boundary
+    // inside the attempt that member leads
+    (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
+      900_000;
     const fetchFn: FetchFn = (url, init) => {
       if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
         return Promise.resolve(new Response('no coinbase status', { status: 404 }));
@@ -1317,6 +1325,14 @@ describe('fetchSatIdentity', () => {
     const honest = stubFetch(routes);
     const st = routes[`${E}/tx/${coinbase.tx.txid}/status`] as { block_hash: string };
     const doctored = { confirmed: true, block_height: 900_000, block_hash: st.block_hash };
+    // the hop is folded against itself at build time now, so a height only the
+    // status carries is caught as that member contradicting itself. The
+    // doctored height therefore reaches the merkle proof too, which is the
+    // pooled request every member here answers the same way. What the test is
+    // about is unchanged: one member's own answer decides the subsidy boundary
+    // inside the attempt that member leads
+    (routes[`${E}/tx/${coinbase.tx.txid}/merkle-proof`] as { block_height: number }).block_height =
+      900_000;
     const fetchFn: FetchFn = (url, init) => {
       if (url === `${E}/tx/${coinbase.tx.txid}/status`) {
         return Promise.resolve(new Response('no coinbase status', { status: 404 }));
@@ -1401,6 +1417,152 @@ describe('fetchSatIdentity', () => {
     );
   });
 
+  /**
+   * A hop's four answers are folded against each other before the walk goes on,
+   * so a member whose status, merkle proof and header do not describe one block
+   * costs one attempt rather than the whole walk and a bundle the verifier
+   * refuses. Both hops this builder assembles sit inside the lead-derived span,
+   * so what the loop records is `RevealSourceError` carrying the hop's cause.
+   */
+  describe('when one member answers inconsistently', () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx(
+      [{ txid: coinbase.tx.txid, vout: 0 }],
+      [{ value: 10_000n, spk: TAP.scriptPubKey }],
+    );
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+
+    /** E leads first and answers inconsistently; EB answers one block */
+    function doctoredAt(base: string, doctor: (r: Record<string, Route>) => object): FetchFn {
+      const routes = chainRoutes(coinbase, reveal, [commit]);
+      const doctored = doctor(routes);
+      const honest = stubFetch(routes);
+      const url = `${base}/tx/${reveal.tx.txid}/${
+        'pos' in doctored ? 'merkle-proof' : 'status'
+      }`;
+      return (u, init) => {
+        if (u === url) {
+          return Promise.resolve(
+            new Response(JSON.stringify(doctored), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          );
+        }
+        return honest(u.replace(EB, E), init);
+      };
+    }
+
+    const cases: [string, (r: Record<string, Route>) => object][] = [
+      [
+        'a merkle proof at a wrong position',
+        (r) => ({ ...(r[`${E}/tx/${reveal.tx.txid}/merkle-proof`] as object), pos: 0 }),
+      ],
+      [
+        'a merkle proof whose height contradicts the status',
+        (r) => ({
+          ...(r[`${E}/tx/${reveal.tx.txid}/merkle-proof`] as object),
+          block_height: REVEAL_HEIGHT + 1,
+        }),
+      ],
+    ];
+
+    for (const [what, doctor] of cases) {
+      it(`leads the next member past ${what}`, async () => {
+        const attempts: AttemptInfo[] = [];
+        const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, {
+          ...OPTS,
+          esplora: [E, EB],
+          fetchFn: doctoredAt(E, doctor),
+          onAttempt: (info) => attempts.push(info),
+        });
+        expect(res.identity.sat).toBe(firstSatOfBlock(CB_HEIGHT));
+        expect(attempts.map((a) => a.baseUrl)).toEqual([E, EB]);
+        expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+        expect(attempts[1].cause?.message).toMatch(new RegExp(`failed at the leading backend ${E}`));
+        // and the bundle the honest member built stands on its own
+        expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
+      });
+    }
+
+    it('ends at the build-failure path when every member answers inconsistently', async () => {
+      // nothing was refused and nothing was verified, so the report is the
+      // build failure with each member's contradiction named. Exit 1 on a
+      // bundle that failed verification is what this replaced
+      const routes = chainRoutes(coinbase, reveal, [commit]);
+      const honest = stubFetch(routes);
+      const doctored = { ...(routes[`${E}/tx/${reveal.tx.txid}/merkle-proof`] as object), pos: 0 };
+      const fetchFn: FetchFn = (u, init) => {
+        if (u.endsWith(`/tx/${reveal.tx.txid}/merkle-proof`)) {
+          return Promise.resolve(
+            new Response(JSON.stringify(doctored), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          );
+        }
+        return honest(u.replace(EB, E), init);
+      };
+
+      const p = fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+      const e = (await p.catch((x: unknown) => x)) as SatIdentityError & { unanimous?: boolean };
+      expect(e).toBeInstanceOf(SatIdentityError);
+      expect(e.code).toBe('BUILD_FAILED');
+      // no refusal was recorded, so nothing claims to be the chain's answer
+      expect(e.unanimous).toBeUndefined();
+      for (const base of [E, EB]) {
+        expect(e.message).toMatch(new RegExp(`${base}: .*failed at the leading backend ${base}`));
+      }
+      expect(e.message).toMatch(/folds to a root the header of block .* does not carry/);
+    });
+
+    it('records the inconsistency as no usable answer beside a real refusal', async () => {
+      // the three groups still account for every configured member: EB leads
+      // an attempt that refuses on the chain's own shape, E leads one that
+      // produced nothing. A backend contradicting itself stands behind no
+      // refusal, so it can never carry one to unanimity
+      // the same fee-tail ancestry the class's own test uses: the coinbase
+      // pays subsidy plus fee sats and the traced sat is the first fee sat
+      const feeCoinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 100_000n }]);
+      const f1 = buildTx(
+        [{ txid: feeCoinbase.tx.txid, vout: 0 }],
+        [{ value: SUBSIDY }, { value: 90_000n }],
+      );
+      const feeCommit = buildTx(
+        [{ txid: f1.tx.txid, vout: 1 }],
+        [{ value: 10_000n, spk: TAP.scriptPubKey }],
+      );
+      const feeReveal = segwitTx(
+        [{ txid: feeCommit.tx.txid, vout: 0, witness: WITNESS }],
+        [{ value: 546n }],
+      );
+      const routes = chainRoutes(feeCoinbase, feeReveal, [feeCommit, f1]);
+      const honest = stubFetch(routes);
+      const doctored = {
+        ...(routes[`${E}/tx/${feeReveal.tx.txid}/merkle-proof`] as object),
+        pos: 0,
+      };
+      const fetchFn: FetchFn = (u, init) => {
+        if (u === `${E}/tx/${feeReveal.tx.txid}/merkle-proof`) {
+          return Promise.resolve(
+            new Response(JSON.stringify(doctored), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          );
+        }
+        return honest(u.replace(EB, E), init);
+      };
+
+      const p = fetchSatIdentity(`${feeReveal.tx.txid}i0`, { ...OPTS, esplora: [E, EB], fetchFn });
+      const e = (await p.catch((x: unknown) => x)) as Error & { unanimous?: boolean };
+      expect(e).toBeInstanceOf(CustodyUnsupportedError);
+      expect(e.unanimous).toBe(false);
+      expect(e.message).toMatch(
+        new RegExp(`1 of 2 configured backends led an attempt that ended this way: ${EB}`),
+      );
+      expect(e.message).toMatch(new RegExp(`1 produced no usable answer: ${E}: `));
+      expect(e.message).not.toMatch(/never led an attempt/);
+    });
+  });
+
   it('refuses an unbound inscription rather than inventing a sat', async () => {
     const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY }]);
     const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 0n, spk: TAP.scriptPubKey }]);
@@ -1468,13 +1630,14 @@ describe('fetchSatIdentity with multi-input reveals', () => {
   });
 
   it('walks again on the next lead member when one names a wrong block for the reveal', async () => {
-    // a member's own status names a real but WRONG block for the reveal, so
-    // the raw block is unusable however the pool rotates and the section
-    // cannot be built. The trigger is that member's word, not the chain's, so
-    // the refusal is not terminal: the build leads with the other member and
-    // reads the status from an honest one. The status is a deciding request
-    // and comes from the lead alone, so EB's decoy status decides exactly the
-    // attempt EB leads and no other.
+    // a member's own status names a real but WRONG block for the reveal. The
+    // block it named is not the block its own merkle proof folds into, so the
+    // reveal hop is caught as that member's answers disagreeing with each
+    // other. The status is a deciding request and comes from the lead alone,
+    // so EB's decoy status ends exactly the attempt EB leads and no other, and
+    // the build leads again with a member that answers one block. The reveal
+    // hop sits inside the lead-derived span, so what the loop records is the
+    // span's RevealSourceError carrying the hop's own cause.
     const decoy = mineBlock([coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY + 1n }]).tx]);
     const r = routes(true);
     r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex;
@@ -1515,49 +1678,25 @@ describe('fetchSatIdentity with multi-input reveals', () => {
     // one report per attempt, and the second says what ended the first
     expect(attempts.map((a) => a.baseUrl)).toEqual([EB, E]);
     expect(attempts[0].cause).toBeUndefined();
-    expect(attempts[1].cause).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(attempts[1].cause).toBeInstanceOf(RevealSourceError);
+    // the span names the member that led, and the hop names which two of its
+    // answers disagreed
+    expect(attempts[1].cause?.message).toMatch(new RegExp(`failed at the leading backend ${EB}`));
+    expect(attempts[1].cause?.message).toMatch(/merkle proof for .* does not fold/);
     expect(attempts[1].total).toBe(2);
   });
 
   it('keeps the witness-section class when the next lead member could not be reached', async () => {
-    // E's own status names a real but wrong block for the reveal, so the
-    // attempt E leads cannot build the section, and that refusal is E's own
-    // word. The attempt led by EB gets past that and walks into a funding tx
-    // no member serves. The refusal is the informative half of that pair
-    const decoy = mineBlock([coinbaseTx(REVEAL_HEIGHT, [{ value: SUBSIDY + 1n }]).tx]);
-    const r = routes(true);
-    r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex;
-    r[`${E}/block/${decoy.blockHash}`] = {
-      id: decoy.blockHash,
-      height: REVEAL_HEIGHT,
-      tx_count: decoy.txCount,
-    };
-    r[`${E}/block/${decoy.blockHash}/raw`] = serializeBlock(hexToBytes(decoy.headerHex), decoy.txs);
-    // the coinbase behind the commit is served by nobody
-    delete r[`${E}/tx/${coinbase.tx.txid}/hex`];
+    // no member serves the raw block, so the attempt E leads ends in the
+    // availability refusal, which is E's own word about a block hash and a
+    // position E itself named. The attempt EB leads fails a deciding request
+    // and produces no usable answer at all. The refusal is the informative
+    // half of that pair, and the accounting names both halves
+    const r = routes(false);
     const base = stubFetch(r);
-    const honestStatus = JSON.stringify({
-      confirmed: true,
-      block_height: REVEAL_HEIGHT,
-      block_hash: revealBlock.blockHash,
-    });
     const fetchFn: FetchFn = (url, init) => {
-      if (url === `${E}/tx/${reveal.tx.txid}/status`) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              confirmed: true,
-              block_height: REVEAL_HEIGHT,
-              block_hash: decoy.blockHash,
-            }),
-            { headers: { 'content-type': 'application/json' } },
-          ),
-        );
-      }
       if (url === `${EB}/tx/${reveal.tx.txid}/status`) {
-        return Promise.resolve(
-          new Response(honestStatus, { headers: { 'content-type': 'application/json' } }),
-        );
+        return Promise.resolve(new Response('no status here', { status: 503 }));
       }
       return base(url.replace(EB, E), init);
     };

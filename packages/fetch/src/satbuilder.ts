@@ -50,6 +50,7 @@ import {
 import {
   assembleAnchoredHop,
   attachRevealWitnessSection,
+  HopConsistencyError,
   type AnchorBackend,
   type WitnessSectionMode,
 } from './custodybuilder.js';
@@ -575,6 +576,20 @@ export async function fetchSatIdentity(
       // with the next member. It must not reach the break below, whose
       // premise is that every member already failed
       if (e instanceof RevealSourceError) {
+        buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
+        noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
+        lastCause = e as Error;
+        continue;
+      }
+      // a hop whose own answers disagreed is one attempt's inconsistency and
+      // says nothing about the chain, so it is no usable answer and never a
+      // refusal. Both hops this builder assembles sit inside the lead-derived
+      // span, so with a revealSource configured the span has already wrapped
+      // this as RevealSourceError and the arm above took it; this arm is what
+      // catches it when a caller builds with no lead, where the span is
+      // transparent. Either way the attempt is recorded and the next member
+      // leads, and neither reaches the pool-exhaustion break below
+      if (e instanceof HopConsistencyError) {
         buildErrors.push(`${members[i].baseUrl}: ${(e as Error).message}`);
         noAnswer.push({ baseUrl: members[i].baseUrl, error: e as Error });
         lastCause = e as Error;

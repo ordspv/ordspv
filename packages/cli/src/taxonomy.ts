@@ -37,6 +37,7 @@ import {
   CustodyBuildError,
   CustodyError,
   HeaderTrustError,
+  HopConsistencyError,
   OrdResolveError,
   ResponseCapExceededError,
   RevealSourceError,
@@ -254,6 +255,13 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
   {
     ctor: CustodyBuildError,
     reason: `one backend's build failure, recorded as that backend's cause under BUILD_FAILED`,
+  },
+  {
+    ctor: HopConsistencyError,
+    reason:
+      `one attempt's answers about a hop disagreeing with each other, which says nothing ` +
+      `about the chain; both loops record it as that backend producing no usable answer ` +
+      `and rotate, so it never reaches this reporter as a refusal`,
   },
   {
     ctor: ResponseCapExceededError,

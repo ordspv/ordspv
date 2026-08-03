@@ -16,6 +16,7 @@ import {
   buildCustodyBundle,
   fetchCustody,
   CustodyError,
+  HopConsistencyError,
   WitnessSectionUnavailableError,
   type AnchorBackend,
   type AttemptInfo,
@@ -328,6 +329,113 @@ describe('fetchCustody', () => {
     expect(res.custody.hops).toBe(1);
     expect(res.pendingSpendTxid).toBe(spend.txid);
     expect(res.tip.map((t) => t.state)).toEqual(['spent', 'spent']);
+  });
+});
+
+/**
+ * A hop is assembled from four separate answers, and nothing makes a backend
+ * keep them consistent. The bundle verifier proves they are, and it runs after
+ * the loop has been left, so a well formed wrong answer used to buy the whole
+ * walk and then report the bundle invalid with the other backends never asked.
+ * The builder folds each hop against itself now, and a disagreement is that
+ * backend producing no usable answer.
+ */
+describe('fetchCustody when one backend answers inconsistently', () => {
+  const E4 = 'https://esplora4.test';
+  // E2 serves the bundle after the rotation, so neither serving backend can
+  // attest; these two serve nothing
+  const ANCHORS = { anchorSources: [E3, E4] };
+  const { commit, reveal, block, id } = inscriptionSetup();
+
+  /** both backends honest, and attesters that served no bytes */
+  function honestRoutes(): Record<string, Route> {
+    const r = routesForBlock(block, 100, 120);
+    r[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+    r[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    r[`${E2}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+    const mirrored = mirror(r, E, E2);
+    mirrored[`${E4}/block-height/100`] = block.blockHash;
+    mirrored[`${E4}/blocks/tip/height`] = '120';
+    return mirrored;
+  }
+
+  /** the branch and position of another transaction in the same block */
+  function proofOfOtherTx(): object {
+    const txids = block.txs.map((t) => t.txidLE);
+    return { block_height: 100, merkle: buildMerkleBranch(txids, 0).map(internalToDisplay), pos: 0 };
+  }
+
+  const cases: [string, (r: Record<string, Route>) => void][] = [
+    [
+      'a merkle proof at a wrong position',
+      (r) => {
+        r[`${E}/tx/${reveal.txid}/merkle-proof`] = proofOfOtherTx();
+      },
+    ],
+    [
+      'a status naming a real but wrong block',
+      (r) => {
+        const decoy = buildBlock([commit]);
+        r[`${E}/tx/${reveal.txid}/status`] = {
+          confirmed: true,
+          block_height: 100,
+          block_hash: decoy.blockHash,
+        };
+        r[`${E}/block/${decoy.blockHash}/header`] = decoy.headerHex.trim();
+        r[`${E}/block/${decoy.blockHash}`] = {
+          id: decoy.blockHash,
+          height: 100,
+          tx_count: decoy.txCount,
+        };
+      },
+    ],
+    [
+      'a merkle proof whose height contradicts the status',
+      (r) => {
+        r[`${E}/tx/${reveal.txid}/merkle-proof`] = {
+          ...(r[`${E}/tx/${reveal.txid}/merkle-proof`] as object),
+          block_height: 101,
+        };
+      },
+    ],
+  ];
+
+  for (const [what, doctor] of cases) {
+    it(`rotates past ${what} and resolves through the next backend`, async () => {
+      const r = honestRoutes();
+      doctor(r);
+      const attempts: AttemptInfo[] = [];
+      const res = await fetchCustody(id, {
+        ...OPTS,
+        ...ANCHORS,
+        fetchFn: stubFetch(r),
+        onAttempt: (info) => attempts.push(info),
+      });
+      // the honest backend answers the same question the walk asked
+      expect(res.custody.hops).toBe(1);
+      expect(res.custody.satpoint.txid).toBe(reveal.txid);
+      expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
+      expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
+      expect(attempts[1].cause?.message).toMatch(new RegExp(`^${E}: `));
+    });
+  }
+
+  it('ends at the build-failure path when every backend answers inconsistently', async () => {
+    // no backend produced an answer, so nothing was refused and nothing was
+    // verified. INCOMPLETE with every cause named is the honest report, and
+    // exit 1 on a bundle that failed verification is what this replaced
+    const r = honestRoutes();
+    for (const base of [E, E2]) {
+      r[`${base}/tx/${reveal.txid}/merkle-proof`] = proofOfOtherTx();
+    }
+    const p = fetchCustody(id, { ...OPTS, ...ANCHORS, fetchFn: stubFetch(r) });
+    const e = (await p.catch((x: unknown) => x)) as CustodyError & { unanimous?: boolean };
+    expect(e).toBeInstanceOf(CustodyError);
+    expect(e.code).toBe('BUILD_FAILED');
+    // a refusal was never recorded, so nothing claims to be the chain's answer
+    expect(e.unanimous).toBeUndefined();
+    expect(e.message).toMatch(new RegExp(`${E}: .*does not fold`));
+    expect(e.message).toMatch(new RegExp(`${E2}: .*does not fold`));
   });
 });
 
@@ -654,10 +762,13 @@ describe('fetchCustody with multi-input reveals', () => {
   });
 
   it('walks again on the next backend when one names a wrong block for the reveal', async () => {
-    // E's own status names a real but WRONG block for the reveal, so the raw
-    // block is unusable at every backend and the section cannot be built. The
-    // trigger is E's word, not the chain's, so the refusal is not terminal:
-    // E2 walks honestly and the bundle verifies through its block
+    // E's own status names a real but WRONG block for the reveal. The block it
+    // named is not the block its own merkle proof folds into, so the hop is
+    // caught as E's answers disagreeing with each other, before the walk
+    // spends anything more on it. E2 walks honestly and the bundle verifies
+    // through its block. The class is availability either way, and the
+    // stronger reading is that E produced no answer rather than that it
+    // refused: a backend contradicting itself stands behind nothing
     const decoy = buildBlock([commit]);
     const r = mirror(routes(true), E, E2);
     r[`${E}/tx/${reveal.txid}/status`] = {
@@ -684,10 +795,12 @@ describe('fetchCustody with multi-input reveals', () => {
     // one line per attempt, and the second says what ended the first
     expect(attempts.map((a) => a.baseUrl)).toEqual([E, E2]);
     expect(attempts[0].cause).toBeUndefined();
-    expect(attempts[1].cause).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(attempts[1].cause).toBeInstanceOf(HopConsistencyError);
     expect(attempts[1].total).toBe(2);
 
-    // and with E alone there is nothing to move on to
+    // and with E alone there is nothing to move on to. Nothing was refused
+    // here, so the report is the build failure with E's own contradiction
+    // named, rather than a refusal E never stood behind
     const p = fetchCustody(id, {
       ...OPTS,
       esplora: [E],
@@ -695,8 +808,10 @@ describe('fetchCustody with multi-input reveals', () => {
       witnessSection: 'always',
       fetchFn: stubFetch(r),
     });
-    await expect(p).rejects.toThrow(WitnessSectionUnavailableError);
-    await expect(p).rejects.toThrow(/position -1 in the served block/);
+    const e = (await p.catch((x: unknown) => x)) as CustodyError;
+    expect(e).toBeInstanceOf(CustodyError);
+    expect(e.code).toBe('BUILD_FAILED');
+    expect(e.message).toMatch(/folds to a root the header of block .* does not carry/);
   });
 
   it('names a backend that exposes no getBlockRaw as its own cause', async () => {

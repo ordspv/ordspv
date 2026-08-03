@@ -20,8 +20,11 @@ import {
   parseBlock,
   hexToBytes,
   bytesToHex,
+  bytesEqual,
+  displayToInternal,
   internalToDisplay,
   buildMerkleBranch,
+  verifyMerkleBranch,
   inscriptionsFromTx,
   parseInscriptionId,
   genesisSatpoint,
@@ -102,13 +105,108 @@ export interface BuildCustodyResult {
 
 export class CustodyBuildError extends Error {}
 
+/**
+ * One attempt's answers about a hop disagree with each other.
+ *
+ * A hop is assembled from four separate responses: the transaction's status,
+ * its merkle proof, the block's header, and the block's transaction count.
+ * Nothing forces a backend to make them agree, and the bundle verifier is what
+ * proves they do. That verification runs after the build loop has been left,
+ * so an answer that is well formed and wrong used to cost the whole walk and
+ * then report the bundle invalid, with the other configured backends never
+ * asked. `assembleAnchoredHop` therefore folds the hop against itself before
+ * returning, and this class is what it raises.
+ *
+ * It is not a domain refusal. It says nothing about the chain, only that one
+ * backend's answers do not describe one block, so the loops record it as that
+ * attempt producing no usable answer and lead the next attempt with another
+ * backend. It never reaches the CLI as a refusal.
+ */
+export class HopConsistencyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HopConsistencyError';
+  }
+}
+
 /** Whether the builder attaches the reveal's witness section (SPEC-CUSTODY). */
 export type WitnessSectionMode = 'always' | 'when-needed';
 
 /**
+ * Fold one hop's four answers against each other, naming which two disagreed.
+ *
+ * Each check is the one `verifyAnchoredHop` runs, through the same core
+ * primitives, so nothing here is a second implementation of the rules. What
+ * differs is when it runs and what a failure means: raised here it is one
+ * backend's inconsistency and the caller rotates, and raised there it is a
+ * bundle that contradicts itself.
+ */
+function checkHopAnswers(
+  baseUrl: string,
+  tx: ParsedTx,
+  blockHash: string,
+  blockHeight: number,
+  proof: { block_height: number; merkle: string[]; pos: number },
+  headerHex: string,
+  txCount: number,
+): void {
+  let header;
+  try {
+    header = parseHeader(hexToBytes(headerHex.trim()));
+  } catch (e) {
+    throw new HopConsistencyError(
+      `${baseUrl}: header for block ${blockHash} does not parse: ${(e as Error).message}`,
+    );
+  }
+  if (header.hash !== blockHash.toLowerCase()) {
+    throw new HopConsistencyError(
+      `${baseUrl}: served a header hashing to ${header.hash} for block ${blockHash}, ` +
+        `which the status of ${tx.txid} named`,
+    );
+  }
+  if (proof.block_height !== blockHeight) {
+    throw new HopConsistencyError(
+      `${baseUrl}: merkle proof for ${tx.txid} says height ${proof.block_height}, ` +
+        `its status says height ${blockHeight}`,
+    );
+  }
+  let root: Uint8Array;
+  try {
+    ({ root } = verifyMerkleBranch(
+      tx.txidLE,
+      proof.merkle.map(displayToInternal),
+      proof.pos,
+      txCount,
+    ));
+  } catch (e) {
+    throw new HopConsistencyError(
+      `${baseUrl}: merkle proof for ${tx.txid} at position ${proof.pos} of ${txCount} ` +
+        `does not fold: ${(e as Error).message}`,
+    );
+  }
+  if (!bytesEqual(root, header.merkleRootLE)) {
+    throw new HopConsistencyError(
+      `${baseUrl}: merkle proof for ${tx.txid} at position ${proof.pos} folds to a root ` +
+        `the header of block ${blockHash} does not carry`,
+    );
+  }
+}
+
+/**
  * Anchor a transaction: fetch its inclusion proof, header, and block tx count,
  * plus the prev txs for inputs 0..prevTxsUpTo (pass -1 for none, as a coinbase
- * needs). Nothing here is trusted; the bundle verifier re-proves all of it.
+ * needs).
+ *
+ * Nothing here is trusted, and the bundle verifier re-proves all of it. What
+ * the verifier cannot do is rotate, because it runs after the build loop has
+ * been left, so the hop is folded against itself here as well: the header must
+ * hash to the block hash the status named, the merkle branch must fold from
+ * this transaction's txid to that header's merkle root, and the proof's height
+ * must be the status's height. The checks use the same primitives
+ * `verifyAnchoredHop` uses, so a hop that passes here is not proven, and a hop
+ * that fails here would have failed there. A failure is one backend's answers
+ * disagreeing with each other (`HopConsistencyError`), which the loops rotate
+ * on instead of spending the rest of the walk on it.
  */
 export async function assembleAnchoredHop(
   backend: AnchorBackend,
@@ -125,6 +223,7 @@ export async function assembleAnchoredHop(
     backend.getHeaderHex(status.block_hash),
     backend.getBlockInfo(status.block_hash),
   ]);
+  checkHopAnswers(backend.baseUrl, tx, status.block_hash, status.block_height, proof, headerHex, blockInfo.tx_count);
   const prevTxs: string[] = [];
   for (let i = 0; i <= prevTxsUpTo; i++) {
     prevTxs.push(await backend.getTxHex(tx.inputs[i].prevTxid));
@@ -442,6 +541,10 @@ export async function fetchCustody(
       if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {
         refusals.push({ baseUrl: backend.baseUrl, error: e });
       } else {
+        // everything else is this backend producing no usable answer, which
+        // now includes a hop whose own answers disagreed (HopConsistencyError):
+        // that says nothing about the chain, so it must never be recorded as a
+        // refusal, and the next backend gets the walk
         noAnswer.push({ baseUrl: backend.baseUrl, error: e as Error });
       }
       lastCause = e as Error;
