@@ -107,8 +107,9 @@ export interface RefusalRow {
   /**
    * The remedy sentence per output context. It names the flag that changes
    * the outcome wherever one exists; neither coinbase-height context has
-   * one, since no anchor can be supplied to an offline verification today
-   * and the live refusal is raised before any anchoring runs.
+   * one, since no flag supplies an attestation to an offline verification
+   * (the compiled-in checkpoints verify consults pin only their own three
+   * heights) and the live refusal is raised before any anchoring runs.
    */
   note: Record<RefusalContext, string>;
   /**
@@ -144,21 +145,25 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
     category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
     nonUnanimousCategory: 'UNPROVEN',
     note: {
+      // the verify context reaches this class from three bundle kinds now,
+      // and the rebuild flag differs by kind, so the sentence names both
       verify:
-        `The reveal's envelope numbering needs a witness section; rebuilding with ` +
-        `--witness-section always against a backend that serves raw blocks supplies one.`,
+        `The reveal's envelope numbering needs a witness section; rebuilding against a ` +
+        `backend that serves raw blocks supplies one (--witness-section always on custody ` +
+        `and sat, --level L3 on proof).`,
       live:
         `The reveal's envelope numbering needs a witness section; --witness-section always ` +
         `against a backend that serves raw blocks supplies one.`,
     },
   },
-  // one CLI path reaches this class: a live sat build whose fee-tail refusal
-  // sits on a terminal coinbase below the BIP34 boundary raises it from the
-  // build loop, because the subsidy boundary that refusal turns on is decided
-  // by a served height nothing in the bundle binds. The verification arm
-  // still needs a library caller supplying its own trustHeader hook, since
-  // every command configures header trust that yields 'hash-at-height', and
-  // the row is what makes that caller's report correct
+  // reached live by a sat build whose fee-tail refusal sits on a terminal
+  // coinbase below the BIP34 boundary, because the subsidy boundary that
+  // refusal turns on is decided by a served height nothing in the bundle
+  // binds, and offline by verify on any sub-BIP34 genealogy bundle whose
+  // height the compiled-in checkpoints do not pin. Acceptance at such a
+  // height still needs a library caller supplying a trustHeader hook that
+  // returns 'hash-at-height' for it; the checkpoint hook verify passes does
+  // that for its three pinned heights alone
   CoinbaseHeightUnprovenError: {
     ctor: CoinbaseHeightUnprovenError,
     category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
