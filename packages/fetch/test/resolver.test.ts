@@ -123,6 +123,22 @@ describe('OrdResolver L2 against real inscription 0 (stubbed transport)', () => 
     const result = await resolver.resolve(`ord:${INSC0}`);
     expect(result.verification.height).toBe(767430);
   });
+
+  it('rotates past a backend serving a non-string block hash and resolves through the next', async () => {
+    // the liar serves the header and info routes its numeric hash names, so
+    // the build succeeds without a guard and the bundle carries hash 5
+    const E2 = 'https://esplora2.test';
+    const routes = insc0Routes();
+    for (const [k, v] of Object.entries(insc0Routes())) {
+      routes[k.replace(E, E2)] = v;
+    }
+    routes[`${E}/tx/${REVEAL}/status`] = { confirmed: true, block_height: 767430, block_hash: 5 };
+    routes[`${E}/block/5/header`] = read('header-767430.hex');
+    routes[`${E}/block/5`] = { id: BLOCK, height: 767430, tx_count: 2332 };
+    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), verification: 'L2' });
+    const result = await resolver.resolve(`ord:${INSC0}`);
+    expect(result.verification.height).toBe(767430);
+  });
 });
 
 describe('buildProofBundle answer validation', () => {
@@ -141,6 +157,12 @@ describe('buildProofBundle answer validation', () => {
       `${E}/block/${BLOCK}`,
       { id: BLOCK, height: 767430, tx_count: '2332' },
       `block ${BLOCK} info has no valid transaction count (got "2332")`,
+    ],
+    [
+      'a non-string block hash',
+      `${E}/tx/${REVEAL}/status`,
+      { confirmed: true, block_height: 767430, block_hash: 5 },
+      `reveal tx ${REVEAL} status has no valid block hash (got 5)`,
     ],
     [
       'a string merkle position',

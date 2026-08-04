@@ -29,12 +29,14 @@ export interface ProofBackend {
  * Assemble a proof bundle for an inscription from any proof backend.
  * Everything fetched here is UNTRUSTED input; the caller verifies the bundle
  * with `verifyProofBundle` afterwards; nothing here is trusted for soundness,
- * only availability. The scalar answers the bundle carries in checked
- * positions (the height, and on L2 the txCount, the position and the branch)
- * are validated here as well: a backend serving values the verifier would
- * refuse fails its own attempt, under a message naming the answer, so every
- * rotating caller records the cause and asks the next backend instead of
- * dying at verification with the defect blamed on the bundle.
+ * only availability. The JSON-served answers the bundle carries in checked
+ * positions (the height and the block hash, and on L2 the txCount, the
+ * position and the branch) are validated here as well: a backend serving
+ * values the verifier would refuse fails its own attempt, under a message
+ * naming the answer, so every rotating caller records the cause and asks the
+ * next backend instead of dying at verification with the defect blamed on
+ * the bundle. The header and every transaction come from text endpoints,
+ * strings by transport, and their contents stay verification's job.
  *
  * L2 cost: 4 small requests (reveal hex, merkle proof, header, block info)
  *          + 1 for the commit tx.
@@ -56,6 +58,12 @@ export async function buildProofBundle(
     throw new Error(
       `reveal tx ${id.txid} status has no valid block height ` +
         `(got ${JSON.stringify(status.block_height)})`,
+    );
+  }
+  if (typeof status.block_hash !== 'string') {
+    throw new Error(
+      `reveal tx ${id.txid} status has no valid block hash ` +
+        `(got ${JSON.stringify(status.block_hash)})`,
     );
   }
   const blockHash = status.block_hash;

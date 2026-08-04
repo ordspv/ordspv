@@ -3773,6 +3773,11 @@
         `reveal tx ${id.txid} status has no valid block height (got ${JSON.stringify(status.block_height)})`
       );
     }
+    if (typeof status.block_hash !== "string") {
+      throw new Error(
+        `reveal tx ${id.txid} status has no valid block hash (got ${JSON.stringify(status.block_hash)})`
+      );
+    }
     const blockHash = status.block_hash;
     const height = status.block_height;
     if (level === "L2") {

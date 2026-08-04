@@ -75,20 +75,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **The proof path had the same silent pass-through: a backend serving a
-  non-integer height, txCount, position or a non-array branch bought a
-  bundle the verifier then refused, with no rotation.** `buildProofBundle`
-  wrote `status.block_height`, `blockInfo.tx_count`, `proof.pos` and
-  `proof.merkle` into the bundle as the transport cast them, and every
-  caller that rotates (the resolver, the gateway, the CLI `proof` loop)
-  rotates only on a build throw, so the lying backend's bundle went to
-  verification instead and the refusal blamed the bundle: the resolver
-  surfaced `VERIFY_FAILED` with the other backends never asked, and
-  `proof <id>` printed a bundle its own `verify` refuses. The builder now
-  validates the four scalar answers the bundle carries in checked
-  positions, under messages naming the answer and the JSON-encoded served
-  value, so the attempt fails where rotation can act. The L3 path derives
+  non-integer height, a non-string block hash, a non-integer txCount or
+  position, or a non-array branch bought a bundle the verifier then
+  refused, with no rotation.** `buildProofBundle` wrote
+  `status.block_height`, `status.block_hash`, `blockInfo.tx_count`,
+  `proof.pos` and `proof.merkle` into the bundle as the transport cast
+  them, and every caller that rotates (the resolver, the gateway, the CLI
+  `proof` loop) rotates only on a build throw, so the lying backend's
+  bundle went to verification instead and the refusal blamed the bundle:
+  the resolver surfaced `VERIFY_FAILED` with the other backends never
+  asked, and `proof <id>` printed a bundle its own `verify` refuses. The
+  builder now validates every JSON-served answer the bundle carries in a
+  checked position, under messages naming the answer and the JSON-encoded
+  served value, so the attempt fails where rotation can act. The header
+  and every transaction come from text endpoints, strings by transport,
+  and their contents stay verification's job. The L3 path derives
   txCount, position and branches from the raw block itself, so only the
-  height guard applies there.
+  height and hash guards apply there.
 
 - **A backend serving a non-integer block height in every answer passed
   the build's self-check and cost the caller the whole walk.**
