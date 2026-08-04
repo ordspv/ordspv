@@ -117,8 +117,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   produced a named refusal are unchanged: an absent `tx.pos` still reads
   `invalid merkle position`, and the genealogy coinbase's absent `pos`
   still reads the position rule. The witness section keeps its own shape
-  checks, and prev tx entries keep failing through the hash checks that
-  name the input.
+  checks, and prev tx entries keep failing through the parse and hash
+  checks that name the entry.
 
 - **A proof bundle's block height reached the report and the `trustHeader`
   hook unchecked.** The earlier height fix typed every height the shared

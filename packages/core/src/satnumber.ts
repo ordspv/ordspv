@@ -333,8 +333,8 @@ export function verifySatGenealogy(
   // than surface as a TypeError that reads as an internal fault. The standard
   // covers the top level and one level down on every element the walk reads
   // (the endpoint hops' and the funding steps' block, tx and prevTxs); the
-  // witness section and prev tx entries get their messages from their own
-  // shape checks and from hash checks that name the input
+  // witness section gets its messages from its own shape checks, and prev
+  // tx entries from the parse and hash checks that name the entry
   if (typeof bundle.inscriptionId !== 'string') {
     throw new Error('bundle field inscriptionId is missing or not a string');
   }

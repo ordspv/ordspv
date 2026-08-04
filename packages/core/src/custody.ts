@@ -606,8 +606,9 @@ export function verifyCustodyBundle(
   // a bundle is untrusted JSON, so an absent field must name itself rather
   // than surface as a TypeError that reads as an internal fault. The standard
   // covers the top level and one level down (each hop's block, tx and
-  // prevTxs); the witness section and prev tx entries get their messages
-  // from their own shape checks and from hash checks that name the input
+  // prevTxs); the witness section gets its messages from its own shape
+  // checks, and prev tx entries from the parse and hash checks that name
+  // the entry
   if (typeof bundle.inscriptionId !== 'string') {
     throw new Error('bundle field inscriptionId is missing or not a string');
   }
