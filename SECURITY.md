@@ -4,11 +4,17 @@
 
 | Version | Supported            |
 | ------- | -------------------- |
-| 0.2.x   | :white_check_mark:   |
+| 0.3.x   | :white_check_mark:   |
+| 0.2.x   | :x:                  |
 | < 0.2.0 | :x:                  |
 
-Security fixes land on the 0.2.x line. Users on 0.1.x should upgrade; those
-releases are deprecated on npm and will not receive fixes.
+Security fixes land on the current minor line. The 0.2.x line does not receive
+backports, and users on it should upgrade to 0.3.x. Releases before 0.2.0 are
+deprecated on npm and receive nothing.
+
+## Advisories
+
+- [2026-08-04: verification defects in 0.2.x](docs/advisories/2026-08-04-verification-defects-0.2.x.md)
 
 ## Reporting a vulnerability
 
@@ -24,7 +30,7 @@ This routes the report to the maintainers privately and lets us collaborate on
 a fix and a coordinated release before any details are public.
 
 If GitHub private reporting is unavailable to you, open a regular issue that
-says only "security report — please enable a private channel" with **no
+says only "security report, please enable a private channel" with **no
 technical detail**, and we will follow up.
 
 ## What to include
@@ -51,7 +57,7 @@ In scope: the published `@ordspv/*` packages and this repository's code.
 
 Out of scope: vulnerabilities in third-party services this software can talk to
 (esplora instances, ord servers, Electrum servers, Bitcoin Core). Those
-backends are treated as **untrusted** by design — reports that assume a
+backends are treated as **untrusted** by design. Reports that assume a
 malicious backend and show it defeating verification ARE in scope; reports that
 a backend is merely unavailable or serves bad data that we correctly reject are
 not.

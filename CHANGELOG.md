@@ -416,6 +416,13 @@ already binds.
 
 ### Fixed
 
+- **Three of the fixes below apply to published 0.2.x.** The asymmetric merkle
+  duplicate-sibling guard, the 64-byte rule reading the witness-bearing
+  serialization, and the missing proof-of-work floor are all present in
+  `@ordspv/core` 0.2.0, which every published 0.2.x package pins exactly.
+  There is no 0.2.x backport, and upgrading to 0.3.0 is the fix. Written up in
+  `docs/advisories/2026-08-04-verification-defects-0.2.x.md`.
+
 - **`verifySatGenealogy` accepted a `claimedSat` with leading zeros.** The
   claim is canonical decimal and the recompute-and-check made the leniency
   harmless, so this is hygiene: `007` and `0` + the true claim were parsed
