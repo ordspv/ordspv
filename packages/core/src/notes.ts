@@ -38,8 +38,9 @@ export const L2_NUMBERING_RESIDUAL =
  * appear in no header, so no amount of chain view settles them.
  */
 export const BUNDLE_HEADERS_UNANCHORED =
-  'no header in this bundle was anchored, so this result holds only against your ' +
-  'own chain view; anchor each block hash at the height printed beside it';
+  'beyond the compiled-in checkpoints, no header in this bundle was anchored, so ' +
+  'this result holds only against your own chain view; anchor each block hash at ' +
+  'the height printed beside it';
 
 /**
  * What a printed block height is worth on an offline verification. The header

@@ -74,6 +74,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Offline `verify` never consulted the compiled-in checkpoints, so a bundle
+  relabelled to a checkpoint height with a real header from another height
+  verified at exit 0.** A bundle's claimed heights are not committed by its
+  headers, and the checkpoint set that pins three of them (0, 767430, 824544)
+  was consulted by the build side alone. `checkpointTrustHeader` adapts a
+  checkpoint set into the synchronous core `trustHeader` hook, mirroring
+  `makeHeaderTrust`'s checkpoint arm: a claimed height a checkpoint pins is
+  refused on hash mismatch and asserts hash-at-height on match, and every
+  other height passes with no assertion. `ord-resolve verify` passes the hook
+  on all three bundle kinds, which is SPEC-VERIFICATION section 4's MUST for
+  a checkpoint that applies. A bundle at a genuine checkpoint height with the
+  matching header still verifies, heights no checkpoint covers are untouched,
+  and the unanchored stderr note now names the checkpoint exception so it
+  stays literally true on every path.
+
 - **A merkle proof of the right member of a duplicated final pair was
   accepted, so the CVE-2012-2459 mutation shape was refused for the left
   member alone.** `verifyMerkleBranch` rejected an equal sibling only at an

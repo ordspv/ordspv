@@ -308,6 +308,10 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
   },
   {
     ctor: HeaderTrustError,
-    reason: `anchoring machinery failure, reaches callers wrapped under the HEADER_TRUST code`,
+    reason:
+      `anchoring machinery failure. Live it reaches callers wrapped under the ` +
+      `HEADER_TRUST code; offline verify surfaces a checkpoint contradiction ` +
+      `through the command's own invalid path at exit 1, since a header that ` +
+      `contradicts a compiled-in checkpoint is a document defect`,
   },
 ];

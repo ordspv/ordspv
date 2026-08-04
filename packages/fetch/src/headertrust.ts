@@ -119,6 +119,31 @@ export interface HeaderTrustReport {
 export class HeaderTrustError extends Error {}
 
 /**
+ * Adapt a checkpoint set into the synchronous core `trustHeader` hook, for
+ * verifiers that run offline. The check fires only when the claimed height is
+ * a checkpoint height: a mismatch is refused, a match asserts
+ * 'hash-at-height' exactly as `makeHeaderTrust`'s checkpoint arm does, and
+ * every other height passes with no assertion, so the hook stays
+ * rejection-only where no checkpoint speaks. `ord-resolve verify` passes this
+ * hook on all three bundle kinds; heights the checkpoint set does not cover
+ * still rest on the reader's own chain view.
+ */
+export function checkpointTrustHeader(
+  checkpoints: ReadonlyMap<number, string> = MAINNET_CHECKPOINTS,
+): (header: BlockHeader, height: number) => HeaderAttestation {
+  return (header, height) => {
+    const checkpoint = checkpoints.get(height);
+    if (checkpoint === undefined) return undefined;
+    if (checkpoint !== header.hash) {
+      throw new HeaderTrustError(
+        `header ${header.hash} at height ${height} contradicts checkpoint ${checkpoint}`,
+      );
+    }
+    return 'hash-at-height';
+  };
+}
+
+/**
  * Returns an async checker suitable for calling after verifyProofBundle.
  * Throws HeaderTrustError when the header cannot be anchored.
  */

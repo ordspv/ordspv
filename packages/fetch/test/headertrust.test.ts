@@ -3,7 +3,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseHeader, hexToBytes } from '@ordspv/core';
-import { EsploraBackend, HeaderTrustError, makeHeaderTrust } from '../src/index.js';
+import {
+  checkpointTrustHeader,
+  EsploraBackend,
+  HeaderTrustError,
+  makeHeaderTrust,
+} from '../src/index.js';
 import type { FetchFn } from '../src/backends.js';
 import { buildBlock, dummyTx } from '../../core/test/helpers.js';
 
@@ -284,5 +289,34 @@ describe('proof-of-work limit floor', () => {
   it('mainnet headers pass the default floor', async () => {
     const trust = makeHeaderTrust({ esploras: [] }); // checkpoint covers the rest
     await expect(trust(HEADER, HEIGHT)).resolves.toMatchObject({ checkpointHit: true });
+  });
+});
+
+/**
+ * The synchronous checkpoint adapter for the core `trustHeader` hook, which is
+ * how `ord-resolve verify` consults the compiled-in checkpoints offline. It
+ * mirrors makeHeaderTrust's checkpoint arm: a mismatch is refused, a match
+ * asserts hash-at-height, and a height no checkpoint covers passes silently.
+ */
+describe('checkpointTrustHeader', () => {
+  it('asserts hash-at-height when the compiled-in checkpoint matches', () => {
+    expect(checkpointTrustHeader()(HEADER, HEIGHT)).toBe('hash-at-height');
+  });
+
+  it('refuses a header that contradicts the checkpoint at its claimed height', () => {
+    const hook = checkpointTrustHeader();
+    expect(() => hook(HEADER, 824544)).toThrow(HeaderTrustError);
+    expect(() => hook(HEADER, 824544)).toThrow(/at height 824544 contradicts checkpoint/);
+  });
+
+  it('passes silently at a height no checkpoint covers', () => {
+    expect(checkpointTrustHeader()(HEADER, HEIGHT + 1)).toBeUndefined();
+  });
+
+  it('reads a caller-supplied checkpoint set in place of the default', () => {
+    const pinned = checkpointTrustHeader(new Map([[123, HEADER.hash]]));
+    expect(pinned(HEADER, 123)).toBe('hash-at-height');
+    // the default set pins height 0; this set does not, so 0 passes silently
+    expect(pinned(HEADER, 0)).toBeUndefined();
   });
 });

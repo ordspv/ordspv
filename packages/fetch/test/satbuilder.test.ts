@@ -27,6 +27,7 @@ import {
 } from '../src/backends.js';
 import {
   buildSatGenealogyBundle,
+  checkpointTrustHeader,
   DEFAULT_MAX_STEPS,
   fetchCustody,
   fetchSatIdentity,
@@ -329,6 +330,34 @@ describe('fetchSatIdentity', () => {
     expect(verifySatGenealogy(res.bundle, NO_POW_FLOOR).sat).toBe(res.identity.sat);
     expect(res.bundle.funding).toHaveLength(1);
     expect(res.bundle.coinbase.tx.pos).toBe(0);
+  });
+
+  it('offline re-verification consults checkpoints through the trustHeader hook', async () => {
+    const coinbase = coinbaseTx(CB_HEIGHT, [{ value: SUBSIDY + 50_000n }]);
+    const commit = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 10_000n, spk: TAP.scriptPubKey }]);
+    const reveal = segwitTx([{ txid: commit.tx.txid, vout: 0, witness: WITNESS }], [{ value: 546n }]);
+    const routes = chainRoutes(coinbase, reveal, [commit]);
+    const res = await fetchSatIdentity(`${reveal.tx.txid}i0`, { ...OPTS, fetchFn: stubFetch(routes) });
+
+    // a pin at the reveal's true height and hash verifies unchanged
+    const pinned = checkpointTrustHeader(
+      new Map([[REVEAL_HEIGHT, res.bundle.reveal.block.hash]]),
+    );
+    expect(
+      verifySatGenealogy(res.bundle, { ...NO_POW_FLOOR, trustHeader: pinned }).sat,
+    ).toBe(res.identity.sat);
+
+    // relabelling the reveal hop to a checkpointed height contradicts the pin.
+    // Nothing else in the bundle binds a non-coinbase hop's height, which is
+    // the gap the hook closes: without it the same relabelled bundle verifies
+    const relabelled = {
+      ...res.bundle,
+      reveal: { ...res.bundle.reveal, block: { ...res.bundle.reveal.block, height: 824544 } },
+    };
+    expect(() =>
+      verifySatGenealogy(relabelled, { ...NO_POW_FLOOR, trustHeader: checkpointTrustHeader() }),
+    ).toThrow(/at height 824544 contradicts checkpoint/);
+    expect(verifySatGenealogy(relabelled, NO_POW_FLOOR).sat).toBe(res.identity.sat);
   });
 
   it('walks a multi-step chain, fetching only the prev txs the position needs', async () => {

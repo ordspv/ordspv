@@ -15,6 +15,7 @@ import { writeBundleFile } from './bundlewrite.js';
 import { contentResiduals, refusalJson, refusalReport, type RefusalContext } from './notes.js';
 import {
   buildProofBundle,
+  checkpointTrustHeader,
   EsploraBackend,
   OrdResolver,
   parseOrdUri,
@@ -500,10 +501,15 @@ async function main(): Promise<void> {
     // level 2 residual, and the JSON is the only place a scripted caller sees it
     const indexNote = (indexProof: 'wtxid' | 'single-input'): string =>
       indexProof === 'wtxid' ? anchorNote : `${anchorNote}; ${RESIDUAL}`;
+    // the compiled-in checkpoints are consulted on every header whose claimed
+    // height one of them pins (SPEC-VERIFICATION section 4's MUST where a
+    // checkpoint applies): a contradiction is refused, and a bundle whose
+    // heights no checkpoint covers is untouched
+    const trustHeader = checkpointTrustHeader();
     try {
       if (kind === 'genealogy') {
         const bundle = parsed as SatGenealogyBundleJson;
-        const result = verifySatGenealogy(bundle, { maxSteps: verifyMaxSteps });
+        const result = verifySatGenealogy(bundle, { maxSteps: verifyMaxSteps, trustHeader });
         console.log(
           JSON.stringify(
             {
@@ -523,10 +529,12 @@ async function main(): Promise<void> {
               // the two endpoints the bundle proves into headers
               reveal: { height: bundle.reveal.block.height, block: bundle.reveal.block.hash },
               coinbase: { height: bundle.coinbase.block.height, block: bundle.coinbase.block.hash },
-              // no anchor is supplied to an offline verification today, so this
-              // is false on every bundle. The field exists so a reader is told
-              // rather than left to infer it, and a caller that later supplies
-              // one has somewhere to read the answer
+              // the checkpoint consultation above pins single heights and can
+              // refuse a contradiction, but no anchor covering this bundle's
+              // headers as a set is supplied to an offline verification, so
+              // this stays false on every bundle. The field exists so a reader
+              // is told rather than left to infer it, and a caller that later
+              // supplies a covering anchor has somewhere to read the answer
               anchored: false,
               note: indexNote(result.indexProof),
             },
@@ -538,7 +546,7 @@ async function main(): Promise<void> {
         return;
       }
       if (kind === 'custody') {
-        const result = verifyCustodyBundle(parsed as CustodyBundleJson);
+        const result = verifyCustodyBundle(parsed as CustodyBundleJson, { trustHeader });
         console.log(
           JSON.stringify(
             {
@@ -564,7 +572,7 @@ async function main(): Promise<void> {
         console.error(BUNDLE_HEADERS_UNANCHORED);
         return;
       }
-      const result = verifyProofBundle(parsed as ProofBundleJson);
+      const result = verifyProofBundle(parsed as ProofBundleJson, { trustHeader });
       // below L3 the content path carries the same executed-leaf residual the
       // other two branches print, and a multi-input reveal there is the one
       // case a gateway can renumber without the inscriber
