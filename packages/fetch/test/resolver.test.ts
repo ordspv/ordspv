@@ -10,7 +10,14 @@ import {
   serializeBlock,
   sha256,
 } from '@ordspv/core';
-import { OrdResolver, OrdResolveError, toResponse } from '../src/index.js';
+import {
+  OrdResolver,
+  OrdResolveError,
+  toResponse,
+  buildProofBundle,
+  EsploraBackend,
+} from '../src/index.js';
+import { parseInscriptionId } from '@ordspv/core';
 import type { FetchFn } from '../src/backends.js';
 import {
   buildBlock,
@@ -102,6 +109,68 @@ describe('OrdResolver L2 against real inscription 0 (stubbed transport)', () => 
     const bad = new OrdResolver({ esplora: [E], fetchFn: stubFetch(routes), verification: 'L2' });
     await expect(bad.resolve(`ord:${INSC0}`)).rejects.toMatchObject({ code: 'VERIFY_FAILED' });
   });
+
+  it('rotates past a backend serving a non-integer height and resolves through the next', async () => {
+    // the built bundle would carry the string into a field the verifier
+    // refuses, so the builder must fail the attempt where rotation can act
+    const E2 = 'https://esplora2.test';
+    const routes = insc0Routes();
+    for (const [k, v] of Object.entries(insc0Routes())) {
+      routes[k.replace(E, E2)] = v;
+    }
+    routes[`${E}/tx/${REVEAL}/status`] = { confirmed: true, block_height: '767430', block_hash: BLOCK };
+    const resolver = new OrdResolver({ esplora: [E, E2], fetchFn: stubFetch(routes), verification: 'L2' });
+    const result = await resolver.resolve(`ord:${INSC0}`);
+    expect(result.verification.height).toBe(767430);
+  });
+});
+
+describe('buildProofBundle answer validation', () => {
+  // the four scalar answers the bundle carries in checked positions; each
+  // doctored value must fail the build under a message naming the answer,
+  // so every rotating caller records the cause and asks the next backend
+  const cases: [string, string, Route, string][] = [
+    [
+      'a string status height',
+      `${E}/tx/${REVEAL}/status`,
+      { confirmed: true, block_height: '767430', block_hash: BLOCK },
+      `reveal tx ${REVEAL} status has no valid block height (got "767430")`,
+    ],
+    [
+      'a string transaction count',
+      `${E}/block/${BLOCK}`,
+      { id: BLOCK, height: 767430, tx_count: '2332' },
+      `block ${BLOCK} info has no valid transaction count (got "2332")`,
+    ],
+    [
+      'a string merkle position',
+      `${E}/tx/${REVEAL}/merkle-proof`,
+      { ...(JSON.parse(read('merkle-proof.json')) as object), pos: '5' },
+      `merkle proof for ${REVEAL} has no valid position (got "5")`,
+    ],
+    [
+      'a non-array merkle branch',
+      `${E}/tx/${REVEAL}/merkle-proof`,
+      { ...(JSON.parse(read('merkle-proof.json')) as object), merkle: 'x' },
+      `merkle proof for ${REVEAL} has no valid branch (got "x")`,
+    ],
+  ];
+  for (const [what, route, value, message] of cases) {
+    it(`refuses ${what} in the builder, not at verification`, async () => {
+      const routes = insc0Routes();
+      routes[route] = value;
+      const backend = new EsploraBackend(E, stubFetch(routes));
+      let err: Error | undefined;
+      try {
+        await buildProofBundle(backend, parseInscriptionId(REVEAL + 'i0'), 'L2');
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message).toBe(message);
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    });
+  }
 });
 
 describe('OrdResolver synthetic flows', () => {

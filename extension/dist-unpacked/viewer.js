@@ -3768,6 +3768,11 @@
     if (!status.confirmed || !status.block_hash || status.block_height === void 0) {
       throw new Error(`reveal tx ${id.txid} is not confirmed`);
     }
+    if (!Number.isInteger(status.block_height) || status.block_height < 0) {
+      throw new Error(
+        `reveal tx ${id.txid} status has no valid block height (got ${JSON.stringify(status.block_height)})`
+      );
+    }
     const blockHash = status.block_hash;
     const height = status.block_height;
     if (level === "L2") {
@@ -3777,6 +3782,21 @@
         esplora.getHeaderHex(blockHash),
         esplora.getBlockInfo(blockHash)
       ]);
+      if (!Number.isInteger(blockInfo.tx_count) || blockInfo.tx_count < 1) {
+        throw new Error(
+          `block ${blockHash} info has no valid transaction count (got ${JSON.stringify(blockInfo.tx_count)})`
+        );
+      }
+      if (!Number.isInteger(proof.pos) || proof.pos < 0) {
+        throw new Error(
+          `merkle proof for ${id.txid} has no valid position (got ${JSON.stringify(proof.pos)})`
+        );
+      }
+      if (!Array.isArray(proof.merkle)) {
+        throw new Error(
+          `merkle proof for ${id.txid} has no valid branch (got ${JSON.stringify(proof.merkle)})`
+        );
+      }
       const reveal = parseTx(hexToBytes(revealHex.trim()));
       const inscription = inscriptionsFromTx(reveal).find((i) => i.index === id.index);
       if (!inscription) {
