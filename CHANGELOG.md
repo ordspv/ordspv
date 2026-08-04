@@ -74,6 +74,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A backend serving a non-integer block height in every answer passed
+  the build's self-check and cost the caller the whole walk.**
+  `verifyAnchoredHop` refuses a non-integer height, and the build's
+  `checkHopAnswers` only compared the status height against the merkle
+  proof's, so both sides of a consistent lie were the same string and
+  the strict inequality passed. The walk completed and the terminal
+  fold refused the builder's own bundle as `VERIFY_FAILED`, naming no
+  backend, reading as a bundle defect, with the other configured
+  backends never asked. The self-check now refuses a non-integer or
+  negative height where the shared hop verifier does, between the
+  txCount check and the proof-height comparison, as
+  `HopConsistencyError` under the serving backend's name, so the loop
+  records that backend as producing no usable answer and the next one
+  leads. One backend's well-formed wrong answer costs one attempt
+  again, which is the rule the build loops already keep for the
+  binding, the coinbase position and the BIP34 push.
+
 - **Staged package manifests dropped `repository`, so the published npm
   pages would link back to nothing.** `stagedManifest` copies name,
   version, description and dependencies into the publish-shaped manifest,

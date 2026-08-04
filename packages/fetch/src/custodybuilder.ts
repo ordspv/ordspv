@@ -176,12 +176,15 @@ export type WitnessSectionMode = 'always' | 'when-needed';
  * in the order it runs them, through the same core primitives, so nothing here
  * is a second implementation of the rules and a hop that fails at build fails
  * at the place it would have failed at verification. The header hash match,
- * the proof-of-work floor, the header's own target, `txCount` validity and the
- * branch depth and fold are all here; the branch depth comes through
- * `verifyMerkleBranch`, which enforces it when `txCount` is passed. The one
- * thing `verifyAnchoredHop` does that this does not is call the caller's
- * `trustHeader` hook, which is anchoring rather than a check on the answers
- * and which the wrappers run over the finished bundle.
+ * the proof-of-work floor, the header's own target, `txCount` validity, the
+ * height's own validity and the branch depth and fold are all here; the
+ * branch depth comes through `verifyMerkleBranch`, which enforces it when
+ * `txCount` is passed. What `verifyAnchoredHop` does beyond this is two
+ * things. It calls the caller's `trustHeader` hook, which is anchoring rather
+ * than a check on the answers and which the wrappers run over the finished
+ * bundle. And it checks the hop document's own shape, which has no build-side
+ * counterpart because this builder constructs the hop object itself, so an
+ * absent section is unrepresentable in that construction.
  *
  * The block info's other three fields are checked here too, and they have no
  * counterpart at verification because the bundle never carries them. They come
@@ -239,6 +242,15 @@ function checkHopAnswers(
   if (!Number.isInteger(txCount) || txCount < 1) {
     throw new HopConsistencyError(
       `${baseUrl}: block ${blockHash} has no valid transaction count (got ${txCount})`,
+    );
+  }
+  // the height's own validity, where the shared hop verifier checks it: the
+  // equality below passes when both sides of a consistent lie are the same
+  // string, and the verifier's refusal would then cost the finished walk
+  if (!Number.isInteger(blockHeight) || blockHeight < 0) {
+    throw new HopConsistencyError(
+      `${baseUrl}: status for ${tx.txid} has no valid block height ` +
+        `(got ${JSON.stringify(blockHeight)})`,
     );
   }
   if (proof.block_height !== blockHeight) {

@@ -471,6 +471,26 @@ describe('fetchCustody when one backend answers inconsistently', () => {
         };
       },
     ],
+    [
+      'a height served as a string in every answer',
+      // both sides of a consistent lie pass the strict height equality, so
+      // without the height's own validity check the walk completes and the
+      // terminal fold refuses the builder's own bundle with no rotation
+      (r) => {
+        r[`${E}/tx/${reveal.txid}/status`] = {
+          ...(r[`${E}/tx/${reveal.txid}/status`] as object),
+          block_height: '100',
+        };
+        r[`${E}/tx/${reveal.txid}/merkle-proof`] = {
+          ...(r[`${E}/tx/${reveal.txid}/merkle-proof`] as object),
+          block_height: '100',
+        };
+        r[`${E}/block/${block.blockHash}`] = {
+          ...(r[`${E}/block/${block.blockHash}`] as object),
+          height: '100',
+        };
+      },
+    ],
   ];
 
   for (const [what, doctor] of cases) {
