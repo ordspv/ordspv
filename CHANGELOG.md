@@ -3,7 +3,14 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-04
+
+Sat provenance in both directions, on the same fail-closed trust model as
+content verification. Forward, custody proofs give an inscription's satpoint
+history from its reveal to its current location. Backward, sat identity proves
+which sat it lives on, traced to the coinbase that mined it. Galleries decode
+from the envelope, which puts membership inside the bytes a content proof
+already binds.
 
 ### Added
 
@@ -34,6 +41,78 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   written file round-trips: `verify` on it reports the same satpoint, hops
   and indexProof the live command printed.
 
+- **`@ordspv/core`: custody bundle verification.** `verifyCustodyBundle`
+  recomputes an inscription's satpoint path from chain data alone: the
+  genesis satpoint from the reveal (pointer aware, matching ord's assignment
+  rules) plus one ordinal transfer step per spending transaction. Each hop is
+  merkle-proven into a PoW-checked header with the txCount depth hardening
+  from SPEC-VERIFICATION. Input values are proven by the previous
+  transactions the spending inputs name, and the claimed final satpoint is
+  recomputed and checked. Paths that cross fees or a coinbase raise
+  `CustodyUnsupportedError`, as do inscriptions ord treats as unbound
+  (zero-value envelope input or unrecognized even field).
+- **`@ordspv/fetch`: custody path building.** `buildCustodyBundle` walks
+  confirmed outspends from the reveal; the backend acts as a pathfinder and
+  nothing it asserts is trusted. `fetchCustody` builds with failover,
+  verifies the bundle, anchors every hop header through the existing
+  header-trust machinery with the building backend excluded from attesting,
+  and reports tip liveness as per-source outspend observations.
+- **`@ordspv/cli`: `ord-resolve custody <inscription-id> [--json]`** prints
+  the proven satpoint with hop count and per-source tip state. A pending
+  unconfirmed spend of the tip is surfaced when present.
+- **`@ordspv/core`: sat identity.** `verifySatGenealogy` proves which sat an
+  inscription lives on, with its ordinal name and rarity, by folding a chain
+  of funding transactions back to the coinbase that mined the sat. Reversing
+  the walk removes the pathfinder: every input names its funding txid, so
+  ancestry is a hash chain and a backend serving wrong bytes fails locally.
+  Intermediate transactions therefore need no inclusion proofs, and only the
+  reveal and terminal coinbase anchor to headers. Sat numbers come from the
+  ordinal theory closed forms, with the coinbase's BIP34 height cross-checked
+  against the bundle's claim from height 230,000 on. Also exported:
+  `subsidySats`, `firstSatOfBlock`, `satToHeight`, `satName`, `satRarity`.
+- **`@ordspv/fetch`: sat genealogy building.** `buildSatGenealogyBundle` walks
+  funding transactions backward from the reveal, fetching previous
+  transactions one input at a time and only until their cumulative value
+  covers the traced position, so a consolidation with hundreds of inputs costs
+  one request when the sat sits in the first. `fetchSatIdentity` builds with
+  failover, verifies offline, and anchors both endpoint headers.
+- **`@ordspv/cli`: `ord-resolve sat <inscription-id> [--json] [--bundle FILE]`**
+  prints the sat number with its name, rarity, mining block, and walk depth.
+  `--bundle` writes the genealogy artifact for later offline re-verification.
+- **`@ordspv/core`: gallery member lists.** `parseGallery` and
+  `inscriptionGallery` decode the properties field (tag 17) in both the inline
+  and packed encodings. Because the member list is envelope data, an L2 or L3
+  proof over the gallery inscription settles membership and completeness with
+  no indexer, unlike children provenance where enumeration needs one. Decoding
+  is lenient in ord's style and reports a `skipped` count, so a caller
+  claiming a complete list can tell whether it has one.
+- **SPEC-CUSTODY** specifies the custody bundle format and the verification
+  rules; a deferred section states the v1 boundaries. **SPEC-SAT** does the
+  same for sat identity, and **SPEC-VERIFICATION §7** covers galleries.
+- **`@ordspv/fetch`: `DEFAULT_ANCHOR_SOURCES` and the `anchorSources` option**
+  on the resolver, custody, sat identity and the gateway, with
+  `--anchor-source url[,url]` on the CLI and `ANCHOR_SOURCES` on the gateway.
+  Attesting a header needs one cheap endpoint, `/block-height/<n>`, while
+  serving proofs needs the whole esplora surface, so the two lists have
+  different membership requirements. The default holds five operator-diverse
+  bases, each checked against block 767430 for three consecutive tries.
+  `HeaderTrustOptions.proofSources` takes a set of serving base URLs for
+  builds spread across several backends; `proofSource` still takes one.
+- **`@ordspv/fetch`: bounded retry inside every esplora request.** HTTP 429,
+  HTTP 503 and thrown network errors are retried up to 4 attempts with
+  exponential backoff from 250 ms under full jitter, capped at 8 s, honoring
+  `Retry-After` when it asks for 30 s or less. Other non-2xx statuses and
+  byte-cap violations are not retried, since repeating them changes nothing.
+  Configurable through `BackendLimits.retry`, with an injectable `sleep` on
+  the backend constructor so tests never wait on a real backoff.
+- **`@ordspv/fetch`: `PooledEsploraBackend`.** N backends behind one
+  backend-shaped surface, rotating the starting member per request and moving
+  a failed request to the next member. `fetchSatIdentity` now builds through
+  a pool, so a rate limit at step 400 of a genealogy walk costs one request
+  rather than 400 steps of work. The pool records which members served bytes,
+  and all of them are excluded from header attesting.
+- **`@ordspv/cli`: `--max-steps N`** on `sat`, threaded to the builder.
+
 ### Changed
 
 - **`verify` on a custody bundle emits the satpoint as the object the live
@@ -63,6 +142,269 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   same place. `--json` stays accepted everywhere: it is boolean, so it can
   swallow no value, and `proof` and `parse` already emit JSON, so its intent
   is satisfied rather than ignored.
+
+- **The coinbase hop's self-check names the attempt, lead leading pool, the
+  way the reveal hop's already does.** The shim the terminal coinbase is
+  anchored through carried the pool's name while its status request went to
+  the member leading the attempt, so a mismatch on lead-served data was
+  attributed to the pool, and both BIP34 messages said a height came from the
+  pool when the lead had served it. The shim's name and both messages now read
+  `<lead> leading pool(...)`. This is message text and not a provenance fix:
+  inside the lead-derived span the failure was already wrapped into
+  `RevealSourceError` and recorded under the member leading the attempt, so
+  the accounting is unchanged.
+- **The genealogy loop stopped treating the pool's failover as if it covered
+  checks that run outside it.** One defect at two sites. A pooled request
+  returns the first member's answer that does not throw, so bytes for the
+  wrong transaction are an answer the pool accepts and a check after it
+  rejects: the walk's txid test, the 64-byte test beside it and
+  `provenInputValues` all raise outside the pool. The loop read any such throw
+  as pool exhaustion, recorded it, marked every remaining member as never
+  having led and ended the build, so one member serving garbage for one
+  mid-walk request cost the whole build with the other configured members
+  never asked. `PooledEsploraBackend.run` now raises an exported
+  `PoolExhaustedError`, which means every member failed that one request, and
+  the loop breaks on that class alone. Everything else is one attempt's bad
+  bytes, recorded as that member producing no usable answer, and the next
+  member leads. It is never recorded as a refusal, because the bytes came from
+  whichever member the pool's cursor reached rather than from the member
+  leading the attempt. At the second site the loop passed the pool itself as
+  the whole witness-backend list, on the reasoning that the pool rotates every
+  member for the raw block request. It does, for the request; the four content
+  checks the section loop applies to the served block run outside it, and with
+  one entry in the list there was no next backend, so a member serving a block
+  whose witness does not fold ended the section with one cause naming
+  `pool(...)` rather than the member that served the bytes. The rotated
+  members go in by name, lead first, so each is asked in turn and each cause
+  names the member it belongs to.
+- **A caller whose backends all answered is no longer told that none of them
+  did.** Both build loops reach `BUILD_FAILED` when the refusals they recorded
+  are of unlike classes, and the note beside that code said no configured
+  backend produced a usable answer. A refusal is a usable answer, and the
+  causes printed above the note said so. The note now says that no configured
+  backend produced an answer the build could stand on, that the causes above
+  name what each one did, and that `--esplora` names others. The code and the
+  category are unchanged, because two backends refusing for different reasons
+  is a case where a third may well succeed. Four changelog entries that stated
+  a class-to-code mapping without the condition it carries, which is that
+  every configured attempt ended in that same class, are narrowed to say so.
+- **Smaller items on the same surface.** A custody hop's prev-tx hex is
+  trimmed where it is read, so a bundle this builder writes carries the bytes
+  a verifier reads back. The genealogy reveal hop's self-check reported
+  against the pool's name while its status and merkle proof came from the lead
+  alone, and neither name covers every check the function runs; the shim now
+  names the attempt, in the form `<lead> leading pool(...)`.
+  `CoinbaseHeightUnprovenError`'s taxonomy row records that no CLI path
+  reaches it today and why the row stays.
+- **The last member of that defect: the genealogy builder checks the terminal
+  coinbase's height against the coinbase's own BIP34 push.** From block
+  230,000 on a coinbase states its height in its scriptSig, and
+  `verifySatGenealogy` binds the claimed height to that push. No builder read
+  it, so a backend that served one wrong height across its status, its merkle
+  proof and its block info moved the subsidy boundary, numbered the sat wrong
+  by that block's subsidy, and the caller was told its own bundle was invalid
+  at exit 1 with the other configured backends never asked. The build holds
+  the coinbase's bytes, pinned by the txid the funding chain already names,
+  and it holds the height the leading backend served, so the comparison needs
+  no view of the chain beyond the bundle. It sits above `coinbaseSatAt`,
+  which reads the served height to decide the subsidy boundary, because a
+  wrong height there can turn an honest output position into a fee-tail case
+  and raise `CustodyUnsupportedError`, a refusal recorded under the backend's
+  own name. Both arms the verifier distinguishes are raised separately, a push
+  that does not parse and a push that disagrees, each as `HopConsistencyError`
+  naming the backend, the transaction and the heights, which is one backend
+  producing no usable answer and never a refusal, so the next configured
+  member leads the next attempt. Below block 230,000 no push is required, and that
+  arm still rests on the caller's `trustHeader` hook after the loop.
+- **Another member of that defect: the genealogy builder checks that the
+  terminal coinbase sits at position 0 of its block.** `verifySatGenealogy`
+  refuses a bundle whose terminal coinbase is anywhere else, and
+  SPEC-VERIFICATION states it as a MUST, because a coinbase is its block's
+  first transaction and every fold is left-anchored. The position came from
+  whichever backend served the merkle proof, and a block that places the
+  coinbase elsewhere contradicts nothing else the hop carries, so the walk ran
+  to the end and the caller was told its own bundle was invalid at exit 1 with
+  the other configured backends never asked. The check sits beside the
+  coinbase hop's assembly rather than inside `assembleAnchoredHop`, which
+  anchors ordinary hops too, where a nonzero position is correct. A violation
+  is `HopConsistencyError` naming the backend, the transaction and the
+  position it served, which is one backend producing no usable answer and
+  never a refusal, so the next configured member leads the next attempt.
+- **Three more verifier checks now have a build-time equivalent, so one
+  backend's wrong answer costs one attempt.** The same defect at three sites:
+  a check the verifier runs had nothing behind it in either builder, so a
+  backend serving an answer that was well formed and wrong bought the whole
+  walk, and the caller was told its own bundle was invalid at exit 1 with the
+  other configured backends never asked. The 64-byte transaction rule now runs
+  at build on every transaction a bundle will carry in a proven position: the
+  reveal in both builders, each custody hop, each genealogy funding step, the
+  terminal coinbase, and the coinbase the reveal's witness section is built
+  from. The custody walk tests each hop it appends against the one before it
+  for strict chain order, increasing height or equal height with strictly
+  increasing position, which is what `verifyCustodyBundle` requires and what
+  SPEC-CUSTODY states as a MUST on verifiers. And `AnchorBackend.getBlockInfo`
+  returns the whole block summary rather than the transaction count alone, so
+  the block's own `id`, `height` and `merkle_root` are checked against the
+  status and the header the same backend served, at no extra request. Each
+  failure is `HopConsistencyError`, which is one backend producing no usable
+  answer and never a refusal. What the block info checks do not catch is a
+  backend that lies consistently: a real block hash presented at a wrong
+  height, with that backend's status, merkle proof and block info all agreeing
+  on it, is indistinguishable from an honest answer inside the build, because
+  a header commits to no height above the BIP34 coinbase push. That case is
+  settled after the loop by `makeHeaderTrust`'s hash-at-height anchoring and by
+  `verifySatGenealogy`'s BIP34 test on the terminal coinbase.
+- **The reveal's witness section is folded against the block's own commitment
+  before it is attached.** The builder tested two things about the raw block a
+  backend served, that its header hashed to the hop's block hash and that the
+  reveal sat at the hop's position, and neither constrains a witness, since a
+  txid commits to no witness byte. Every transaction in the served block could
+  carry a rewritten witness and both tests still passed, so the section was
+  built from the rewritten wtxid list and attached to a bundle the verifier
+  then refused after the build loop had been left, with the remaining backends
+  never asked. Each candidate section now runs through
+  `verifyWitnessAnchoring`, the function the verifier runs on it, and is
+  attached only after it returns. A failure is that backend's bad answer: the
+  cause is recorded and the next backend is asked, so a backend serving a
+  rewritten witness rotates instead of ending the build at verification, and
+  the terminal class stays `WitnessSectionUnavailableError`, which reports
+  UNPROVEN with a remedy when every configured backend led an attempt that
+  ended in that same class. A build whose backends refused for unlike reasons
+  reports INCOMPLETE at exit 5 with every cause named, since a third backend
+  may well answer. The served block's transaction count is checked
+  against the hop's block info first, with its own cause, since a disagreement
+  there folds as a branch depth and that message names the wrong thing.
+- **Each hop's build-time self-check covers every check the verifier runs on
+  the same answers, including proof of work.** The self-check ran the header
+  hash match, the proof height match and the fold, and the proof-of-work pair
+  and the `txCount` validity test had no build-time equivalent anywhere. A
+  backend that fabricated a block outright, with a header hashing to the hash
+  its own status named under an easy `nBits` and a branch folding to that
+  header's root, was internally consistent, so the build accepted it, the walk
+  completed, and the verifier refused the bundle after the loop with no
+  rotation. `checkPowLimit`, `checkProofOfWork` and the `txCount` test are now
+  part of the self-check, in the order `verifyAnchoredHop` runs them, so a hop
+  that fails at build fails where it would have failed at verification. Both
+  builders take `powLimitBits` and pass it down, in the convention
+  `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables
+  the floor. `makeHeaderTrust`'s own `minAgreement` guard is tightened in the
+  same spirit, to require a whole number of agreeing sources: `NaN < 1` is
+  false, so `NaN` passed a bare lower bound and the anchor reported a header
+  as anchored at a height with no attester agreeing at all.
+- **The envelope's binding to the reveal is checked at build time.** Neither
+  builder called `verifyEnvelopeBinding`, which both verifiers run and which
+  needs only the reveal, the envelope and the reveal hop's prev txs, all three
+  in scope where the builders went straight to the arithmetic. A backend
+  serving a reveal whose witness was rewritten under a matching txid therefore
+  built a whole bundle and died at exit 1 with no rotation. Both builders now
+  bind the envelope as soon as the envelope and the reveal hop's prev txs are
+  in hand. At build the reveal's witness is unbound, so a binding failure
+  cannot be attributed to the chain: it is recorded as that backend producing
+  no usable answer and the loop leads the next attempt, and a build where
+  every backend fails this way reports the build failure with each cause
+  named.
+- **A build-time position refusal reports UNPROVEN with its remedy instead
+  of INVALID.** The mapping is what the caller reads when every configured
+  backend led an attempt that ended in this same class; a build whose
+  backends refused for unlike reasons reports INCOMPLETE at exit 5 with every
+  cause named. Both build loops rotate on `SatPositionError`, and the loop
+  that exhausted every configured backend rethrew it to a CLI table with no
+  row for the class, so the caller got exit 1, the code that means a
+  document failed verification, with no remedy sentence and nothing in the
+  JSON body to act on. Nothing had been verified. A build loop reads the
+  pointer and the envelope input out of a served reveal witness, and the
+  reveal's txid commits to no witness byte, so the position it derives is
+  unproven and stays unproven however many backends read the same unbound
+  witness. A verifier raising the class is reading a bundle that bound its
+  own pointer, which is a forgery and keeps exit 1. Each refusal row's
+  category is therefore keyed by output context, the way its remedy sentence
+  already was, so a row missing a context fails to compile and a class that
+  means different things in different phases needs no special case.
+- **Each hop's own answers are checked against each other at build time.** A
+  hop is assembled from a transaction's status, its merkle proof, the
+  block's header and the block's transaction count, and nothing makes a
+  backend keep the four consistent. The bundle verifier proves they are, and
+  it runs after the build loop has been left, so one backend's well formed
+  wrong answer used to cost the whole walk and then report the bundle
+  invalid with the other configured backends never asked. `fetchCustody` and
+  `fetchSatIdentity` now fold each hop against itself as it is assembled,
+  through the same primitives the verifier uses: the header must hash to the
+  block hash the status named, the merkle branch must fold from the
+  transaction's txid to that header's merkle root, and the proof's height
+  must be the status's height. A disagreement is that backend producing no
+  usable answer, never a domain refusal, so the build leads the next attempt
+  with another backend, and a build where every backend answers this way
+  reports the build failure with each cause named.
+- **Every recorded refusal rests on data the named backend served for the
+  requested transaction.** `fetchSatIdentity` fetches the reveal's tx hex,
+  its status, its merkle proof and the terminal coinbase's status from the
+  member leading the attempt rather than through the pool, which could fall
+  over to another member on a request whose answer decides a domain refusal:
+  the reveal's bytes decide every refusal the walk can raise from the
+  reveal, and the coinbase's claimed height decides the subsidy boundary and
+  with it the fee-tail refusal. Both builders check the served reveal's
+  stripped hash against the inscription id's txid immediately after parsing,
+  so a refusal can never be recorded, or upgraded to unanimity, on bytes
+  that hash to some other transaction. A refusal recorded under a backend's
+  name is now that backend's word, and `unanimous` is computed over members
+  that each served their own deciding data. Any failure raised while the
+  build assembles from lead-served data, from the reveal fetch through the
+  reveal hop's assembly, prev-tx coverage and start-position derivation, and
+  again through the terminal coinbase hop's assembly, is one member's
+  failure whether the request failed or the value it returned did: it is
+  recorded as producing no usable answer and the build leads the next
+  attempt with the next member, the same rotation the custody loop already
+  ran on identical conditions. The successful attempt's lead is barred from
+  attesting to the bundle's headers by name, since the deciding requests do
+  not pass through the pool that records which members served bytes. Pool
+  exhaustion on a pooled request outside the lead-derived span still ends
+  the build. SPEC-SAT states the rule.
+- **The refusal taxonomy is one table that every command and both output
+  channels read.** The refusal classes, whether a build rotates on each, and
+  the exit-code category each reports live in two `Record`s keyed on unions
+  of the class names and the wrapper code strings (`@ordspv/fetch`
+  `taxonomy.ts` for the build-time facts, `@ordspv/cli` `taxonomy.ts` for the
+  presentation), so a class added without a row is a compile-time error
+  rather than a gap. Both build loops read one rotate predicate from the
+  table, the reporter renders the prefix and the exit code from one category
+  per class, and the `--json` channel is a typed projection of the same
+  report object the human channel prints. A coverage test walks every error
+  class both packages export and requires each to appear in a table or in an
+  explicitly reasoned excluded list. One live-channel sentence changed: the
+  witness-section remedy now names `--esplora`, since the table requires
+  every remedy to name the flag that changes the outcome where one exists.
+  Exit codes, `verify` output, and rotation behavior for everything a caller
+  can reach are unchanged. Presentation fixes on the same reporting
+  surface: a `"witness": null` section in a custody or genealogy bundle is
+  refused as a bad section instead of surfacing as a raw TypeError,
+  `ord-resolve verify` reports a file it cannot read as one usage line at
+  exit 2 and bytes that do not parse as JSON as one document line at exit 1,
+  with no stack trace on either, and every command's uncaught failure now
+  exits through one final catch as one line on stderr at exit 1, with each
+  command's classified paths untouched. `verifySatGenealogy` reads
+  `claimedSat` as a nonempty all-decimal string and refuses other forms
+  before conversion, closing `BigInt`'s empty-string and hex leniencies,
+  which recompute-and-check had made harmless.
+
+- **Behavior change: a backend that serves a bundle no longer counts as an
+  independent attester for its own header.** `makeHeaderTrust` credited the
+  proof-building backend with one independent source, so the two-backend
+  default anchored non-checkpoint heights on a single outside vote, which
+  contradicts SPEC-CUSTODY, SPEC-SAT and SPEC-VERIFICATION §4.
+  `independentSources` is now the count of agreeing attesters that served
+  nothing, the default `minAgreement` of 2 therefore means two outside
+  sources, and the new `HeaderTrustReport.builderIsSource` carries the
+  excluded fact. A caller running two backends where one builds the bundle
+  will start failing to anchor at non-checkpoint heights until a third source
+  is configured; the built-in `DEFAULT_ANCHOR_SOURCES` covers the default
+  configuration, and `--anchor-source` covers custom ones. Heights under a
+  compiled checkpoint are unaffected.
+- **Mid-walk failover is asymmetric for now.** `fetchSatIdentity` builds
+  through a pool and keeps its progress across a member failure; only a domain
+  refusal starts a fresh walk, leading with the next member. `resolver.ts` and
+  `custodybuilder.ts` still use per-backend failover, where a failure restarts
+  the build on the next backend.
+- All five packages move to 0.3.0; inter-package pins updated to match.
 
 ### Removed
 
@@ -420,336 +762,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Entries within the input count beyond what a custody position needs stay
   legitimately ignored, since SPEC-SAT allows a bundle to supply more than
   the floor.
-
-### Changed
-
-- **The coinbase hop's self-check names the attempt, lead leading pool, the
-  way the reveal hop's already does.** The shim the terminal coinbase is
-  anchored through carried the pool's name while its status request went to
-  the member leading the attempt, so a mismatch on lead-served data was
-  attributed to the pool, and both BIP34 messages said a height came from the
-  pool when the lead had served it. The shim's name and both messages now read
-  `<lead> leading pool(...)`. This is message text and not a provenance fix:
-  inside the lead-derived span the failure was already wrapped into
-  `RevealSourceError` and recorded under the member leading the attempt, so
-  the accounting is unchanged.
-- **The genealogy loop stopped treating the pool's failover as if it covered
-  checks that run outside it.** One defect at two sites. A pooled request
-  returns the first member's answer that does not throw, so bytes for the
-  wrong transaction are an answer the pool accepts and a check after it
-  rejects: the walk's txid test, the 64-byte test beside it and
-  `provenInputValues` all raise outside the pool. The loop read any such throw
-  as pool exhaustion, recorded it, marked every remaining member as never
-  having led and ended the build, so one member serving garbage for one
-  mid-walk request cost the whole build with the other configured members
-  never asked. `PooledEsploraBackend.run` now raises an exported
-  `PoolExhaustedError`, which means every member failed that one request, and
-  the loop breaks on that class alone. Everything else is one attempt's bad
-  bytes, recorded as that member producing no usable answer, and the next
-  member leads. It is never recorded as a refusal, because the bytes came from
-  whichever member the pool's cursor reached rather than from the member
-  leading the attempt. At the second site the loop passed the pool itself as
-  the whole witness-backend list, on the reasoning that the pool rotates every
-  member for the raw block request. It does, for the request; the four content
-  checks the section loop applies to the served block run outside it, and with
-  one entry in the list there was no next backend, so a member serving a block
-  whose witness does not fold ended the section with one cause naming
-  `pool(...)` rather than the member that served the bytes. The rotated
-  members go in by name, lead first, so each is asked in turn and each cause
-  names the member it belongs to.
-- **A caller whose backends all answered is no longer told that none of them
-  did.** Both build loops reach `BUILD_FAILED` when the refusals they recorded
-  are of unlike classes, and the note beside that code said no configured
-  backend produced a usable answer. A refusal is a usable answer, and the
-  causes printed above the note said so. The note now says that no configured
-  backend produced an answer the build could stand on, that the causes above
-  name what each one did, and that `--esplora` names others. The code and the
-  category are unchanged, because two backends refusing for different reasons
-  is a case where a third may well succeed. Four changelog entries that stated
-  a class-to-code mapping without the condition it carries, which is that
-  every configured attempt ended in that same class, are narrowed to say so.
-- **Smaller items on the same surface.** A custody hop's prev-tx hex is
-  trimmed where it is read, so a bundle this builder writes carries the bytes
-  a verifier reads back. The genealogy reveal hop's self-check reported
-  against the pool's name while its status and merkle proof came from the lead
-  alone, and neither name covers every check the function runs; the shim now
-  names the attempt, in the form `<lead> leading pool(...)`.
-  `CoinbaseHeightUnprovenError`'s taxonomy row records that no CLI path
-  reaches it today and why the row stays.
-- **The last member of that defect: the genealogy builder checks the terminal
-  coinbase's height against the coinbase's own BIP34 push.** From block
-  230,000 on a coinbase states its height in its scriptSig, and
-  `verifySatGenealogy` binds the claimed height to that push. No builder read
-  it, so a backend that served one wrong height across its status, its merkle
-  proof and its block info moved the subsidy boundary, numbered the sat wrong
-  by that block's subsidy, and the caller was told its own bundle was invalid
-  at exit 1 with the other configured backends never asked. The build holds
-  the coinbase's bytes, pinned by the txid the funding chain already names,
-  and it holds the height the leading backend served, so the comparison needs
-  no view of the chain beyond the bundle. It sits above `coinbaseSatAt`,
-  which reads the served height to decide the subsidy boundary, because a
-  wrong height there can turn an honest output position into a fee-tail case
-  and raise `CustodyUnsupportedError`, a refusal recorded under the backend's
-  own name. Both arms the verifier distinguishes are raised separately, a push
-  that does not parse and a push that disagrees, each as `HopConsistencyError`
-  naming the backend, the transaction and the heights, which is one backend
-  producing no usable answer and never a refusal, so the next configured
-  member leads the next attempt. Below block 230,000 no push is required, and that
-  arm still rests on the caller's `trustHeader` hook after the loop.
-- **Another member of that defect: the genealogy builder checks that the
-  terminal coinbase sits at position 0 of its block.** `verifySatGenealogy`
-  refuses a bundle whose terminal coinbase is anywhere else, and
-  SPEC-VERIFICATION states it as a MUST, because a coinbase is its block's
-  first transaction and every fold is left-anchored. The position came from
-  whichever backend served the merkle proof, and a block that places the
-  coinbase elsewhere contradicts nothing else the hop carries, so the walk ran
-  to the end and the caller was told its own bundle was invalid at exit 1 with
-  the other configured backends never asked. The check sits beside the
-  coinbase hop's assembly rather than inside `assembleAnchoredHop`, which
-  anchors ordinary hops too, where a nonzero position is correct. A violation
-  is `HopConsistencyError` naming the backend, the transaction and the
-  position it served, which is one backend producing no usable answer and
-  never a refusal, so the next configured member leads the next attempt.
-- **Three more verifier checks now have a build-time equivalent, so one
-  backend's wrong answer costs one attempt.** The same defect at three sites:
-  a check the verifier runs had nothing behind it in either builder, so a
-  backend serving an answer that was well formed and wrong bought the whole
-  walk, and the caller was told its own bundle was invalid at exit 1 with the
-  other configured backends never asked. The 64-byte transaction rule now runs
-  at build on every transaction a bundle will carry in a proven position: the
-  reveal in both builders, each custody hop, each genealogy funding step, the
-  terminal coinbase, and the coinbase the reveal's witness section is built
-  from. The custody walk tests each hop it appends against the one before it
-  for strict chain order, increasing height or equal height with strictly
-  increasing position, which is what `verifyCustodyBundle` requires and what
-  SPEC-CUSTODY states as a MUST on verifiers. And `AnchorBackend.getBlockInfo`
-  returns the whole block summary rather than the transaction count alone, so
-  the block's own `id`, `height` and `merkle_root` are checked against the
-  status and the header the same backend served, at no extra request. Each
-  failure is `HopConsistencyError`, which is one backend producing no usable
-  answer and never a refusal. What the block info checks do not catch is a
-  backend that lies consistently: a real block hash presented at a wrong
-  height, with that backend's status, merkle proof and block info all agreeing
-  on it, is indistinguishable from an honest answer inside the build, because
-  a header commits to no height above the BIP34 coinbase push. That case is
-  settled after the loop by `makeHeaderTrust`'s hash-at-height anchoring and by
-  `verifySatGenealogy`'s BIP34 test on the terminal coinbase.
-- **The reveal's witness section is folded against the block's own commitment
-  before it is attached.** The builder tested two things about the raw block a
-  backend served, that its header hashed to the hop's block hash and that the
-  reveal sat at the hop's position, and neither constrains a witness, since a
-  txid commits to no witness byte. Every transaction in the served block could
-  carry a rewritten witness and both tests still passed, so the section was
-  built from the rewritten wtxid list and attached to a bundle the verifier
-  then refused after the build loop had been left, with the remaining backends
-  never asked. Each candidate section now runs through
-  `verifyWitnessAnchoring`, the function the verifier runs on it, and is
-  attached only after it returns. A failure is that backend's bad answer: the
-  cause is recorded and the next backend is asked, so a backend serving a
-  rewritten witness rotates instead of ending the build at verification, and
-  the terminal class stays `WitnessSectionUnavailableError`, which reports
-  UNPROVEN with a remedy when every configured backend led an attempt that
-  ended in that same class. A build whose backends refused for unlike reasons
-  reports INCOMPLETE at exit 5 with every cause named, since a third backend
-  may well answer. The served block's transaction count is checked
-  against the hop's block info first, with its own cause, since a disagreement
-  there folds as a branch depth and that message names the wrong thing.
-- **Each hop's build-time self-check covers every check the verifier runs on
-  the same answers, including proof of work.** The self-check ran the header
-  hash match, the proof height match and the fold, and the proof-of-work pair
-  and the `txCount` validity test had no build-time equivalent anywhere. A
-  backend that fabricated a block outright, with a header hashing to the hash
-  its own status named under an easy `nBits` and a branch folding to that
-  header's root, was internally consistent, so the build accepted it, the walk
-  completed, and the verifier refused the bundle after the loop with no
-  rotation. `checkPowLimit`, `checkProofOfWork` and the `txCount` test are now
-  part of the self-check, in the order `verifyAnchoredHop` runs them, so a hop
-  that fails at build fails where it would have failed at verification. Both
-  builders take `powLimitBits` and pass it down, in the convention
-  `makeHeaderTrust` uses: `undefined` is the mainnet limit and `null` disables
-  the floor. `makeHeaderTrust`'s own `minAgreement` guard is tightened in the
-  same spirit, to require a whole number of agreeing sources: `NaN < 1` is
-  false, so `NaN` passed a bare lower bound and the anchor reported a header
-  as anchored at a height with no attester agreeing at all.
-- **The envelope's binding to the reveal is checked at build time.** Neither
-  builder called `verifyEnvelopeBinding`, which both verifiers run and which
-  needs only the reveal, the envelope and the reveal hop's prev txs, all three
-  in scope where the builders went straight to the arithmetic. A backend
-  serving a reveal whose witness was rewritten under a matching txid therefore
-  built a whole bundle and died at exit 1 with no rotation. Both builders now
-  bind the envelope as soon as the envelope and the reveal hop's prev txs are
-  in hand. At build the reveal's witness is unbound, so a binding failure
-  cannot be attributed to the chain: it is recorded as that backend producing
-  no usable answer and the loop leads the next attempt, and a build where
-  every backend fails this way reports the build failure with each cause
-  named.
-- **A build-time position refusal reports UNPROVEN with its remedy instead
-  of INVALID.** The mapping is what the caller reads when every configured
-  backend led an attempt that ended in this same class; a build whose
-  backends refused for unlike reasons reports INCOMPLETE at exit 5 with every
-  cause named. Both build loops rotate on `SatPositionError`, and the loop
-  that exhausted every configured backend rethrew it to a CLI table with no
-  row for the class, so the caller got exit 1, the code that means a
-  document failed verification, with no remedy sentence and nothing in the
-  JSON body to act on. Nothing had been verified. A build loop reads the
-  pointer and the envelope input out of a served reveal witness, and the
-  reveal's txid commits to no witness byte, so the position it derives is
-  unproven and stays unproven however many backends read the same unbound
-  witness. A verifier raising the class is reading a bundle that bound its
-  own pointer, which is a forgery and keeps exit 1. Each refusal row's
-  category is therefore keyed by output context, the way its remedy sentence
-  already was, so a row missing a context fails to compile and a class that
-  means different things in different phases needs no special case.
-- **Each hop's own answers are checked against each other at build time.** A
-  hop is assembled from a transaction's status, its merkle proof, the
-  block's header and the block's transaction count, and nothing makes a
-  backend keep the four consistent. The bundle verifier proves they are, and
-  it runs after the build loop has been left, so one backend's well formed
-  wrong answer used to cost the whole walk and then report the bundle
-  invalid with the other configured backends never asked. `fetchCustody` and
-  `fetchSatIdentity` now fold each hop against itself as it is assembled,
-  through the same primitives the verifier uses: the header must hash to the
-  block hash the status named, the merkle branch must fold from the
-  transaction's txid to that header's merkle root, and the proof's height
-  must be the status's height. A disagreement is that backend producing no
-  usable answer, never a domain refusal, so the build leads the next attempt
-  with another backend, and a build where every backend answers this way
-  reports the build failure with each cause named.
-- **Every recorded refusal rests on data the named backend served for the
-  requested transaction.** `fetchSatIdentity` fetches the reveal's tx hex,
-  its status, its merkle proof and the terminal coinbase's status from the
-  member leading the attempt rather than through the pool, which could fall
-  over to another member on a request whose answer decides a domain refusal:
-  the reveal's bytes decide every refusal the walk can raise from the
-  reveal, and the coinbase's claimed height decides the subsidy boundary and
-  with it the fee-tail refusal. Both builders check the served reveal's
-  stripped hash against the inscription id's txid immediately after parsing,
-  so a refusal can never be recorded, or upgraded to unanimity, on bytes
-  that hash to some other transaction. A refusal recorded under a backend's
-  name is now that backend's word, and `unanimous` is computed over members
-  that each served their own deciding data. Any failure raised while the
-  build assembles from lead-served data, from the reveal fetch through the
-  reveal hop's assembly, prev-tx coverage and start-position derivation, and
-  again through the terminal coinbase hop's assembly, is one member's
-  failure whether the request failed or the value it returned did: it is
-  recorded as producing no usable answer and the build leads the next
-  attempt with the next member, the same rotation the custody loop already
-  ran on identical conditions. The successful attempt's lead is barred from
-  attesting to the bundle's headers by name, since the deciding requests do
-  not pass through the pool that records which members served bytes. Pool
-  exhaustion on a pooled request outside the lead-derived span still ends
-  the build. SPEC-SAT states the rule.
-- **The refusal taxonomy is one table that every command and both output
-  channels read.** The refusal classes, whether a build rotates on each, and
-  the exit-code category each reports live in two `Record`s keyed on unions
-  of the class names and the wrapper code strings (`@ordspv/fetch`
-  `taxonomy.ts` for the build-time facts, `@ordspv/cli` `taxonomy.ts` for the
-  presentation), so a class added without a row is a compile-time error
-  rather than a gap. Both build loops read one rotate predicate from the
-  table, the reporter renders the prefix and the exit code from one category
-  per class, and the `--json` channel is a typed projection of the same
-  report object the human channel prints. A coverage test walks every error
-  class both packages export and requires each to appear in a table or in an
-  explicitly reasoned excluded list. One live-channel sentence changed: the
-  witness-section remedy now names `--esplora`, since the table requires
-  every remedy to name the flag that changes the outcome where one exists.
-  Exit codes, `verify` output, and rotation behavior for everything a caller
-  can reach are unchanged. Presentation fixes on the same reporting
-  surface: a `"witness": null` section in a custody or genealogy bundle is
-  refused as a bad section instead of surfacing as a raw TypeError,
-  `ord-resolve verify` reports a file it cannot read as one usage line at
-  exit 2 and bytes that do not parse as JSON as one document line at exit 1,
-  with no stack trace on either, and every command's uncaught failure now
-  exits through one final catch as one line on stderr at exit 1, with each
-  command's classified paths untouched. `verifySatGenealogy` reads
-  `claimedSat` as a nonempty all-decimal string and refuses other forms
-  before conversion, closing `BigInt`'s empty-string and hex leniencies,
-  which recompute-and-check had made harmless.
-
-## [0.3.0] - 2026-07-26
-
-Sat provenance in both directions, on the same fail-closed trust model as
-content verification. Forward, custody proofs give an inscription's satpoint
-history from its reveal to its current location. Backward, sat identity proves
-which sat it lives on, traced to the coinbase that mined it. Galleries decode
-from the envelope, which puts membership inside the bytes a content proof
-already binds.
-
-### Added
-
-- **`@ordspv/core`: custody bundle verification.** `verifyCustodyBundle`
-  recomputes an inscription's satpoint path from chain data alone: the
-  genesis satpoint from the reveal (pointer aware, matching ord's assignment
-  rules) plus one ordinal transfer step per spending transaction. Each hop is
-  merkle-proven into a PoW-checked header with the txCount depth hardening
-  from SPEC-VERIFICATION. Input values are proven by the previous
-  transactions the spending inputs name, and the claimed final satpoint is
-  recomputed and checked. Paths that cross fees or a coinbase raise
-  `CustodyUnsupportedError`, as do inscriptions ord treats as unbound
-  (zero-value envelope input or unrecognized even field).
-- **`@ordspv/fetch`: custody path building.** `buildCustodyBundle` walks
-  confirmed outspends from the reveal; the backend acts as a pathfinder and
-  nothing it asserts is trusted. `fetchCustody` builds with failover,
-  verifies the bundle, anchors every hop header through the existing
-  header-trust machinery with the building backend excluded from attesting,
-  and reports tip liveness as per-source outspend observations.
-- **`@ordspv/cli`: `ord-resolve custody <inscription-id> [--json]`** prints
-  the proven satpoint with hop count and per-source tip state. A pending
-  unconfirmed spend of the tip is surfaced when present.
-- **`@ordspv/core`: sat identity.** `verifySatGenealogy` proves which sat an
-  inscription lives on, with its ordinal name and rarity, by folding a chain
-  of funding transactions back to the coinbase that mined the sat. Reversing
-  the walk removes the pathfinder: every input names its funding txid, so
-  ancestry is a hash chain and a backend serving wrong bytes fails locally.
-  Intermediate transactions therefore need no inclusion proofs, and only the
-  reveal and terminal coinbase anchor to headers. Sat numbers come from the
-  ordinal theory closed forms, with the coinbase's BIP34 height cross-checked
-  against the bundle's claim from height 230,000 on. Also exported:
-  `subsidySats`, `firstSatOfBlock`, `satToHeight`, `satName`, `satRarity`.
-- **`@ordspv/fetch`: sat genealogy building.** `buildSatGenealogyBundle` walks
-  funding transactions backward from the reveal, fetching previous
-  transactions one input at a time and only until their cumulative value
-  covers the traced position, so a consolidation with hundreds of inputs costs
-  one request when the sat sits in the first. `fetchSatIdentity` builds with
-  failover, verifies offline, and anchors both endpoint headers.
-- **`@ordspv/cli`: `ord-resolve sat <inscription-id> [--json] [--bundle FILE]`**
-  prints the sat number with its name, rarity, mining block, and walk depth.
-  `--bundle` writes the genealogy artifact for later offline re-verification.
-- **`@ordspv/core`: gallery member lists.** `parseGallery` and
-  `inscriptionGallery` decode the properties field (tag 17) in both the inline
-  and packed encodings. Because the member list is envelope data, an L2 or L3
-  proof over the gallery inscription settles membership and completeness with
-  no indexer, unlike children provenance where enumeration needs one. Decoding
-  is lenient in ord's style and reports a `skipped` count, so a caller
-  claiming a complete list can tell whether it has one.
-- **SPEC-CUSTODY** specifies the custody bundle format and the verification
-  rules; a deferred section states the v1 boundaries. **SPEC-SAT** does the
-  same for sat identity, and **SPEC-VERIFICATION §7** covers galleries.
-- **`@ordspv/fetch`: `DEFAULT_ANCHOR_SOURCES` and the `anchorSources` option**
-  on the resolver, custody, sat identity and the gateway, with
-  `--anchor-source url[,url]` on the CLI and `ANCHOR_SOURCES` on the gateway.
-  Attesting a header needs one cheap endpoint, `/block-height/<n>`, while
-  serving proofs needs the whole esplora surface, so the two lists have
-  different membership requirements. The default holds five operator-diverse
-  bases, each checked against block 767430 for three consecutive tries.
-  `HeaderTrustOptions.proofSources` takes a set of serving base URLs for
-  builds spread across several backends; `proofSource` still takes one.
-- **`@ordspv/fetch`: bounded retry inside every esplora request.** HTTP 429,
-  HTTP 503 and thrown network errors are retried up to 4 attempts with
-  exponential backoff from 250 ms under full jitter, capped at 8 s, honoring
-  `Retry-After` when it asks for 30 s or less. Other non-2xx statuses and
-  byte-cap violations are not retried, since repeating them changes nothing.
-  Configurable through `BackendLimits.retry`, with an injectable `sleep` on
-  the backend constructor so tests never wait on a real backoff.
-- **`@ordspv/fetch`: `PooledEsploraBackend`.** N backends behind one
-  backend-shaped surface, rotating the starting member per request and moving
-  a failed request to the next member. `fetchSatIdentity` now builds through
-  a pool, so a rate limit at step 400 of a genealogy walk costs one request
-  rather than 400 steps of work. The pool records which members served bytes,
-  and all of them are excluded from header attesting.
-- **`@ordspv/cli`: `--max-steps N`** on `sat`, threaded to the builder.
-
-### Fixed
 
 - **Security: all three verifiers floor a bundle's proof of work, and this
   also affects 0.2.x users on the content path.** `checkProofOfWork` compares
@@ -1167,28 +1179,6 @@ already binds.
   `nBits`. The passage now states both numbers and what each one is, and keeps
   the rule that verifiers MUST still anchor the hash against their own chain
   view. The floor's value and behavior are unchanged.
-
-### Changed
-
-- **Behavior change: a backend that serves a bundle no longer counts as an
-  independent attester for its own header.** `makeHeaderTrust` credited the
-  proof-building backend with one independent source, so the two-backend
-  default anchored non-checkpoint heights on a single outside vote, which
-  contradicts SPEC-CUSTODY, SPEC-SAT and SPEC-VERIFICATION §4.
-  `independentSources` is now the count of agreeing attesters that served
-  nothing, the default `minAgreement` of 2 therefore means two outside
-  sources, and the new `HeaderTrustReport.builderIsSource` carries the
-  excluded fact. A caller running two backends where one builds the bundle
-  will start failing to anchor at non-checkpoint heights until a third source
-  is configured; the built-in `DEFAULT_ANCHOR_SOURCES` covers the default
-  configuration, and `--anchor-source` covers custom ones. Heights under a
-  compiled checkpoint are unaffected.
-- **Mid-walk failover is asymmetric for now.** `fetchSatIdentity` builds
-  through a pool and keeps its progress across a member failure; only a domain
-  refusal starts a fresh walk, leading with the next member. `resolver.ts` and
-  `custodybuilder.ts` still use per-backend failover, where a failure restarts
-  the build on the next backend.
-- All five packages move to 0.3.0; inter-package pins updated to match.
 
 ## [0.2.1] - 2026-07-14
 
