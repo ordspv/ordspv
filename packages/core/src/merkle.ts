@@ -78,8 +78,13 @@ export function verifyMerkleBranch(
       if (isLastOdd && !bytesEqual(sibling, node)) {
         throw new Error(`merkle level ${i}: expected self-paired final node`);
       }
-      if (!isLastOdd && bytesEqual(sibling, node) && index % 2 === 0 && index + 1 === width - 1) {
-        // right sibling identical to node at the tree edge: mutated-tree shape
+      if (!isLastOdd && bytesEqual(sibling, node) && width % 2 === 0 && (index | 1) === width - 1) {
+        // equal members in the final pair of an even-width level: the
+        // CVE-2012-2459 mutation shape, refused whichever member is proved.
+        // An honest level cannot end in an equal pair (equal nodes imply a
+        // duplicated subtree, which consensus forbids), so this cannot
+        // false-positive; the legitimate odd-width self-pair is the
+        // isLastOdd branch above
         throw new Error(`merkle level ${i}: duplicate sibling (possible mutation)`);
       }
       width = Math.ceil(width / 2);

@@ -74,6 +74,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A merkle proof of the right member of a duplicated final pair was
+  accepted, so the CVE-2012-2459 mutation shape was refused for the left
+  member alone.** `verifyMerkleBranch` rejected an equal sibling only at an
+  even index whose successor is the level's last slot. Proving the right
+  member folds `H(node, node)` to the same real root, so a proof claiming
+  position 3 in a four-transaction count, for the third transaction of a
+  three-transaction block, verified against the honest header. The guard now
+  refuses equal members in the final pair of an even-width level whichever
+  member is proved, matching the per-level detection in `computeMerkleRoot`
+  one screen above and the duplicate check in Bitcoin Core's
+  `ComputeMerkleRoot`. An honest even-width level cannot end in an equal
+  pair short of a hash collision, because equal siblings imply a duplicated
+  subtree and consensus forbids duplicate transactions, so the symmetric
+  guard admits every honest proof; the legitimate self-pair of an odd-width
+  level keeps its own branch. All five reference bundles re-verify
+  unchanged.
+
 - **The proof path had the same silent pass-through: a backend serving a
   non-integer height, a non-string block hash, a non-integer txCount or
   position, or a non-array branch bought a bundle the verifier then

@@ -788,7 +788,7 @@
         if (isLastOdd && !bytesEqual(sibling, node)) {
           throw new Error(`merkle level ${i}: expected self-paired final node`);
         }
-        if (!isLastOdd && bytesEqual(sibling, node) && index % 2 === 0 && index + 1 === width - 1) {
+        if (!isLastOdd && bytesEqual(sibling, node) && width % 2 === 0 && (index | 1) === width - 1) {
           throw new Error(`merkle level ${i}: duplicate sibling (possible mutation)`);
         }
         width = Math.ceil(width / 2);

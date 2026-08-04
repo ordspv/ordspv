@@ -3,6 +3,8 @@ import {
   bytesToHex,
   computeMerkleRoot,
   buildMerkleBranch,
+  concatBytes,
+  sha256d,
   verifyMerkleBranch,
   parseTx,
   serializeFull,
@@ -40,6 +42,35 @@ describe('synthetic merkle trees', () => {
     const leaves = Array.from({ length: 5 }, (_, i) => sha256(te.encode(`leaf${i}`)));
     const branch = buildMerkleBranch(leaves, 1);
     expect(() => verifyMerkleBranch(leaves[1], branch.slice(0, 2), 1, 5)).toThrow(/branch length/);
+  });
+
+  it('rejects both members of a duplicated final pair (CVE-2012-2459 shape)', () => {
+    // honest tree: three leaves, the third self-pairs at level 0. The mutated
+    // claim appends a copy of the third leaf; [A, B, C, C] folds to the same
+    // root, and a proof of either C must be refused whichever member it names
+    const leaves = Array.from({ length: 3 }, (_, i) => sha256(te.encode(`leaf${i}`)));
+    const honestRoot = computeMerkleRoot(leaves);
+    const mutated = [...leaves, leaves[2]];
+    for (const pos of [2, 3]) {
+      const branch = buildMerkleBranch(mutated, pos);
+      expect(() => verifyMerkleBranch(mutated[pos], branch, pos, 4)).toThrow(/duplicate sibling/);
+    }
+    // the mutation is only worth rejecting because it reaches the honest root
+    let node = mutated[3];
+    let index = 3;
+    for (const sibling of buildMerkleBranch(mutated, 3)) {
+      node = index % 2 === 1 ? sha256d(concatBytes(sibling, node)) : sha256d(concatBytes(node, sibling));
+      index = Math.floor(index / 2);
+    }
+    expect(bytesToHex(node)).toBe(bytesToHex(honestRoot));
+  });
+
+  it('accepts the honest self-pair proof of an odd-width final node', () => {
+    const leaves = Array.from({ length: 3 }, (_, i) => sha256(te.encode(`leaf${i}`)));
+    const root = computeMerkleRoot(leaves);
+    const branch = buildMerkleBranch(leaves, 2);
+    const { root: folded } = verifyMerkleBranch(leaves[2], branch, 2, 3);
+    expect(bytesToHex(folded)).toBe(bytesToHex(root));
   });
 });
 
