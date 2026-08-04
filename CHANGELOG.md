@@ -74,6 +74,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An under-supplied genealogy bundle was told it contradicts itself.**
+  `SatPositionError` covered four conditions under one CLI row: an offset past
+  its output's value, an output that does not exist, a position past the
+  transaction's total input sats, and a prev tx set that stops short of the
+  traced position. The first three contradict the document that carried them;
+  the fourth under-proves it, no pointer is involved, and the honest remedy is
+  a rebuild carrying the missing entries. That fourth condition is now
+  `SatFundingIncompleteError`, reported UNPROVEN at exit 3 the way a bundle
+  missing its witness section is, with a note naming the rebuild remedy; the
+  three self-contradictions keep `SatPositionError`, the INVALID note and
+  exit 1. The build side never raises the new class, because
+  `prevTxsCovering` fetches entries until they cover the position; its
+  taxonomy row records that the deciding position derives from the unbound
+  reveal witness, and the coverage test binds the class through both tables.
+
 - **Offline `verify` never consulted the compiled-in checkpoints, so a bundle
   relabelled to a checkpoint height with a real header from another height
   verified at exit 0.** A bundle's claimed heights are not committed by its

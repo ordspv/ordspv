@@ -8,6 +8,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatFundingIncompleteError,
   SatPositionError,
   SatStepLimitError,
   hexToBytes,
@@ -580,6 +581,26 @@ describe('refusals across commands', { timeout: 60_000 }, () => {
     expect(asVerify?.code).toBe(1);
     expect(asVerify?.message).toMatch(/^bundle INVALID: offset 9 outside output 0 value 5\./);
     expect(asVerify?.note).toMatch(/document contradicts itself/);
+  });
+
+  it('tells an under-supplied bundle it is unproven, never that it contradicts itself', () => {
+    // the fourth condition SatPositionError once covered: a funding step's
+    // prev txs stop short of the position. No pointer is involved and the
+    // honest remedy is a rebuild carrying the missing entries, so the class
+    // and the note split from the three genuine self-contradictions
+    const incomplete = new SatFundingIncompleteError(
+      'position 1200 not reached by prev txs for inputs 0..0; more are needed',
+    );
+    const report = refusalReport(incomplete, 'verify');
+    expect(report?.code).toBe(3);
+    expect(report?.message).toMatch(/^bundle UNPROVEN offline: position 1200 not reached/);
+    expect(report?.note).toMatch(/did not carry enough funding prev txs/);
+    expect(report?.note).toMatch(/sat --bundle/);
+    expect(report?.note).not.toMatch(/contradicts itself/);
+    expect(JSON.parse(refusalJson(incomplete, report))).toMatchObject({
+      ok: false,
+      error: 'SatFundingIncompleteError',
+    });
   });
 
   it('carries the partial-answer sentence on every non-unanimous class', () => {

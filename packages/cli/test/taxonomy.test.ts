@@ -5,6 +5,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatFundingIncompleteError,
   SatPositionError,
   SatStepLimitError,
 } from '@ordspv/core';
@@ -131,6 +132,9 @@ describe('the build-time rotate predicate', () => {
     // raised by the genealogy builder for a fee-tail refusal on a terminal
     // coinbase below the BIP34 boundary, and rotated like the rest
     expect(isRecordableBuildRefusal(new CoinbaseHeightUnprovenError('x'))).toBe(true);
+    // never raised by a builder (prevTxsCovering fetches entries until they
+    // cover the position); the fact records what the deciding data would be
+    expect(isRecordableBuildRefusal(new SatFundingIncompleteError('x'))).toBe(true);
     // the input count is inside the txid, so the loops rethrow rather than rotate
     expect(isRecordableBuildRefusal(new EnvelopeIndexUnprovenError('x'))).toBe(false);
     // rotated by name at the loops, deliberately outside the table

@@ -18,6 +18,7 @@ import {
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   CoinbaseHeightUnprovenError,
+  SatFundingIncompleteError,
   SatPositionError,
   SatStepLimitError,
   TOTAL_SATS,
@@ -251,9 +252,13 @@ describe('backward hop arithmetic', () => {
   });
 
   it('asks for more prev txs rather than guessing', () => {
+    // an under-supplied prev tx set is its own class: nothing contradicts
+    // itself, the values just stop short of the position, and a rebuild that
+    // carries the missing entries proves it
     expect(() => containingInput(spend.tx, [1000n], 1700n)).toThrow(/more are needed/);
-    expect(() => containingInput(spend.tx, [1000n], 1700n)).toThrow(SatPositionError);
-    // and a position past every input sat the transaction has is the same class
+    expect(() => containingInput(spend.tx, [1000n], 1700n)).toThrow(SatFundingIncompleteError);
+    // a position past every input sat the transaction has contradicts the
+    // document and keeps the self-contradiction class
     expect(() => containingInput(spend.tx, [1000n, 2000n], 3000n)).toThrow(SatPositionError);
     expect(() => containingInput(spend.tx, [1000n, 2000n], 3000n)).toThrow(
       /beyond the transaction's total input sats/,
@@ -700,9 +705,56 @@ describe('verifySatGenealogy', () => {
     expect(res.sat).toBe(firstSatOfBlock(1000) + 1500n);
     expect(res.depth).toBe(1);
 
-    // and a bundle that stops at the envelope input cannot locate the sat
+    // and a bundle that stops at the envelope input cannot locate the sat;
+    // that is an under-supplied document, its own class since the split
     const short = { ...b, reveal: { ...b.reveal, prevTxs: [fA.hex] } };
     expect(() => verifySatGenealogy(short, FIXTURE_OPTS)).toThrow(/more are needed/);
+    expect(() => verifySatGenealogy(short, FIXTURE_OPTS)).toThrow(SatFundingIncompleteError);
+  });
+
+  it('reports an under-supplied funding step as incomplete, distinct from a contradiction', () => {
+    // funding tx c spends two coinbase-descended outputs and commits past the
+    // first input's sats, so proving input 0 alone cannot reach the position;
+    // before the split this reported the self-contradiction class and note
+    const cb = buildCoinbase([{ value: 2_000_000_000n }, { value: 2_000_000_000n }]);
+    const fX = buildTx([{ txid: cb.tx.txid, vout: 0 }], [{ value: 100n }]);
+    const fY = buildTx([{ txid: cb.tx.txid, vout: 1 }], [{ value: 5000n }]);
+    const c = buildTx(
+      [
+        { txid: fX.tx.txid, vout: 0 },
+        { txid: fY.tx.txid, vout: 0 },
+      ],
+      [{ value: 150n }, { value: 4000n, spk: tap.scriptPubKey }],
+    );
+    const r = revealTx([{ script, controlBlock: tap.controlBlock }], {
+      prevTxidLE: c.tx.txidLE,
+      vout: 1,
+    });
+    // reveal offset 0 in c:1 sits at position 150, past input 0's 100 sats,
+    // into input 1 at offset 50, through fY to the coinbase's second output
+    const b: SatGenealogyBundleJson = {
+      version: 1,
+      inscriptionId: `${r.txid}i0`,
+      reveal: anchoredHop(r.txidLE, bytesToHex(r.raw), 2000, [c.hex]),
+      funding: [
+        { tx: { hex: c.hex }, prevTxs: [fX.hex, fY.hex] },
+        { tx: { hex: fY.hex }, prevTxs: [cb.hex] },
+      ],
+      coinbase: anchoredHop(cb.tx.txidLE, cb.hex, 1000, []),
+      claimedSat: (firstSatOfBlock(1000) + 2_000_000_000n + 50n).toString(),
+    };
+    expect(verifySatGenealogy(b, FIXTURE_OPTS).sat).toBe(
+      firstSatOfBlock(1000) + 2_000_000_000n + 50n,
+    );
+
+    const truncated = {
+      ...b,
+      funding: [{ ...b.funding[0], prevTxs: [fX.hex] }, b.funding[1]],
+    };
+    expect(() => verifySatGenealogy(truncated, FIXTURE_OPTS)).toThrow(SatFundingIncompleteError);
+    expect(() => verifySatGenealogy(truncated, FIXTURE_OPTS)).toThrow(
+      /not reached by prev txs for inputs 0\.\.0; more are needed/,
+    );
   });
 
   // -------------------------------------------------------------------------

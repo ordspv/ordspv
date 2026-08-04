@@ -126,7 +126,10 @@ export function satName(sat: bigint): string {
 // ---------------------------------------------------------------------------
 
 /**
- * A traced position does not land in the sat space it was resolved against.
+ * A traced position does not land in the sat space it was resolved against:
+ * an offset past its output's value, an output that does not exist, or a
+ * position past the transaction's total input sats. All three contradict the
+ * document that carried them.
  *
  * Which phase raised it decides what it means. A verifier raises it about a
  * bundle whose witness is already bound, so the bundle's own pointer does not
@@ -134,12 +137,29 @@ export function satName(sat: bigint): string {
  * raises it about a position derived from a pointer and an envelope input read
  * out of a served reveal witness, which the txid does not commit to, so it is
  * one backend's word and the wrappers record it and lead the next attempt with
- * another backend.
+ * another backend. The fourth condition this class once covered, a prev tx
+ * set that stops short of the position, is `SatFundingIncompleteError`.
  */
 export class SatPositionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SatPositionError';
+  }
+}
+
+/**
+ * The prev txs supplied for a transaction stop short of the traced position:
+ * inputs past the last supplied entry could still contain it. Nothing here
+ * contradicts itself and no pointer is involved; the document as given cannot
+ * prove which input funded the position, and a rebuild that carries the
+ * missing prev txs proves it. The build side never raises this, because
+ * `prevTxsCovering` fetches entries until they cover the position; what
+ * raises it is a verifier reading back a bundle that carried too few.
+ */
+export class SatFundingIncompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SatFundingIncompleteError';
   }
 }
 
@@ -162,8 +182,9 @@ export function outputSpacePosition(tx: ParsedTx, vout: number, offset: bigint):
  * input-space positions are identical.
  *
  * inputValues are the proven values of inputs 0..n (from provenInputValues);
- * if the provided values do not reach the position, the error names the
- * inputs still needed.
+ * if the provided values do not reach the position while further inputs
+ * remain, `SatFundingIncompleteError` names the inputs still needed, and a
+ * position past every input sat the transaction has is `SatPositionError`.
  */
 export function containingInput(
   tx: ParsedTx,
@@ -178,7 +199,7 @@ export function containingInput(
   if (inputValues.length >= tx.inputs.length) {
     throw new SatPositionError(`position ${position} beyond the transaction's total input sats`);
   }
-  throw new SatPositionError(
+  throw new SatFundingIncompleteError(
     `position ${position} not reached by prev txs for inputs 0..${inputValues.length - 1}; more are needed`,
   );
 }

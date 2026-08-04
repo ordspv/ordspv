@@ -30,6 +30,7 @@ import {
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
   GalleryEncodingError,
+  SatFundingIncompleteError,
   SatPositionError,
   SatStepLimitError,
 } from '@ordspv/core';
@@ -179,6 +180,25 @@ export const REFUSAL_TABLE: Record<ReportedRefusalName, RefusalRow> = {
     note: {
       verify: `The bundle is deeper than the verifier's cap; --max-steps N raises it.`,
       live: `The ancestry is deeper than the walk's cap; --max-steps N raises it.`,
+    },
+  },
+  // an under-supplied bundle is a different thing from a self-contradictory
+  // one: nothing here contradicts itself, the document just cannot prove
+  // which input funded the position, so it reports UNPROVEN the way a bundle
+  // missing its witness section does rather than INVALID. The genuine
+  // self-contradictions stay on SatPositionError
+  SatFundingIncompleteError: {
+    ctor: SatFundingIncompleteError,
+    category: { verify: 'UNPROVEN', live: 'UNPROVEN' },
+    nonUnanimousCategory: 'UNPROVEN',
+    note: {
+      verify:
+        `The bundle did not carry enough funding prev txs to reach the traced ` +
+        `position; rebuilding it with sat --bundle supplies the missing entries.`,
+      live:
+        `The build fetches funding prev txs until they cover the traced position, ` +
+        `so no live walk raises this; it reads back a bundle that carried too few, ` +
+        `and rebuilding with sat --bundle supplies the missing entries.`,
     },
   },
   // build-only: the custody verifier reads no cap, so no verify path raises

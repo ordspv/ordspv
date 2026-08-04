@@ -30,6 +30,7 @@ import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
   EnvelopeIndexUnprovenError,
+  SatFundingIncompleteError,
   SatStepLimitError,
 } from '@ordspv/core';
 
@@ -100,6 +101,7 @@ export type RefusalClassName =
   | 'CustodyUnsupportedError'
   | 'EnvelopeIndexUnprovenError'
   | 'CoinbaseHeightUnprovenError'
+  | 'SatFundingIncompleteError'
   | 'SatStepLimitError'
   | 'CustodyHopLimitError'
   | 'WitnessSectionUnavailableError';
@@ -129,6 +131,11 @@ export const REFUSAL_CLASS_FACTS: Record<RefusalClassName, RefusalClassFacts> = 
   // coinbase below the BIP34 boundary, where that word is all the subsidy
   // boundary rests on
   CoinbaseHeightUnprovenError: { ctor: CoinbaseHeightUnprovenError, committedAtBuild: false },
+  // the position the prev txs stop short of is derived from an unbound reveal
+  // witness; no builder raises the class, because prevTxsCovering fetches
+  // entries until they cover the position, so the row exists for the union's
+  // completeness and the CLI row it forces
+  SatFundingIncompleteError: { ctor: SatFundingIncompleteError, committedAtBuild: false },
   // the depth that reaches the cap follows from a start position read out of
   // an unbound reveal witness
   SatStepLimitError: { ctor: SatStepLimitError, committedAtBuild: false },
