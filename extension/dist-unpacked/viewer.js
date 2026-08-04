@@ -3114,6 +3114,17 @@
     return parseEnvelopesFromTx(tx).map(interpretEnvelope);
   }
 
+  // packages/core/src/custody.ts
+  var EnvelopeIndexUnprovenError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "EnvelopeIndexUnprovenError";
+    }
+  };
+  function unprovenIndexMessage(label, reveal, requestedIndex) {
+    return `${label}: reveal spends ${reveal.inputs.length} inputs and the bundle carries no witness section; every input's witness is outside the txid, so the numbering that would make any envelope index ${requestedIndex} cannot be proven`;
+  }
+
   // packages/core/src/proof.ts
   function parseHexTx(hex, label) {
     let tx;
@@ -3177,15 +3188,31 @@
     if (!bytesEqual(txidRoot, header.merkleRootLE)) {
       throw new Error("reveal txid merkle proof does not match header merkle root");
     }
-    const allInscriptions = inscriptionsFromTx(reveal);
-    const inscription = allInscriptions.find((i) => i.index === id.index);
-    if (!inscription) {
-      throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
-    }
     if (bundle.level === "L2") {
       if (bundle.witness !== void 0) {
         throw new Error("witness section on an L2 bundle; L3 is the level that reads one");
       }
+    } else if (bundle.level === "L3") {
+      if (!bundle.witness) throw new Error("L3 bundle missing witness section");
+      verifyWitnessAnchoring({
+        witness: bundle.witness,
+        header,
+        txCount: bundle.block.txCount,
+        reveal,
+        pos: bundle.reveal.pos
+      });
+    } else {
+      throw new Error(`unknown proof level ${bundle.level}`);
+    }
+    const allInscriptions = inscriptionsFromTx(reveal);
+    const inscription = allInscriptions.find((i) => i.index === id.index);
+    if (!inscription) {
+      if (bundle.level === "L2" && reveal.inputs.length !== 1) {
+        throw new EnvelopeIndexUnprovenError(unprovenIndexMessage("reveal", reveal, id.index));
+      }
+      throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
+    }
+    if (bundle.level === "L2") {
       if (!bundle.commit) throw new Error("L2 bundle missing commit tx");
       if (typeof bundle.commit.hex !== "string") {
         throw new Error("bundle field commit.hex is missing or not a string");
@@ -3220,15 +3247,6 @@
         }
       };
     }
-    if (bundle.level !== "L3") throw new Error(`unknown proof level ${bundle.level}`);
-    if (!bundle.witness) throw new Error("L3 bundle missing witness section");
-    verifyWitnessAnchoring({
-      witness: bundle.witness,
-      header,
-      txCount: bundle.block.txCount,
-      reveal,
-      pos: bundle.reveal.pos
-    });
     return {
       level: "L3",
       inscriptionId: bundle.inscriptionId.toLowerCase(),

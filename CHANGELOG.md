@@ -74,6 +74,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`verifyProofBundle` stated an envelope count it could not prove.** On a
+  multi-input L2 reveal whose requested index is absent, the refusal read
+  `reveal tx contains N envelope(s)`, a count parsed out of witnesses the
+  txid does not commit, which SPEC-VERIFICATION section 2 forbids a consumer
+  from trusting. The custody and genealogy verifiers already refuse such a
+  lookup as `EnvelopeIndexUnprovenError`; the content path now does the same,
+  so the failure reports UNPROVEN at exit 3 with the witness-section remedy.
+  A found envelope still verifies at L2 with the numbering residual as a
+  flag, which is the standing L2 contract. The L3 witness section is now
+  verified ahead of the envelope lookup, the way the genealogy verifier
+  orders it, so the count its lookup failure states is proven before it is
+  named; a single-input reveal proves its own numbering and keeps the count
+  error.
+
 - **An under-supplied genealogy bundle was told it contradicts itself.**
   `SatPositionError` covered four conditions under one CLI row: an offset past
   its output's value, an output that does not exist, a position past the

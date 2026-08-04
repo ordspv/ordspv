@@ -4,6 +4,7 @@ import {
   computeMerkleRoot,
   buildMerkleBranch,
   concatBytes,
+  EnvelopeIndexUnprovenError,
   sha256d,
   verifyMerkleBranch,
   parseTx,
@@ -381,5 +382,60 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(
       /witness section on an L2 bundle/,
     );
+  });
+
+  it('states no envelope count for a multi-input L2 reveal whose index is absent', () => {
+    // the count is parsed out of witnesses the txid does not commit, so on a
+    // multi-input reveal "contains N envelope(s)" asserted a count the bundle
+    // cannot support; the refusal now matches the custody and genealogy
+    // verifiers. A single-input reveal proves its own numbering and keeps
+    // the count error
+    const script2 = envelopeScript(
+      { fields: [[1, 'text/plain']], body: ['second input'] },
+      { checksigPrefix: true },
+    );
+    const { scriptPubKey, controlBlock } = taprootCommit(script2);
+    const commit = commitTx(scriptPubKey);
+    const reveal = revealTx(
+      [
+        { script: script2, controlBlock },
+        { script: script2, controlBlock: DUMMY_CONTROL_BLOCK },
+      ],
+      { prevTxidLE: commit.txidLE, vout: 0 },
+    );
+    const block = buildBlock([dummyTx(), reveal]);
+    const bundle: ProofBundleJson = {
+      version: 1,
+      inscriptionId: `${reveal.txid}i5`,
+      level: 'L2',
+      block: { height: 100, hash: block.blockHash, header: block.headerHex, txCount: block.txCount },
+      reveal: { hex: bytesToHex(reveal.raw), pos: 2, txidBranch: block.txidBranch(2) },
+      commit: { hex: bytesToHex(commit.raw) },
+    };
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).not.toThrow(/not present/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(EnvelopeIndexUnprovenError);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow(/cannot be proven/);
+
+    // the single-input form keeps the count error: one input, nothing renumbers
+    const single = l2Setup().bundle;
+    single.inscriptionId = single.inscriptionId.replace(/i0$/, 'i5');
+    expect(() => verifyProofBundle(single, NO_POW_FLOOR)).toThrow(/index 5 not present/);
+  });
+
+  it('verifies the L3 witness section before stating an envelope count', () => {
+    // an L3 count is provable exactly because the section anchors every
+    // witness; a bundle with a defective section and an absent index must
+    // fail on the section, since the count error would otherwise state a
+    // count whose proof never ran
+    const inscriptionScript = envelopeScript(
+      { fields: [[1, 'text/plain']], body: ['order'] },
+      { checksigPrefix: true },
+    );
+    const reveal = revealTx([{ script: inscriptionScript, controlBlock: DUMMY_CONTROL_BLOCK }]);
+    const block = buildBlock([reveal]);
+    const bundle = l3Bundle(block, 1, `${reveal.txid}i5`);
+    (bundle.witness as { coinbaseHex: string }).coinbaseHex = 'ff';
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).not.toThrow(/not present/);
+    expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow();
   });
 });

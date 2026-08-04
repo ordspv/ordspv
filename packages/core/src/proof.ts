@@ -1,4 +1,5 @@
 import { bytesEqual, displayToInternal, hexToBytes } from './bytes.js';
+import { EnvelopeIndexUnprovenError, unprovenIndexMessage } from './custody.js';
 import { inscriptionsFromTx, type Inscription } from './envelope.js';
 import {
   parseHeader,
@@ -190,13 +191,15 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
     throw new Error('reveal txid merkle proof does not match header merkle root');
   }
 
-  // ---- envelope ----
-  const allInscriptions = inscriptionsFromTx(reveal);
-  const inscription = allInscriptions.find((i) => i.index === id.index);
-  if (!inscription) {
-    throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
-  }
-
+  // ---- envelope numbering, settled before any envelope count is stated ----
+  // L3 anchors every input's witness through the block's BIP-141 commitment,
+  // so verifying the section ahead of the lookup is what entitles the lookup's
+  // failure message to state a count. At L2 a single-input reveal proves its
+  // own numbering, and a multi-input reveal's count rests on witnesses the
+  // txid does not commit, so a failed lookup there refuses the way the
+  // custody and genealogy verifiers do instead of asserting a count the
+  // bundle cannot support; a FOUND envelope still verifies, because the L2
+  // report carries the numbering residual as a flag the caller reads
   if (bundle.level === 'L2') {
     // presence, not truth: nothing at L2 reads the section, so a bundle
     // carrying one would look witness-carrying to a reader of the JSON while
@@ -204,6 +207,30 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
     if ((bundle as { witness?: unknown }).witness !== undefined) {
       throw new Error('witness section on an L2 bundle; L3 is the level that reads one');
     }
+  } else if (bundle.level === 'L3') {
+    if (!bundle.witness) throw new Error('L3 bundle missing witness section');
+    // coinbase inclusion + witness commitment, shared with custody/genealogy
+    verifyWitnessAnchoring({
+      witness: bundle.witness,
+      header,
+      txCount: bundle.block.txCount,
+      reveal,
+      pos: bundle.reveal.pos,
+    });
+  } else {
+    throw new Error(`unknown proof level ${(bundle as { level: string }).level}`);
+  }
+
+  const allInscriptions = inscriptionsFromTx(reveal);
+  const inscription = allInscriptions.find((i) => i.index === id.index);
+  if (!inscription) {
+    if (bundle.level === 'L2' && reveal.inputs.length !== 1) {
+      throw new EnvelopeIndexUnprovenError(unprovenIndexMessage('reveal', reveal, id.index));
+    }
+    throw new Error(`reveal tx contains ${allInscriptions.length} envelope(s); index ${id.index} not present`);
+  }
+
+  if (bundle.level === 'L2') {
     if (!bundle.commit) throw new Error('L2 bundle missing commit tx');
     if (typeof bundle.commit.hex !== 'string') {
       throw new Error('bundle field commit.hex is missing or not a string');
@@ -239,18 +266,8 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
     };
   }
 
-  if (bundle.level !== 'L3') throw new Error(`unknown proof level ${(bundle as { level: string }).level}`);
-  if (!bundle.witness) throw new Error('L3 bundle missing witness section');
-
-  // coinbase inclusion + witness commitment, shared with custody/genealogy
-  verifyWitnessAnchoring({
-    witness: bundle.witness,
-    header,
-    txCount: bundle.block.txCount,
-    reveal,
-    pos: bundle.reveal.pos,
-  });
-
+  // the level was validated and the L3 witness section verified before the
+  // envelope lookup above
   return {
     level: 'L3',
     inscriptionId: bundle.inscriptionId.toLowerCase(),
