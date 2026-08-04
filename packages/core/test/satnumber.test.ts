@@ -480,15 +480,21 @@ describe('verifySatGenealogy', () => {
     expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(/folds to/);
   });
 
-  it('rejects a claimed sat that is not a nonempty decimal string', () => {
+  it('rejects a claimed sat that is not a canonical decimal string', () => {
     // BigInt('') is 0n and BigInt('0x10') is 16n, so a lenient parse would
     // let those forms reach the recompute-and-check comparison; the claim is
-    // refused before conversion instead
-    for (const claimed of ['', '0x10', ' 1000', '1000n', '1_000']) {
+    // refused before conversion instead. A leading zero is refused too:
+    // the claim is canonical decimal, and the recompute assumes it
+    const trueClaim = bundle().claimedSat;
+    for (const claimed of ['', '0x10', ' 1000', '1000n', '1_000', '007', `0${trueClaim}`]) {
       const b = bundle();
       b.claimedSat = claimed;
       expect(() => verifySatGenealogy(b, FIXTURE_OPTS)).toThrow(/folds to/);
     }
+    // the single zero stays a well-formed claim (wrong here, but parsed)
+    const zero = bundle();
+    zero.claimedSat = '0';
+    expect(() => verifySatGenealogy(zero, FIXTURE_OPTS)).toThrow(/folds to/);
   });
 
   it('rejects a broken hash chain', () => {

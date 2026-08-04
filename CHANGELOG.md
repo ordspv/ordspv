@@ -74,6 +74,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`verifySatGenealogy` accepted a `claimedSat` with leading zeros.** The
+  claim is canonical decimal and the recompute-and-check made the leniency
+  harmless, so this is hygiene: `007` and `0` + the true claim were parsed
+  where every other non-canonical form was refused. The pattern now rejects a
+  leading zero, the single `0` staying well formed.
+
 - **`verifyProofBundle` stated an envelope count it could not prove.** On a
   multi-input L2 reveal whose requested index is absent, the refusal read
   `reveal tx contains N envelope(s)`, a count parsed out of witnesses the

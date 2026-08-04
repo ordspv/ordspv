@@ -572,8 +572,12 @@ export function verifySatGenealogy(
 
   // BigInt() accepts the empty string as zero and hex forms; the claim
   // parses strictly even though recompute-and-check makes the leniency
-  // harmless
-  if (typeof bundle.claimedSat !== 'string' || !/^[0-9]+$/.test(bundle.claimedSat)) {
+  // harmless. Canonical decimal only: a leading zero is refused rather than
+  // normalized, since the recompute already assumes the canonical form
+  if (
+    typeof bundle.claimedSat !== 'string' ||
+    !/^(0|[1-9][0-9]*)$/.test(bundle.claimedSat)
+  ) {
     throw new Error(`bundle claims sat ${bundle.claimedSat}, genealogy folds to ${sat}`);
   }
   const claimed = BigInt(bundle.claimedSat);
