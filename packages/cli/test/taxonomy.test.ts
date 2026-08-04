@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as core from '@ordspv/core';
 import * as fetchPkg from '@ordspv/fetch';
+import * as headersync from '@ordspv/fetch/headersync';
 import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
@@ -39,13 +40,16 @@ function errorExports(mod: Record<string, unknown>): [string, Function][] {
 }
 
 describe('refusal taxonomy coverage', () => {
-  it('accounts for every error class exported from core and fetch', () => {
+  it('accounts for every error class exported from core and fetch, subpaths included', () => {
+    // the enumeration covers the whole export surface: both barrels and the
+    // @ordspv/fetch/headersync subpath, whose ReorgLinkError was invisible
+    // to a barrel-only walk
     const covered = new Set<Function>([
       ...Object.values(REFUSAL_TABLE).map((row) => row.ctor),
       ...WRAPPER_ERRORS,
       ...EXCLUDED_ERRORS.map((entry) => entry.ctor),
     ]);
-    const unaccounted = [...errorExports(core), ...errorExports(fetchPkg)]
+    const unaccounted = [...errorExports(core), ...errorExports(fetchPkg), ...errorExports(headersync)]
       .filter(([, ctor]) => !covered.has(ctor))
       .map(([name]) => name);
     expect(unaccounted).toEqual([]);

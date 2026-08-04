@@ -50,6 +50,7 @@ import {
   type RefusalClassName,
   type WrapperCode,
 } from '@ordspv/fetch';
+import { ReorgLinkError } from '@ordspv/fetch/headersync';
 
 /**
  * Which command is reporting. The class-to-code mapping is the same on both,
@@ -279,9 +280,10 @@ export const WRAPPER_ERRORS: readonly ErrorClass[] = [CustodyError, SatIdentityE
 
 /**
  * Error classes deliberately absent from the tables. The coverage test walks
- * every error class exported from `@ordspv/core` and `@ordspv/fetch` and
- * requires each to appear in a table or here, so a class added upstream that
- * never reaches the CLI is a test failure rather than a silent gap.
+ * every error class exported from `@ordspv/core` and `@ordspv/fetch`, the
+ * `@ordspv/fetch/headersync` subpath included, and requires each to appear in
+ * a table or here, so a class added upstream that never reaches the CLI is a
+ * test failure rather than a silent gap.
  */
 export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = [
   {
@@ -333,5 +335,12 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
       `HEADER_TRUST code; offline verify surfaces a checkpoint contradiction ` +
       `through the command's own invalid path at exit 1, since a header that ` +
       `contradicts a compiled-in checkpoint is a document defect`,
+  },
+  {
+    ctor: ReorgLinkError,
+    reason:
+      `a header batch whose first header does not link to the synced chain's ` +
+      `tip, the reorg evidence the sync loop rewinds on; the chain is a ` +
+      `library caller's anchor (headerSyncTrust) and no CLI command syncs one`,
   },
 ];

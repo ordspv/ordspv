@@ -24,6 +24,9 @@
       "@ordspv/fetch": [
         "./packages/fetch/src/index.ts"
       ],
+      "@ordspv/fetch/headersync": [
+        "./packages/fetch/src/headersync.ts"
+      ],
       "@ordspv/gateway": [
         "./packages/gateway/src/index.ts"
       ]

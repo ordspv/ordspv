@@ -23,7 +23,12 @@ export default defineConfig({
     },
   },
   resolve: {
+    // the subpath entry sits first: alias entries match in order, and the
+    // barrel entry would otherwise swallow the subpath id
     alias: {
+      '@ordspv/fetch/headersync': fileURLToPath(
+        new URL('./packages/fetch/src/headersync.ts', import.meta.url),
+      ),
       '@ordspv/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@ordspv/fetch': fileURLToPath(new URL('./packages/fetch/src/index.ts', import.meta.url)),
     },
