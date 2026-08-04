@@ -143,16 +143,16 @@ already binds.
   swallow no value, and `proof` and `parse` already emit JSON, so its intent
   is satisfied rather than ignored.
 
-- **The coinbase hop's self-check names the attempt, lead leading pool, the
-  way the reveal hop's already does.** The shim the terminal coinbase is
-  anchored through carried the pool's name while its status request went to
-  the member leading the attempt, so a mismatch on lead-served data was
-  attributed to the pool, and both BIP34 messages said a height came from the
-  pool when the lead had served it. The shim's name and both messages now read
-  `<lead> leading pool(...)`. This is message text and not a provenance fix:
-  inside the lead-derived span the failure was already wrapped into
-  `RevealSourceError` and recorded under the member leading the attempt, so
-  the accounting is unchanged.
+- **The coinbase hop's self-check names the attempt in the form `<lead>
+  leading pool(...)`, the way the reveal hop's already does.** The shim the
+  terminal coinbase is anchored through carried the pool's name while its
+  status request went to the member leading the attempt, so a mismatch on
+  lead-served data was attributed to the pool, and both BIP34 messages said a
+  height came from the pool when the lead had served it. The shim's name and
+  both messages now read `<lead> leading pool(...)`. This is message text and
+  not a provenance fix: inside the lead-derived span the failure was already
+  wrapped into `RevealSourceError` and recorded under the member leading the
+  attempt, so the accounting is unchanged.
 - **The genealogy loop stopped treating the pool's failover as if it covered
   checks that run outside it.** One defect at two sites. A pooled request
   returns the first member's answer that does not throw, so bytes for the

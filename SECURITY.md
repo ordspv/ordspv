@@ -47,9 +47,9 @@ technical detail**, and we will follow up.
 ## Coordinated disclosure
 
 We ask for coordinated disclosure: give us a reasonable window to ship a fix
-and publish patched packages before public write-ups. We will keep you updated
-on progress, credit you in the release notes if you wish, and coordinate timing
-with you. We aim to acknowledge a report within a few days.
+and publish patched packages before public write-ups. We will credit you in the
+release notes if you want that, and we will agree a disclosure date with you
+rather than setting one. We aim to acknowledge a report within a few days.
 
 ## Scope
 
@@ -71,5 +71,5 @@ not.
 - Header anchoring is fail-closed: a block that cannot be tied to a checkpoint,
   a locally synced header chain, or enough independent sources is rejected, not
   served.
-- TLS on the Electrum transport is transport hygiene, not the trust anchor; the
-  header validation is what makes a sync sound.
+- TLS on the Electrum transport is transport hygiene. The header validation is
+  what makes a sync sound.

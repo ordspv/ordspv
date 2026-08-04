@@ -39,7 +39,8 @@ sources:
 
 Levels **L0** (trusted gateway), **L1** (`#integrity=` sha256 pin, checkable with
 zero Bitcoin infrastructure), L2, and L3 are formalized in the specs. The L2
-inscriber-level caveat is characterized precisely, tested, and surfaced as assurances.
+inscriber-level caveat is stated in the specs and surfaced at runtime as named
+assurances.
 
 ## Custody proofs
 

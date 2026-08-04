@@ -169,7 +169,7 @@ docs/RESEARCH.md for the full technical rationale.*
 - Proof bundles: JSON v1, mandatory `txCount`, display-order hashes (API-native),
   CBOR reserved for v2.
 - L2 ships with named assurances rather than being presented as absolute. The
-  multi-leaf gap is real, tested, and documented; L3 is the closure.
+  multi-leaf gap is real and is covered by tests; L3 is the closure.
 
 ## Repo state
 
