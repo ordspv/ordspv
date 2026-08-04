@@ -170,9 +170,13 @@ The floor is difficulty 1, so its own bar is low: it refuses headers easier than
 which dedicated hardware does in well under a second. A header at recent mainnet
 difficulty costs about 2^78 hashes, and nothing requires a bundle's header to meet
 it, since the bundle picks its own height and its own `nBits`. What the floor buys
-is the removal of the free case. Verifiers MUST still anchor the hash against their
-own view of the chain, because that is what defends against a fabricated header,
-and the floor says nothing about which chain a header sits on.
+is the removal of the free case. Anchoring a header's hash against a view of the
+chain is what defends against a fabricated header, because the floor says nothing
+about which chain a header sits on. The reference verifiers expose that anchoring
+as the optional `trustHeader` hook rather than requiring it, which is the MAY the
+next paragraph states; what verifiers MUST do is consult a compiled-in checkpoint
+where one applies (the first strategy below), and callers SHOULD anchor every
+height no checkpoint pins.
 
 A verifier that anchored nothing MAY still report a result, and MUST say that
 no header in the bundle was anchored, because a reader holding any chain view
@@ -225,15 +229,21 @@ Composable strategies (reference: `makeHeaderTrust`):
 - At each level, if the node is the last of an odd-width level it MUST equal its
   sibling (self-pair); otherwise an identical sibling at the tree edge MUST be
   rejected (mutation shape, CVE-2012-2459).
-- Verifiers MUST reject a 64-byte transaction wherever a transaction parsed from
-  a bundle is folded through a merkle branch (leaf/inner-node confusion,
+- Verifiers MUST reject a transaction whose stripped serialization is 64 bytes
+  wherever a transaction parsed from a bundle has that serialization's hash
+  folded through a txid merkle branch (leaf/inner-node confusion,
   CVE-2017-12842; cf. BIP-54): the reveal, every custody hop transaction, both
   genealogy endpoints, and the coinbase of a witness section. Genealogy funding
   steps are held to the same rule, cheaply, so the chain's positions stay
-  uniform. Previous transactions are exempt, and the exemption is deliberate: a
-  prev tx is hashed only against the txid the spending input names and is never
-  folded into a tree, so the confusion the rule exists to stop cannot arise
-  there (SPEC-SAT states the same carve-out with the same reason).
+  uniform. The wtxid tree folds the full serialization and needs no separate
+  64-byte check there: a transaction without a witness folds the same bytes
+  the stripped check already passed on, and a 64-byte full serialization that
+  does carry a witness marker has no room for an envelope, so the shape cannot
+  smuggle an inscription through the wtxid fold. Previous transactions are
+  exempt, and the exemption is deliberate: a prev tx is hashed only against
+  the txid the spending input names and is never folded into a tree, so the
+  confusion the rule exists to stop cannot arise there (SPEC-SAT states the
+  same carve-out with the same reason).
 - Coinbase proofs MUST be verified at position 0 (all folds left-anchored).
 
 ## 6. Delegation and recursion

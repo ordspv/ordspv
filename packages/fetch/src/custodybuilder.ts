@@ -860,6 +860,13 @@ export async function fetchCustody(
     }
   }
   if (!built || !source) {
+    // no neverLed group is passed, and the omission carries an invariant:
+    // this loop breaks only on success, so on the failure path every
+    // configured backend has led exactly one attempt and refusals plus
+    // noAnswer account for all of them. A future terminal arm that breaks
+    // out of the loop early must start recording the unled remainder the way
+    // the genealogy loop's neverLed group does, or a real shared refusal
+    // silently downgrades to BUILD_FAILED when the accounting stops summing
     const shared = sharedDomainRefusal(refusals, backends.length, noAnswer);
     if (shared) throw shared;
     throw new CustodyError('BUILD_FAILED', `all backends failed:\n${buildErrors.join('\n')}`);

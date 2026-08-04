@@ -236,9 +236,12 @@ is pinned by the txid the input spending it names, so hashing to that txid is
 the whole of what they have to satisfy. Verifiers MUST additionally bind the
 reveal's envelope and its index as the envelope binding section requires.
 
-Verifiers MUST reject a duplicate transaction anywhere in the genealogy, and
-MUST reject a coinbase appearing as a funding step rather than as the terminal
-element. A verifier-side step cap (default 10,000) bounds hostile bundles.
+Verifiers MUST reject a duplicate transaction among the reveal and the funding
+steps, and MUST reject a coinbase appearing as a funding step rather than as
+the terminal element. The terminal coinbase needs no duplicate test: its txid
+is named by the last funding step's input, every walked element is pinned the
+same way, and a coinbase in any earlier position is rejected by the preceding
+rule, so a duplicate terminal element has no reachable form. A verifier-side step cap (default 10,000) bounds hostile bundles.
 Builders carry their own cap, since a walk spends a request per step against a
 live backend; the reference builder defaults to 4,096 and exposes it as
 `--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past 800

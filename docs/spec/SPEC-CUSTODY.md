@@ -40,9 +40,12 @@ pointer (tag 2):
 
 Input values are needed for positions, and inputs do not carry values.
 Verifiers MUST obtain them from the referenced previous transactions and MUST
-check each previous transaction's bytes hash to the txid the input names.
-This makes values self-certifying; previous transactions need no inclusion
-proofs of their own. Only inputs `0..k` are relevant.
+check each entry they read hashes to the txid the corresponding input names.
+Only inputs `0..k` are relevant, so entries within the input count beyond the
+last one read are ignored rather than hashed, and verifiers MUST refuse an
+entry past the input count, which corresponds to no input. This makes the
+values read self-certifying; previous transactions need no inclusion proofs
+of their own.
 
 ## Envelope binding
 
