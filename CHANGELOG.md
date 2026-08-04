@@ -3,6 +3,29 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The merkle branch note states what `txCount` actually pins.** The
+  file-level comment in `packages/core/src/merkle.ts` said a provided
+  `txCount` pins the leaf to a unique position in a uniquely-shaped tree.
+  The shape claim overread the check. A branch pins the tree height, since
+  the height is the branch length, and the header commits the root and does
+  not commit the leaf count, so every count sharing that height passes the
+  length check and no proof can separate them. The note now states the
+  delivered guarantee: with the block's true count the checks pin the leaf
+  to the claimed position, because the width tracking forces a self-pair
+  exactly where the count puts the proven path on the last node of an
+  odd-width level and refuses an equal final pair in an even-width level as
+  the CVE-2012-2459 mutation shape. A wrong count sharing the height is
+  caught only when it puts the claimed position out of range or implies an
+  edge shape the branch disagrees with along the proven path. The comment
+  reaches the published tarball through the source map's embedded sources
+  rather than through the emitted declarations, which drop it because it is
+  attached to a function the declaration file does not carry; no behaviour
+  changes.
+
 ## [0.3.0] - 2026-08-04
 
 Sat provenance in both directions, on the same fail-closed trust model as

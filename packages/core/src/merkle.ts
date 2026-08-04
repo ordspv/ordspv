@@ -10,10 +10,20 @@ import { sha256d } from './hash.js';
  * - CVE-2012-2459 (duplicate-node mutation): when building from a full leaf
  *   set we reject levels whose final two nodes are identical, mirroring
  *   Bitcoin Core's mutation check.
- * - Branch verification accepts an optional `txCount`; when provided, the
- *   branch length must match the tree height exactly and the position must be
- *   in range, which pins the leaf to a unique position in a uniquely-shaped
- *   tree. Callers should provide it whenever available.
+ * - Branch verification accepts an optional `txCount`. When provided, the
+ *   position must be in range and the branch length must equal the tree
+ *   height for that count. The fold also tracks each level's width: the
+ *   branch must self-pair exactly where the count puts the proven path on
+ *   the last node of an odd-width level, and an equal final pair in an
+ *   even-width level is refused as the CVE-2012-2459 mutation shape. When
+ *   the supplied count is the block's true transaction count, these checks
+ *   pin the leaf to the claimed position. The count itself is not provable
+ *   from a branch: the header commits the root and does not commit the
+ *   leaf count, so every count sharing the branch's tree height passes the
+ *   length check, and such a wrong count is caught only when it puts the
+ *   claimed position out of range or implies an edge shape the branch
+ *   disagrees with along the proven path. Callers should still provide
+ *   `txCount` whenever available, since it strictly improves the check.
  * - 64-byte "transactions" are ambiguous with inner nodes (leaf/node
  *   confusion); proof-bundle verification rejects them at a higher layer.
  */
