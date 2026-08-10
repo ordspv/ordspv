@@ -883,20 +883,29 @@
 
   // packages/core/src/inscriptionId.ts
   var ID_RE = /^[0-9a-f]{64}i(0|[1-9][0-9]*)$/;
+  var MAX_INDEX = 4294967295;
+  function rejectionFor(normalized) {
+    if (!ID_RE.test(normalized)) return "shape";
+    const index = Number(normalized.slice(65));
+    if (!Number.isSafeInteger(index) || index > MAX_INDEX) return "range";
+    return void 0;
+  }
+  function messageFor(rejection, normalized, original) {
+    if (rejection === "shape") return `invalid inscription id: ${original}`;
+    return `inscription index out of range: ${Number(normalized.slice(65))}`;
+  }
   function parseInscriptionId(id) {
     const normalized = id.toLowerCase();
-    if (!ID_RE.test(normalized)) throw new Error(`invalid inscription id: ${id}`);
+    const rejection = rejectionFor(normalized);
+    if (rejection) throw new Error(messageFor(rejection, normalized, id));
     const txid = normalized.slice(0, 64);
     const index = Number(normalized.slice(65));
-    if (!Number.isSafeInteger(index) || index > 4294967295) {
-      throw new Error(`inscription index out of range: ${index}`);
-    }
     return { txid, txidLE: displayToInternal(txid), index };
   }
   function formatInscriptionId(txid, index) {
     return `${txid.toLowerCase()}i${index}`;
   }
-  function isInscriptionId(s) {
+  function hasInscriptionIdShape(s) {
     return ID_RE.test(s.toLowerCase());
   }
 
@@ -3505,7 +3514,7 @@
     const lower = rest.toLowerCase();
     if (lower.startsWith("ord://")) rest = rest.slice(6);
     else if (lower.startsWith("ord:")) rest = rest.slice(4);
-    else if (!isInscriptionId(rest.split("/")[0] ?? "")) {
+    else if (!hasInscriptionIdShape(rest.split("/")[0] ?? "")) {
       throw new Error(`not an ord URI: ${input}`);
     }
     const segments = rest.split("/").filter((s) => s.length > 0);
