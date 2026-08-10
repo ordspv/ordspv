@@ -28,8 +28,11 @@ Integrity fragments never reach the gateway (fragments are client-side).
 ## 2. Personalities
 
 - `proxy`: replicates an upstream ord server's `/content` and `/r/*` surface with
-  ord-parity headers (§4). Adds availability/fan-out; adds no trust. MUST NOT emit
-  `x-ord-verification`.
+  ord-parity headers (§4). Adds availability/fan-out; adds no trust. A
+  proxy-personality gateway MUST NOT emit `x-ord-verification` on that replicated
+  surface. It MAY emit `x-ord-verification` on `/ord/v1/verified/<id>`, which
+  verifies locally in either personality, so the header there reports work the
+  gateway performed.
 - `verify`: serves `/content/<id>` only after locally verifying the bytes against
   Bitcoin at L2+ via configured esplora/electrum backends. A compromised upstream
   cannot make a verify-gateway serve forged bytes. MUST emit attestation headers (§5).

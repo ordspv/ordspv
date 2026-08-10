@@ -113,6 +113,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attached to a function the declaration file does not carry; no behaviour
   changes.
 
+- **The proxy personality's attestation rule names the surface it binds.**
+  `SPEC-GATEWAY.md` §2 said a proxy-personality gateway MUST NOT emit
+  `x-ord-verification`, with the reason given in the same sentence as adding no
+  trust. `/ord/v1/verified/<id>` is routed in both personalities and verifies
+  locally in each, so the header it carries reports work the gateway performed,
+  and the blanket sentence forbade a true statement. The rule now binds the
+  replicated `/content` and `/r/*` surface, where the header would be an
+  unearned claim, and permits it on `/ord/v1/verified/<id>`. This matches the
+  existing §2 sentence requiring both personalities to serve `/ord/v1/proof`.
+  No behaviour changes.
+
 ## [0.3.0] - 2026-08-04
 
 Sat provenance in both directions, on the same fail-closed trust model as
