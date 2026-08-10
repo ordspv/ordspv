@@ -1,4 +1,4 @@
-import { isInscriptionId, parseInscriptionId, type InscriptionId } from '@ordspv/core';
+import { hasInscriptionIdShape, parseInscriptionId, type InscriptionId } from '@ordspv/core';
 
 /**
  * ord URI parsing.
@@ -67,11 +67,15 @@ export function parseOrdUri(input: string): ParsedOrdUri {
     else if (fragment.length > 0) throw new Error(`unknown ord URI fragment "${fragment}"`);
   }
 
-  // scheme (bare inscription ids are accepted for ergonomics)
+  // scheme (bare inscription ids are accepted for ergonomics). The test here
+  // is the id's grammar and not its validity, so a bare id whose index is out
+  // of range is still read as an ord URI and `parseInscriptionId` below names
+  // the range as the reason. Gating on validity would report the syntax
+  // instead, which is the less useful of the two answers.
   const lower = rest.toLowerCase();
   if (lower.startsWith('ord://')) rest = rest.slice(6);
   else if (lower.startsWith('ord:')) rest = rest.slice(4);
-  else if (!isInscriptionId(rest.split('/')[0] ?? '')) {
+  else if (!hasInscriptionIdShape(rest.split('/')[0] ?? '')) {
     throw new Error(`not an ord URI: ${input}`);
   }
 

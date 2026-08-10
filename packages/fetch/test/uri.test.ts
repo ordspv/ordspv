@@ -57,4 +57,17 @@ describe('ord URI parsing', () => {
   it('rejects out-of-range indices', () => {
     expect(() => parseOrdUri(`ord:${'a'.repeat(64)}i4294967296`)).toThrow(/out of range/);
   });
+
+  it('names the range, not the syntax, for a bare id with an out-of-range index', () => {
+    // The scheme branch detects a bare id by grammar and not by validity. A
+    // validity gate there would answer "not an ord URI" for an input whose real
+    // problem is the index, which tells the caller less than the range does.
+    const overflow = `${'a'.repeat(64)}i4294967296`;
+    expect(() => parseOrdUri(overflow)).toThrow(/out of range/);
+    expect(() => parseOrdUri(`${overflow}/content`)).toThrow(/out of range/);
+    expect(() => parseOrdUri(`${'a'.repeat(64)}i${'9'.repeat(40)}`)).toThrow(/out of range/);
+    // and a genuine non-URI still says so
+    expect(() => parseOrdUri('ipfs://bafy')).toThrow(/not an ord URI/);
+    expect(() => parseOrdUri(`${'z'.repeat(64)}i0`)).toThrow(/not an ord URI/);
+  });
 });

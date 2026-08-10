@@ -41,6 +41,11 @@ services:
       GATEWAY_MODE: verify
       ESPLORA: http://electrs:3000          # self-hosted proof source
       ORD_UPSTREAM: https://ordinals.com    # recursion passthrough (ADJUST/self-host ord)
+      # ADJUST: network. The proof-of-work floor defaults to mainnet
+      # (0x1d00ffff), and signet's limit is easier than that, so a signet
+      # gateway that leaves this unset refuses every header it is served.
+      # Drop the line on mainnet; "off" disables the floor.
+      POW_LIMIT_BITS: "0x1e0377ae"          # signet powLimit
       RATE_LIMIT: "10"
       RATE_BURST: "40"
       CACHE_MAX_BYTES: "268435456"

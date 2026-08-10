@@ -5,6 +5,93 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The gateway served proof bundles it had never verified.**
+  `SPEC-GATEWAY.md:46` is normative and says a gateway MUST NOT relay bundles
+  it cannot verify. `verifyProofBundle` had zero occurrences anywhere in
+  `packages/gateway/src`, so the proof branch built a bundle and sent it with
+  nothing in between, while `packages/sidecar/src/index.ts` did the same job
+  correctly under the comment "never relay a bundle we cannot verify". The
+  gateway now verifies before it sends, with the sidecar's shape and its
+  `powLimitBits` argument, and a bundle that fails is a 502. Three things made
+  the absence worse than a missing check. The proof branch returns above the
+  mode comparison, so `/ord/v1/proof` behaved identically in both
+  personalities and a verify-mode operator got the proxy guarantee. The
+  response carries `cache-control: public, max-age=1209600, immutable`. And
+  `sendCached` writes the LRU before it sends, with the cache lookup ahead of
+  the proof branch, so one bad upstream answer reached every later caller for
+  fourteen days or until eviction. The trigger needed no attacker: an HTTP 200
+  carrying a CDN error page where a block header belongs is enough, and that
+  is what the regression test uses. The verification step now sits above
+  `sendCached`, so a refused bundle leaves no cache entry behind.
+- **`isInscriptionId` accepted ids `parseInscriptionId` rejected.** The
+  predicate applied the id grammar alone while the parser also bounded the
+  index at `0xffffffff`, and the two were used as a pair with the predicate as
+  the 400 gate and the parser inside a try whose catch answered 502. So
+  `<txid>i4294967296`, and any digit run long enough for `Number()` to
+  saturate, was reported as upstream data being unavailable on all three
+  routes that gate this way, where `SPEC-GATEWAY.md:50` assigns 400 to a
+  malformed id. It also incremented `gateway_upstream_errors_total`, which is
+  the counter an operator reads to detect an upstream problem, for a request
+  no backend was ever sent. One validator now sits behind both: the predicate
+  reports whether a reason is absent and the parser throws it, so they cannot
+  diverge. `inscriptionIdError` exposes that reason, and the three 400 bodies
+  name it instead of repeating the input. `hasInscriptionIdShape` is the
+  grammar alone and is documented as a scheme detector, which is what
+  `packages/fetch/src/uri.ts` needs to keep naming the range as the reason for
+  a bare id with an out-of-range index.
+- **An unrecognised `GATEWAY_MODE` served proxy bytes and reported itself as
+  verifying.** The environment read cast the string to the mode union, `as` is
+  erased at runtime, and `??` catches only `undefined`, so `GATEWAY_MODE=Verify`
+  failed the `=== 'verify'` comparison and fell through to the proxy branch.
+  Both echoes agreed with the typo rather than with the behaviour: `/healthz`
+  returned the resolved variable, which held `Verify`, and the startup line
+  printed the raw environment string. `normalizeMode` now resolves the value at
+  the options boundary, so a library caller casting past the type is covered
+  too, an unrecognised value falls back to `proxy` and says so on stderr, and
+  `/healthz` and the startup line report the configuration in force.
+- **Unreadable environment counts disabled the protections they configure.**
+  Each count reached the options through a bare `Number()`, `??` does not catch
+  `NaN`, and every guard downstream is a `> 0` test that `NaN` fails.
+  `RATE_LIMIT=abc` switched per-IP rate limiting off, `CACHE_MAX_BYTES=abc`
+  switched the LRU off, `UPSTREAM_TIMEOUT_MS=abc` reached `setTimeout(fn, NaN)`,
+  which coerces to 1 ms and aborted every proxied fetch, and `PORT=abc` reached
+  `server.listen(NaN)`, which throws `options.port should be >= 0 and < 65536`,
+  so the gateway died at startup on a type error that named neither the
+  variable nor the value. The class is fixed at both layers rather than the
+  instances: `gatewayOptionsFromEnv` checks every count it reads and reports an
+  unreadable one, and `createGateway` checks the counts it is handed, so a
+  value that is not a finite number at or above zero lands on the documented
+  default in both.
+
+### Added
+
+- **`powLimitBits` on `GatewayOptions`, and `POW_LIMIT_BITS` in the
+  environment.** The gateway was the only one of the three services that could
+  not set the proof-of-work floor, so no gateway caller could reach
+  `checkPowLimit`. The option threads to the `OrdResolver` and to the new
+  bundle verification, in the convention the sidecar and the resolver already
+  use (`undefined` mainnet, a number for another chain, `null` to disable).
+  `deploy/docker-compose.yml` is why the environment reach matters: the
+  reference deployment runs `GATEWAY_MODE: verify` on signet, whose powLimit
+  target is easier than mainnet's, so the mainnet default refused every header
+  that deployment served and nothing could change it. The compose file now sets
+  signet's `0x1e0377ae` with the network note beside the other ADJUST lines.
+- **The property tests written during the 2026-08-10 audit are part of the
+  suite.** Merkle binding and branch depth, the CVE-2012-2459 odd-level shape,
+  index bounds, witness commitment, header targets and nBits expansion, parser
+  robustness, and inscription-id round-trip with byte order, under
+  `packages/core/test/*.props.test.ts` with seeded generators in
+  `packages/core/test/gen.ts`. The relay tests are in
+  `packages/gateway/test/gateway-relay.props.test.ts` and are the evidence for
+  the fixes above: all of them failed against the code that shipped. One test
+  was vacuous and no longer is. The generator for "the predicate and the parser
+  never disagree" drew its indices from `[0, 0xffffffff]`, and the disagreement
+  begins one past the top of that range, so it never sampled the failing region
+  and would have kept passing through a regression. It now straddles the
+  boundary and asserts that it did.
+
 ### Changed
 
 - **The merkle branch note states what `txCount` actually pins.** The

@@ -141,6 +141,19 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
     expect((await fetch(`${base}/ord/v1/proof/${unknown}`)).status).toBe(404);
   });
 
+  it('answers 400 for an id whose index is out of range, not 502', async () => {
+    // The id gate and the parse behind it are one decision now. They were two,
+    // and the gate was the looser of them, so this id reached the build and its
+    // throw was classified by a message test that "inscription index out of
+    // range" does not match, landing on 502.
+    for (const bad of [`${'ab'.repeat(32)}i4294967296`, `${'ab'.repeat(32)}i${'9'.repeat(40)}`]) {
+      const res = await fetch(`${base}/ord/v1/proof/${bad}`);
+      const body = (await res.json()) as { error: string };
+      expect(res.status, `${bad} -> ${body.error}`).toBe(400);
+      expect(body.error).toContain('inscription index out of range');
+    }
+  });
+
   it('caches immutable bundles: MISS then HIT (canonical key ignores junk params)', async () => {
     const cached = createSidecar({ rpc, rateLimitPerSec: 0, ...NO_POW_FLOOR });
     await new Promise<void>((resolve) => cached.listen(0, () => resolve()));

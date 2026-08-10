@@ -155,6 +155,16 @@ ordinals.com down (ord#3873).
   `RATE_BURST`, default 40) with `429` + `retry-after`; `/healthz` and `/metrics`
   exempt. `TRUST_PROXY=1` keys on the first `X-Forwarded-For` hop instead of the
   socket address; only set it behind infrastructure you control.
+- Configuration: every count read from the environment (`RATE_LIMIT`,
+  `CACHE_MAX_BYTES`, `CACHE_MAX_ENTRY_BYTES`, `RATE_BURST`,
+  `UPSTREAM_TIMEOUT_MS`, `TRUST_PROXY`, `PORT`) is checked before it is used,
+  and an unreadable value lands on the documented default and says so on
+  stderr. `GATEWAY_MODE` resolves to `proxy` unless it reads exactly `verify`,
+  and `/healthz` reports the mode in force rather than the value supplied.
+  `POW_LIMIT_BITS` sets the proof-of-work floor as compact bits (`off`
+  disables it); the default is mainnet's `0x1d00ffff`, so a gateway on a chain
+  with an easier limit refuses every header it is served until this is set.
+  Signet is `0x1e0377ae` and regtest is `0x207fffff`.
 - Observability: one JSON log line per request (ip, route, status, ms,
   cache) and Prometheus text at `/metrics` (`gateway_http_requests_total`,
   latency histogram by route label, cache hit/miss counters, rate-limit

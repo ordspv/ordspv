@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
-import { isInscriptionId, parseInscriptionId } from '@ordspv/core';
+import { inscriptionIdError, parseInscriptionId, verifyProofBundle } from '@ordspv/core';
 import {
   buildProofBundle,
   DEFAULT_HTTP_TIMEOUT_MS,
@@ -44,8 +44,21 @@ export interface GatewayOptions {
   esplora?: string[];
   /** header attesters (default `DEFAULT_ANCHOR_SOURCES`); never the proof backends */
   anchorSources?: string[];
-  mode?: 'proxy' | 'verify';
+  /**
+   * `proxy` (default) or `verify`. Any other value falls back to `proxy` and
+   * is reported on stderr, because a mode this gateway does not recognise must
+   * never be served, or reported by `/healthz`, as though it verified.
+   */
+  mode?: GatewayMode;
   verification?: 'L2' | 'L3';
+  /**
+   * Compact-bits proof-of-work floor for the headers this gateway accepts,
+   * both in the bundles it serves from `/ord/v1/proof` and in the content it
+   * resolves. Defaults to the mainnet limit (0x1d00ffff); a gateway fronting a
+   * regtest or signet chain passes that chain's limit, or null to disable the
+   * floor.
+   */
+  powLimitBits?: number | null;
   fetchFn?: FetchFn;
   /** LRU budget across cached bodies (default 256 MiB; 0 disables) */
   cacheMaxBytes?: number;
@@ -110,6 +123,44 @@ function stripPort(entry: string): string {
   return parts.length === 2 ? parts[0] : entry;
 }
 
+export type GatewayMode = 'proxy' | 'verify';
+
+/**
+ * Resolve a supplied mode to one of the two the gateway implements.
+ *
+ * The comparison that selects the verifying branch is `=== 'verify'`, so any
+ * other spelling silently serves proxy bytes. `GATEWAY_MODE=Verify` used to do
+ * exactly that while `/healthz` echoed `Verify` back as apparent confirmation.
+ * An unrecognised value is reported on stderr and read as `proxy`, which is the
+ * personality that claims the least.
+ */
+export function normalizeMode(value: unknown): GatewayMode {
+  if (value === undefined || value === null) return 'proxy';
+  if (value === 'proxy' || value === 'verify') return value;
+  console.error(
+    `gateway mode ${JSON.stringify(value)} is not "proxy" or "verify"; running in proxy mode`,
+  );
+  return 'proxy';
+}
+
+/**
+ * A count supplied through the options, or the default when it is absent or
+ * unusable.
+ *
+ * Every guard downstream is a `> 0` test, and `NaN > 0` is false, so a count
+ * that arrives as `NaN` reads as "not requested" and switches the protection it
+ * governs off. The same holds for a negative value. Neither is silently
+ * honoured: the default applies and the substitution is reported.
+ */
+function count(name: string, value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value) || value < 0) {
+    console.error(`gateway option ${name}=${value} is not a count; using ${fallback}`);
+    return fallback;
+  }
+  return value;
+}
+
 /** low-cardinality route label for metrics/logs */
 export function routeLabel(path: string): string {
   if (path === '/healthz') return 'healthz';
@@ -125,7 +176,7 @@ export function routeLabel(path: string): string {
 
 export function createGateway(options: GatewayOptions = {}): Server {
   const upstream = (options.upstream ?? 'https://ordinals.com').replace(/\/+$/, '');
-  const mode = options.mode ?? 'proxy';
+  const mode = normalizeMode(options.mode);
   const level = options.verification ?? 'L2';
   const fetchFn: FetchFn = options.fetchFn ?? ((u, i) => fetch(u, i));
   const esploras = (options.esplora ?? ['https://mempool.space/api', 'https://blockstream.info/api']).map(
@@ -137,14 +188,15 @@ export function createGateway(options: GatewayOptions = {}): Server {
     ordGateways: [upstream],
     fetchFn,
     verification: level,
+    powLimitBits: options.powLimitBits,
   });
 
-  const cacheMaxBytes = options.cacheMaxBytes ?? 256 * 1024 * 1024;
-  const cacheMaxEntry = options.cacheMaxEntryBytes ?? 8 * 1024 * 1024;
-  const upstreamTimeoutMs = options.upstreamTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+  const cacheMaxBytes = count('cacheMaxBytes', options.cacheMaxBytes, 256 * 1024 * 1024);
+  const cacheMaxEntry = count('cacheMaxEntryBytes', options.cacheMaxEntryBytes, 8 * 1024 * 1024);
+  const upstreamTimeoutMs = count('upstreamTimeoutMs', options.upstreamTimeoutMs, DEFAULT_HTTP_TIMEOUT_MS);
   const cache = new ByteLru(cacheMaxBytes, cacheMaxEntry);
-  const ratePerSec = options.rateLimitPerSec ?? 10;
-  const limiter = new TokenBucketLimiter(ratePerSec, options.rateBurst ?? 40);
+  const ratePerSec = count('rateLimitPerSec', options.rateLimitPerSec, 10);
+  const limiter = new TokenBucketLimiter(ratePerSec, count('rateBurst', options.rateBurst, 40));
   const log = options.log || undefined;
 
   const registry = new Registry();
@@ -159,7 +211,11 @@ export function createGateway(options: GatewayOptions = {}): Server {
   registry.gauge('gateway_ratelimit_tracked_ips', 'token buckets currently tracked', () => limiter.trackedKeys);
 
   const trustedHops =
-    options.trustProxy === true ? 1 : typeof options.trustProxy === 'number' ? options.trustProxy : 0;
+    options.trustProxy === true
+      ? 1
+      : typeof options.trustProxy === 'number'
+        ? count('trustProxy', options.trustProxy, 0)
+        : 0;
 
   function clientIp(req: IncomingMessage): string {
     if (trustedHops > 0) {
@@ -284,7 +340,16 @@ export function createGateway(options: GatewayOptions = {}): Server {
     }
 
     if (path === '/healthz') {
-      return sendJson(res, 200, { ok: true, mode, upstream, esplora: esploras.map((e) => e.baseUrl) });
+      // the resolved configuration, never what was supplied: `mode` here is the
+      // same variable the verify branch below compares against, so an operator
+      // reading this endpoint reads the behaviour rather than their own input
+      return sendJson(res, 200, {
+        ok: true,
+        mode,
+        verification: level,
+        upstream,
+        esplora: esploras.map((e) => e.baseUrl),
+      });
     }
     if (path === '/metrics') {
       return send(res, 200, registry.render(), { 'content-type': 'text/plain; version=0.0.4' });
@@ -314,10 +379,19 @@ export function createGateway(options: GatewayOptions = {}): Server {
     const proofMatch = path.match(/^\/ord\/v1\/proof\/([^/]+)$/);
     if (proofMatch) {
       const id = proofMatch[1];
-      if (!isInscriptionId(id)) return sendJson(res, 400, { error: `invalid inscription id: ${id}` });
+      const badId = inscriptionIdError(id);
+      if (badId) return sendJson(res, 400, { error: badId });
+      // parsed above the backend loop: the id decides nothing about any
+      // backend, and a parse failure inside the loop was reported as
+      // "all backends failed" for an input no backend was ever sent
+      const parsed = parseInscriptionId(id);
       const wanted = (url.searchParams.get('level') ?? 'l2').toUpperCase() === 'L3' ? 'L3' : 'L2';
       try {
-        const bundle = await tryBackends(esploras, (e) => buildProofBundle(e, parseInscriptionId(id), wanted));
+        const bundle = await tryBackends(esploras, (e) => buildProofBundle(e, parsed, wanted));
+        // never relay a bundle we cannot verify (SPEC-GATEWAY §3). This sits
+        // above sendCached, so a bundle that fails here also never enters the
+        // LRU that would serve it to every later caller.
+        verifyProofBundle(bundle, { powLimitBits: options.powLimitBits });
         return sendCached(res, cacheKey, new TextEncoder().encode(JSON.stringify(bundle)), {
           'content-type': 'application/vnd.ord.proof+json; version=1',
           'cache-control': IMMUTABLE,
@@ -333,7 +407,8 @@ export function createGateway(options: GatewayOptions = {}): Server {
     const contentMatch = path.match(/^\/content\/([^/]+)$/);
     if (verifiedMatch || (contentMatch && mode === 'verify')) {
       const id = (verifiedMatch ?? contentMatch)![1];
-      if (!isInscriptionId(id)) return sendJson(res, 400, { error: `invalid inscription id: ${id}` });
+      const badId = inscriptionIdError(id);
+      if (badId) return sendJson(res, 400, { error: badId });
       try {
         const result = await resolver.resolve(`ord:${id}/content`);
         const response = toResponse(result);
@@ -433,28 +508,106 @@ export function installShutdown(server: Server, graceMs = 10_000, log?: (l: Reco
   process.on('SIGINT', () => close('SIGINT'));
 }
 
+/**
+ * Read a count out of the environment.
+ *
+ * An unset or empty variable yields undefined, so the option's own default
+ * applies. Anything that is not a finite number at or above zero is reported on
+ * stderr and yields undefined as well, so it also lands on the default.
+ *
+ * The guard is the point. `Number('abc')` is `NaN`, `??` does not catch `NaN`,
+ * and every guard downstream is a `> 0` test that `NaN` fails: `RATE_LIMIT=abc`
+ * switched per-IP rate limiting off, `CACHE_MAX_BYTES=abc` switched the LRU off,
+ * and `UPSTREAM_TIMEOUT_MS=abc` reached `setTimeout(fn, NaN)`, which coerces to
+ * 1 ms and aborted every proxied fetch. A typo must never disable a protection
+ * quietly.
+ */
+function envCount(env: Record<string, string | undefined>, name: string): number | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    console.error(`${name}=${raw} is not a count; ignoring it and using the default`);
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Read the proof-of-work floor out of the environment: compact bits as a
+ * number (`0x1e0377ae` and `503543726` are the same value), or `off` to
+ * disable the floor.
+ *
+ * `deploy/docker-compose.yml` runs the reference deployment on signet, whose
+ * powLimit target is easier than mainnet's, so the mainnet default refuses
+ * every header that deployment serves. The option existed and nothing in the
+ * environment reached it, which left the reference deployment with no verify
+ * path at all.
+ */
+function envPowLimitBits(env: Record<string, string | undefined>): number | null | undefined {
+  const raw = env.POW_LIMIT_BITS;
+  if (raw === undefined || raw.trim() === '') return undefined;
+  if (raw.trim().toLowerCase() === 'off') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    console.error(
+      `POW_LIMIT_BITS=${raw} is not compact bits (e.g. 0x1e0377ae) or "off"; using the mainnet limit`,
+    );
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Read a deployment's environment into gateway options.
+ *
+ * This is the layer where a typo becomes a running configuration, so it is
+ * exported and takes the environment as an argument: the mapping is checkable
+ * without a subprocess and without writing to `process.env`.
+ *
+ * Every count passes through `envCount`. `Number('abc')` is `NaN`, `??` does
+ * not catch `NaN`, and every guard downstream is a `> 0` test that `NaN` fails,
+ * so `RATE_LIMIT=abc` used to switch per-IP rate limiting off, `CACHE_MAX_BYTES=abc`
+ * used to switch the LRU off, and `UPSTREAM_TIMEOUT_MS=abc` reached
+ * `setTimeout(fn, NaN)`, which coerces to 1 ms and aborted every proxied fetch.
+ * An unreadable value now lands on the documented default and says so.
+ */
+export function gatewayOptionsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): GatewayOptions {
+  return {
+    port: envCount(env, 'PORT') ?? 8317,
+    upstream: env.ORD_UPSTREAM,
+    esplora: env.ESPLORA?.split(','),
+    anchorSources: env.ANCHOR_SOURCES?.split(','),
+    mode: normalizeMode(env.GATEWAY_MODE),
+    verification: env.GATEWAY_LEVEL === 'L3' ? 'L3' : 'L2',
+    powLimitBits: envPowLimitBits(env),
+    cacheMaxBytes: envCount(env, 'CACHE_MAX_BYTES'),
+    cacheMaxEntryBytes: envCount(env, 'CACHE_MAX_ENTRY_BYTES'),
+    upstreamTimeoutMs: envCount(env, 'UPSTREAM_TIMEOUT_MS'),
+    rateLimitPerSec: envCount(env, 'RATE_LIMIT'),
+    rateBurst: envCount(env, 'RATE_BURST'),
+    // TRUST_PROXY = number of trusted proxy hops (1 for a single LB/CDN)
+    trustProxy: envCount(env, 'TRUST_PROXY'),
+  };
+}
+
 /** CLI entry: npx tsx packages/gateway/src/index.ts */
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = Number(process.env.PORT ?? 8317);
   const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
-  const gateway = createGateway({
-    port,
-    upstream: process.env.ORD_UPSTREAM,
-    esplora: process.env.ESPLORA?.split(','),
-    anchorSources: process.env.ANCHOR_SOURCES?.split(','),
-    mode: (process.env.GATEWAY_MODE as 'proxy' | 'verify') ?? 'proxy',
-    verification: process.env.GATEWAY_LEVEL === 'L3' ? 'L3' : 'L2',
-    cacheMaxBytes: process.env.CACHE_MAX_BYTES ? Number(process.env.CACHE_MAX_BYTES) : undefined,
-    cacheMaxEntryBytes: process.env.CACHE_MAX_ENTRY_BYTES ? Number(process.env.CACHE_MAX_ENTRY_BYTES) : undefined,
-    upstreamTimeoutMs: process.env.UPSTREAM_TIMEOUT_MS ? Number(process.env.UPSTREAM_TIMEOUT_MS) : undefined,
-    rateLimitPerSec: process.env.RATE_LIMIT ? Number(process.env.RATE_LIMIT) : undefined,
-    rateBurst: process.env.RATE_BURST ? Number(process.env.RATE_BURST) : undefined,
-    // TRUST_PROXY = number of trusted proxy hops (1 for a single LB/CDN)
-    trustProxy: process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || 0 : undefined,
-    log,
-  });
+  // the startup line reports these resolved options and never the environment
+  // strings behind them, so it cannot echo a mode the gateway is not in
+  const options = gatewayOptionsFromEnv();
+  const gateway = createGateway({ ...options, log });
   installShutdown(gateway, undefined, log);
-  gateway.listen(port, () => {
-    log({ t: new Date().toISOString(), msg: 'listening', port, mode: process.env.GATEWAY_MODE ?? 'proxy' });
+  gateway.listen(options.port, () => {
+    log({
+      t: new Date().toISOString(),
+      msg: 'listening',
+      port: options.port,
+      mode: options.mode,
+      verification: options.verification,
+    });
   });
 }

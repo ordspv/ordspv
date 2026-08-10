@@ -2,7 +2,7 @@ import { createServer, type Server, type ServerResponse } from 'node:http';
 import {
   buildMerkleBranch,
   internalToDisplay,
-  isInscriptionId,
+  inscriptionIdError,
   parseInscriptionId,
   hexToBytes,
   verifyProofBundle,
@@ -266,8 +266,9 @@ export function createSidecar(options: SidecarOptions): Server {
         return sendJson(res, 404, { error: 'not found', routes: ['/ord/v1/proof/<id>?level=l2|l3', '/healthz'] });
       }
       const id = match[1];
-      if (!isInscriptionId(id)) {
-        return sendJson(res, 400, { error: `invalid inscription id: ${id}` });
+      const badId = inscriptionIdError(id);
+      if (badId) {
+        return sendJson(res, 400, { error: badId });
       }
       const level = (url.searchParams.get('level') ?? 'l2').toUpperCase() === 'L3' ? 'L3' : 'L2';
 
