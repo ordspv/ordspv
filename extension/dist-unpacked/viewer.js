@@ -920,6 +920,20 @@
   function formatInscriptionId(txid, index) {
     return `${txid.toLowerCase()}i${index}`;
   }
+  function checkExpectedInscriptionId(id, expected, claimed) {
+    if (expected === void 0) return;
+    let wanted;
+    try {
+      wanted = parseInscriptionId(expected);
+    } catch (e) {
+      throw new Error(`expectedInscriptionId: ${e.message}`);
+    }
+    if (wanted.txid !== id.txid || wanted.index !== id.index) {
+      throw new Error(
+        `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`
+      );
+    }
+  }
   function hasInscriptionIdShape(s) {
     return ID_RE.test(s.toLowerCase());
   }
@@ -3150,20 +3164,6 @@
   }
 
   // packages/core/src/proof.ts
-  function checkExpectedId(id, expected, claimed) {
-    if (expected === void 0) return;
-    let wanted;
-    try {
-      wanted = parseInscriptionId(expected);
-    } catch (e) {
-      throw new Error(`expectedInscriptionId: ${e.message}`);
-    }
-    if (wanted.txid !== id.txid || wanted.index !== id.index) {
-      throw new Error(
-        `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`
-      );
-    }
-  }
   function parseHexTx(hex, label) {
     let tx;
     try {
@@ -3188,7 +3188,7 @@
       throw new Error("bundle field reveal is missing or not an object");
     }
     const id = parseInscriptionId(bundle.inscriptionId);
-    checkExpectedId(id, opts.expectedInscriptionId, bundle.inscriptionId);
+    checkExpectedInscriptionId(id, opts.expectedInscriptionId, bundle.inscriptionId);
     if (typeof bundle.block.header !== "string") {
       throw new Error("bundle field block.header is missing or not a string");
     }
@@ -3916,6 +3916,9 @@
   ]);
   var HeaderTrustError = class extends Error {
   };
+  var HeaderTrustDisagreementError = class extends HeaderTrustError {
+  };
+  var BLOCK_HASH = /^[0-9a-f]{64}$/;
   function tipHeightFrom(text) {
     if (!/^[0-9]+$/.test(text)) return void 0;
     const height = Number(text);
@@ -3935,6 +3938,7 @@
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
     const esploras = options.esploras ?? [];
     const minConfirmations = options.minConfirmations ?? 0;
+    const onDisagreement = options.onDisagreement ?? "throw";
     const powLimitBits = options.powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
     const serving = new Set([...options.proofSources ?? []].map(normalizeBaseUrl));
     if (options.proofSource !== void 0) serving.add(normalizeBaseUrl(options.proofSource));
@@ -3956,6 +3960,13 @@
           checkpointHit: true,
           sourcesQueried: 0,
           sourcesAgreed: 0,
+          // the arm returns above the vote, so no attester was asked anything
+          // and there is nothing for the four buckets to hold
+          sourcesDisagreed: 0,
+          sourcesUnreachable: 0,
+          sourcesMalformed: 0,
+          disagreements: [],
+          malformed: [],
           independentSources: 0,
           builderIsSource,
           anchored: true,
@@ -3975,13 +3986,35 @@
       const hashResults = await Promise.allSettled(
         attesters.map(async (e) => (await e.getBlockHashAtHeight(height)).trim().toLowerCase())
       );
-      const agreed = hashResults.filter(
-        (r) => r.status === "fulfilled" && r.value === header.hash
-      );
-      const independentSources = agreed.length;
+      const disagreements = [];
+      const malformed = [];
+      let agreed = 0;
+      let unreachable = 0;
+      hashResults.forEach((result, i) => {
+        const baseUrl = attesters[i].baseUrl;
+        if (result.status === "rejected") {
+          unreachable += 1;
+        } else if (!BLOCK_HASH.test(result.value)) {
+          malformed.push({ baseUrl, length: result.value.length });
+        } else if (result.value !== header.hash) {
+          disagreements.push({ baseUrl, hash: result.value });
+        } else {
+          agreed += 1;
+        }
+      });
+      const independentSources = agreed;
+      if (disagreements.length > 0 && onDisagreement === "throw") {
+        throw new HeaderTrustDisagreementError(
+          `height ${height} is contested: ${disagreements.length} attester(s) name another block where the bundle claims header ${header.hash} (` + disagreements.map((d) => `${d.baseUrl} says ${d.hash}`).join("; ") + `); ${agreed} attester(s) agreed. Check the height against your own chain view, or pass onDisagreement: 'flag' to record the disagreement and continue with no attestation.`
+        );
+      }
       if (independentSources < required) {
+        const endpoints = [
+          ...disagreements.map((d) => `${d.baseUrl} says ${d.hash}`),
+          ...malformed.map((m) => `${m.baseUrl} answered ${m.length} characters that are no block hash`)
+        ];
         throw new HeaderTrustError(
-          `height ${height} not independently anchored: ${independentSources} independent source(s) support header ${header.hash} (need ${required}; ${agreed.length}/${attesters.length} attesters agreed` + (builderIsSource ? `, ${serving.size} serving backend(s) excluded from the vote` : "") + `). Pass --anchor-source with at least ${required} endpoints that did not serve the bundle, a covering checkpoint, or a headerSyncTrust anchor.`
+          `height ${height} not independently anchored: ${independentSources} independent source(s) support header ${header.hash} (need ${required}; of ${attesters.length} attester(s), ${agreed} agreed, ${disagreements.length} named another block, ${malformed.length} answered no block hash, ${unreachable} did not answer` + (builderIsSource ? `; ${serving.size} serving backend(s) excluded from the vote` : "") + `)` + (endpoints.length > 0 ? `. ${endpoints.join("; ")}` : "") + `. Pass --anchor-source with at least ${required} endpoints that did not serve the bundle, a covering checkpoint, or a headerSyncTrust anchor.`
         );
       }
       let tipHeight;
@@ -4008,16 +4041,29 @@
       return {
         checkpointHit: false,
         sourcesQueried: attesters.length,
-        sourcesAgreed: agreed.length,
+        sourcesAgreed: agreed,
+        sourcesDisagreed: disagreements.length,
+        sourcesUnreachable: unreachable,
+        sourcesMalformed: malformed.length,
+        disagreements,
+        malformed,
         independentSources,
         builderIsSource,
+        // the agreeing attesters did meet the threshold, and folding a
+        // disagreement into this field would lose the distinction the buckets
+        // exist to keep. It travels as its own counts, the way builderIsSource
+        // travels rather than being subtracted from independentSources
         anchored: true,
         tipHeight,
         tipsQueried,
         tipsAnswered,
         // every agreeing attester answered /block-height/<n> with this hash, so
-        // the agreement is a hash-at-height attestation
-        attests: "hash-at-height"
+        // the agreement is a hash-at-height attestation. Reaching here with a
+        // disagreement means the caller chose to flag it, and a pair another
+        // attester denies asserts nothing: a sub-BIP34 coinbase height under
+        // this anchor gets CoinbaseHeightUnprovenError, which names the real
+        // situation
+        attests: disagreements.length > 0 ? void 0 : "hash-at-height"
       };
     };
   }
