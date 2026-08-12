@@ -246,6 +246,129 @@ describe('fail-closed header anchoring', () => {
       makeHeaderTrust({ ...common, minConfirmations: 3 })(HEADER, HEIGHT),
     ).resolves.toMatchObject({ anchored: true, tipHeight: HEIGHT + 2 });
   });
+});
+
+describe('the confirmation-depth phase', () => {
+  const builder = () => esplora('https://builder.test', {});
+  const common = {
+    checkpoints: new Map<number, string>(),
+    proofSource: 'https://builder.test',
+  };
+
+  /** agrees on the hash, answers the tip endpoint with exactly this text */
+  const tipSaying = (base: string, tip: string) =>
+    esplora(base, {
+      [`${base}/block-height/${HEIGHT}`]: HEADER.hash,
+      [`${base}/blocks/tip/height`]: tip,
+    });
+
+  /** agrees on the hash, has no tip endpoint at all */
+  const noTip = (base: string) =>
+    esplora(base, { [`${base}/block-height/${HEIGHT}`]: HEADER.hash });
+
+  it('refuses when a depth is requested and every tip query fails', async () => {
+    // the fail-open case: the depth went unenforced, the report carried no
+    // tipHeight to say so, and the call resolved as anchored
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [builder(), noTip('https://h1.test'), noTip('https://h2.test')],
+      minConfirmations: 6,
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(HeaderTrustError);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/no attester stated a usable tip height/);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/2 queried, 0 answered/);
+  });
+
+  it('drops a garbage tip in either ordering of the same two attesters', async () => {
+    // Number('nonsense') is NaN, the comparator returns NaN, and sort leaves
+    // the pair where it found it, so the median landed on the garbage or not
+    // depending on which attester came first. The two orderings disagreed
+    const good = () => tipSaying('https://good.test', String(HEIGHT + 2));
+    const bad = () => tipSaying('https://bad.test', 'nonsense');
+    for (const esploras of [
+      [builder(), bad(), good()],
+      [builder(), good(), bad()],
+    ]) {
+      const report = await makeHeaderTrust({ ...common, esploras, minConfirmations: 3 })(HEADER, HEIGHT);
+      expect(report.tipHeight).toBe(HEIGHT + 2);
+      expect(report.tipsQueried).toBe(2);
+      expect(report.tipsAnswered).toBe(1);
+      await expect(
+        makeHeaderTrust({ ...common, esploras, minConfirmations: 6 })(HEADER, HEIGHT),
+      ).rejects.toThrow(/only 3 confirmations/);
+    }
+  });
+
+  it('reads an empty tip response as no answer rather than height zero', async () => {
+    // Number('') is 0, so an empty body used to read as tip height zero and
+    // produce "only -767429 confirmations", blaming depth for a bad answer
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [builder(), tipSaying('https://h1.test', ''), tipSaying('https://h2.test', '')],
+      minConfirmations: 6,
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/no attester stated a usable tip height/);
+    await expect(trust(HEADER, HEIGHT)).rejects.not.toThrow(/confirmations, need/);
+  });
+
+  it('reads a negative or fractional tip as no answer', async () => {
+    for (const junk of ['-1', '1.5', '0x10', '1e6', ' ']) {
+      const trust = makeHeaderTrust({
+        ...common,
+        esploras: [builder(), tipSaying('https://h1.test', junk), tipSaying('https://h2.test', junk)],
+        minConfirmations: 6,
+      });
+      await expect(trust(HEADER, HEIGHT), junk).rejects.toThrow(/0 answered/);
+    }
+  });
+
+  it('reports the tip counts only on the arm that queried tips', async () => {
+    const esploras = [builder(), tipSaying('https://h1.test', String(HEIGHT + 10)), tipSaying('https://h2.test', String(HEIGHT + 10))];
+    const enforced = await makeHeaderTrust({ ...common, esploras, minConfirmations: 6 })(HEADER, HEIGHT);
+    expect(enforced.tipsQueried).toBe(2);
+    expect(enforced.tipsAnswered).toBe(2);
+    expect(enforced.tipHeight).toBe(HEIGHT + 10);
+
+    // no depth requested: the phase never runs, and absent counts say that
+    // rather than claiming zero answers to a query nobody made
+    const skipped = await makeHeaderTrust({ ...common, esploras })(HEADER, HEIGHT);
+    expect(skipped.tipsQueried).toBeUndefined();
+    expect(skipped.tipsAnswered).toBeUndefined();
+    expect(skipped.tipHeight).toBeUndefined();
+
+    // a checkpoint returns above the phase entirely
+    const checkpointed = await makeHeaderTrust({ esploras: [], minConfirmations: 6 })(HEADER, HEIGHT);
+    expect(checkpointed.checkpointHit).toBe(true);
+    expect(checkpointed.tipsQueried).toBeUndefined();
+  });
+
+  it('refuses a depth that is not a whole number of blocks', async () => {
+    // the same reach as the minAgreement guard: Number(process.env.X) is NaN,
+    // NaN is falsy, and the whole phase was skipped for a caller who asked
+    // for a floor
+    expect(() => makeHeaderTrust({ minConfirmations: Number.NaN })).toThrow(HeaderTrustError);
+    expect(() => makeHeaderTrust({ minConfirmations: Number.NaN })).toThrow(
+      /minConfirmations NaN is not a whole number of blocks/,
+    );
+    expect(() => makeHeaderTrust({ minConfirmations: -1 })).toThrow(/pass an integer of 0 or more/);
+    expect(() => makeHeaderTrust({ minConfirmations: 6.5 })).toThrow(
+      /minConfirmations 6.5 is not a whole number/,
+    );
+    // 0 is the documented way to enforce no depth, and the default stands
+    expect(() => makeHeaderTrust({ minConfirmations: 0 })).not.toThrow();
+    expect(() => makeHeaderTrust({})).not.toThrow();
+  });
+
+  it('queries no tip at all for a depth of zero', async () => {
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [builder(), noTip('https://h1.test'), noTip('https://h2.test')],
+      minConfirmations: 0,
+    });
+    const report = await trust(HEADER, HEIGHT);
+    expect(report.anchored).toBe(true);
+    expect(report.tipsQueried).toBeUndefined();
+  });
 
   it('checkpoint hit anchors without any live source', async () => {
     const trust = makeHeaderTrust({ esploras: [] });

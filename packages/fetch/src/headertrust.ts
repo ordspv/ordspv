@@ -61,7 +61,13 @@ export interface HeaderTrustOptions {
    */
   minAgreement?: number;
   checkpoints?: ReadonlyMap<number, string>;
-  /** require this many confirmations on top of the proof's block (0 = skip) */
+  /**
+   * Require this many confirmations on top of the proof's block (0 = skip).
+   * A whole number of blocks, validated at construction for the reason
+   * `minAgreement` is: the reach is `Number(process.env.X)`, `NaN` is falsy,
+   * and a falsy depth skipped the phase entirely, so a caller that asked for
+   * a floor got no tip query at all and no field in the report to say so.
+   */
   minConfirmations?: number;
   /**
    * baseUrl of the backend that produced the proof being anchored. Its
@@ -112,11 +118,35 @@ export interface HeaderTrustReport {
    */
   attests: HeaderAttestation;
   tipHeight?: number;
+  /**
+   * Attesters asked for a tip height. Absent when no confirmation depth was
+   * enforced, which is a different fact from a depth enforced against zero
+   * answers and is why these are absent rather than 0 on the arms that never
+   * reach the phase.
+   */
+  tipsQueried?: number;
+  /** attesters that answered a tip height this check could read as a height */
+  tipsAnswered?: number;
   /** set when the anchor was a locally validated header chain (headersync) */
   anchoredBySync?: boolean;
 }
 
 export class HeaderTrustError extends Error {}
+
+/**
+ * A tip height an attester actually stated, or undefined for an answer that is
+ * no height. `Number` reads '' as 0, which presented an empty response as
+ * height zero and blamed confirmation depth for a malformed answer, and reads
+ * anything else unparseable as NaN. NaN then travels: the sort comparator
+ * returns NaN, `Array.prototype.sort` leaves the pair it cannot order where it
+ * found it, and whether the garbage landed on the midpoint depended on which
+ * attester answered first. Both answers are dropped here instead.
+ */
+function tipHeightFrom(text: string): number | undefined {
+  if (!/^[0-9]+$/.test(text)) return undefined;
+  const height = Number(text);
+  return Number.isSafeInteger(height) ? height : undefined;
+}
 
 /**
  * Adapt a checkpoint set into the synchronous core `trustHeader` hook, for
@@ -162,8 +192,21 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
         `pass an integer of 1 or more, and pair 1 with checkpoints or a synced chain`,
     );
   }
+  // the same guard for the same reach. A depth is a count of blocks, so a
+  // fractional one is compared against and printed, and a negative one passes
+  // every comparison it is put to
+  if (
+    options.minConfirmations !== undefined &&
+    (!Number.isInteger(options.minConfirmations) || options.minConfirmations < 0)
+  ) {
+    throw new HeaderTrustError(
+      `minConfirmations ${options.minConfirmations} is not a whole number of blocks; ` +
+        `pass an integer of 0 or more, where 0 enforces no depth`,
+    );
+  }
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
   const esploras = options.esploras ?? [];
+  const minConfirmations = options.minConfirmations ?? 0;
   const powLimitBits = options.powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
   // compared in canonical form: a case variant of a serving endpoint is the
   // same server, and must not pass as an outside attester
@@ -233,20 +276,33 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
     // Phase (b): tip heights, queried only when a confirmation depth is
     // actually enforced.
     let tipHeight: number | undefined;
-    if (options.minConfirmations) {
+    let tipsQueried: number | undefined;
+    let tipsAnswered: number | undefined;
+    if (minConfirmations > 0) {
       const tipResults = await Promise.allSettled(
-        attesters.map(async (e) => Number((await e.getTipHeight()).trim())),
+        attesters.map(async (e) => (await e.getTipHeight()).trim()),
       );
       const tips = tipResults
-        .filter((r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled')
-        .map((r) => r.value)
+        .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
+        .map((r) => tipHeightFrom(r.value))
+        .filter((h): h is number => h !== undefined)
         .sort((a, b) => a - b);
-      tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : undefined;
-      if (tipHeight !== undefined) {
-        const confs = tipHeight - height + 1;
-        if (confs < options.minConfirmations) {
-          throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
-        }
+      tipsQueried = attesters.length;
+      tipsAnswered = tips.length;
+      // a depth the caller asked for is enforced or refused, never skipped.
+      // Every tip query failing used to leave tipHeight undefined and return
+      // anchored, so the floor went unenforced and the report said nothing
+      if (tips.length === 0) {
+        throw new HeaderTrustError(
+          `confirmation depth ${minConfirmations} was requested and no attester stated a usable tip height ` +
+            `(${tipsQueried} queried, 0 answered). Pass --anchor-source with endpoints that serve ` +
+            `/blocks/tip/height, or drop the depth requirement.`,
+        );
+      }
+      tipHeight = tips[Math.floor(tips.length / 2)];
+      const confs = tipHeight - height + 1;
+      if (confs < minConfirmations) {
+        throw new HeaderTrustError(`only ${confs} confirmations, need ${minConfirmations}`);
       }
     }
     return {
@@ -257,6 +313,8 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
       builderIsSource,
       anchored: true,
       tipHeight,
+      tipsQueried,
+      tipsAnswered,
       // every agreeing attester answered /block-height/<n> with this hash, so
       // the agreement is a hash-at-height attestation
       attests: 'hash-at-height',
