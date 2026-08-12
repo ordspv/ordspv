@@ -95,6 +95,25 @@ describe('gateway', () => {
     expect(verified.inscription.contentType).toBe('image/png');
   });
 
+  it('binds the relayed bundle to the id the request named, case folded', async () => {
+    // The gateway now hands the requested id to verifyProofBundle, so a
+    // backend answering with a bundle for another inscription is refused
+    // before the relay. No such answer is reachable through buildProofBundle,
+    // which stamps the requested id into the bundle it returns, so what this
+    // pins is that the binding compares parsed ids rather than raw strings: an
+    // id that arrived case folded must still match the lowercase form the
+    // builder writes, and a naive string comparison would 502 here
+    const folded = `${REVEAL.toUpperCase()}i0`;
+    const res = await fetch(`${base}/ord/v1/proof/${folded}?level=l2`);
+    expect(res.status).toBe(200);
+    // a distinct cache key, so this answer came through the build and the
+    // verification rather than out of the entry the lowercase request left
+    expect(res.headers.get('x-cache')).not.toBe('HIT');
+    const bundle = (await res.json()) as ProofBundleJson;
+    expect(bundle.inscriptionId).toBe(INSC0);
+    expect(verifyProofBundle(bundle).inscription.contentType).toBe('image/png');
+  });
+
   it('verify mode serves /content only after verification, with attestation headers', async () => {
     const res = await fetch(`${base}/content/${INSC0}`);
     expect(res.status).toBe(200);

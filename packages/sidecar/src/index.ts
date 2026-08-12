@@ -283,8 +283,12 @@ export function createSidecar(options: SidecarOptions): Server {
       }
       try {
         const bundle = await buildProofBundle(backend, parseInscriptionId(id), level);
-        // never relay a bundle we cannot verify
-        verifyProofBundle(bundle, { powLimitBits: options.powLimitBits });
+        // never relay a bundle we cannot verify, and never relay one that
+        // verifies for an inscription other than the one this request named
+        verifyProofBundle(bundle, {
+          powLimitBits: options.powLimitBits,
+          expectedInscriptionId: id,
+        });
         const body = new TextEncoder().encode(JSON.stringify(bundle));
         const headers = {
           'access-control-allow-origin': '*',

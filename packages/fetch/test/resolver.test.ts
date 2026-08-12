@@ -102,6 +102,19 @@ describe('OrdResolver L2 against real inscription 0 (stubbed transport)', () => 
     ).rejects.toMatchObject({ code: 'INTEGRITY' });
   });
 
+  it('binds the verified bundle to the id the resolve was asked for', async () => {
+    // the resolver names the requested id when it verifies, so a bundle for
+    // another inscription is refused rather than read back out of the document.
+    // buildProofBundle stamps the requested id, so no backend can produce that
+    // bundle here; what a case-folded id pins is that the binding compares
+    // parsed ids, since the URI keeps the caller's spelling and the builder
+    // writes the normalized one
+    const folded = `ord:${REVEAL.toUpperCase()}i0`;
+    const result = await resolver.resolve(folded);
+    expect(result.body.length).toBe(793);
+    expect(result.uri.idString).toBe(INSC0);
+  });
+
   it('detects a corrupted reveal tx from a malicious backend', async () => {
     const routes = insc0Routes();
     const tampered = read('reveal.hex').replace('89504e47', '89504e48'); // flip a content byte

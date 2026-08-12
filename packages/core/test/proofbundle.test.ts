@@ -438,4 +438,71 @@ describe('L2 proof bundles (tapscript commitment)', () => {
     expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).not.toThrow(/not present/);
     expect(() => verifyProofBundle(bundle, NO_POW_FLOOR)).toThrow();
   });
+
+  describe('the expected inscription id', () => {
+    // every other check in the verifier reads bundle.inscriptionId as the
+    // inscription under proof. Nothing in the document can say whether that is
+    // the inscription the caller asked for, so the caller says it
+    const setup = () => l2Setup().bundle;
+
+    it('passes when it matches, whatever case it arrives in', () => {
+      const bundle = setup();
+      expect(
+        verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: bundle.inscriptionId }).level,
+      ).toBe('L2');
+      // an id that survived URI authority case folding is the same id
+      expect(
+        verifyProofBundle(bundle, {
+          ...NO_POW_FLOOR,
+          expectedInscriptionId: bundle.inscriptionId.toUpperCase().replace('I', 'i'),
+        }).inscriptionId,
+      ).toBe(bundle.inscriptionId);
+    });
+
+    it('refuses a bundle that verifies for a different inscription', () => {
+      // the substitution this closes: a well-formed bundle, internally
+      // consistent, proving an inscription nobody asked for
+      const bundle = setup();
+      const other = `${'ab'.repeat(32)}i0`;
+      expect(() => verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: other })).toThrow(
+        /caller asked for/,
+      );
+      expect(() => verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: other })).toThrow(
+        bundle.inscriptionId,
+      );
+    });
+
+    it('refuses a matching txid at another envelope index', () => {
+      const bundle = setup();
+      const sameTxOtherIndex = bundle.inscriptionId.replace(/i0$/, 'i1');
+      expect(() =>
+        verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: sameTxOtherIndex }),
+      ).toThrow(/caller asked for/);
+    });
+
+    it('names the caller argument when the caller argument is the malformed one', () => {
+      const bundle = setup();
+      expect(() => verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: 'nonsense' })).toThrow(
+        /expectedInscriptionId: invalid inscription id/,
+      );
+    });
+
+    it('is refused before any of the bundle evidence is read', () => {
+      // a bundle for another inscription is the wrong document, and saying so
+      // must not depend on which of its own checks it would have failed
+      const bundle = setup();
+      bundle.block.header = 'not hex';
+      expect(() =>
+        verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: `${'ab'.repeat(32)}i0` }),
+      ).toThrow(/caller asked for/);
+    });
+
+    it('changes nothing when it is omitted', () => {
+      const bundle = setup();
+      const withOption = verifyProofBundle(bundle, { ...NO_POW_FLOOR, expectedInscriptionId: undefined });
+      const without = verifyProofBundle(bundle, NO_POW_FLOOR);
+      expect(withOption.inscriptionId).toBe(without.inscriptionId);
+      expect(withOption.level).toBe(without.level);
+    });
+  });
 });

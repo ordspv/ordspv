@@ -8,7 +8,7 @@ import {
   type BlockHeader,
   type HeaderAttestation,
 } from './header.js';
-import { parseInscriptionId } from './inscriptionId.js';
+import { formatInscriptionId, parseInscriptionId, type InscriptionId } from './inscriptionId.js';
 import { treeHeight, verifyMerkleBranch } from './merkle.js';
 import { extractTapscript, parseControlBlock, verifyScriptPathCommitment } from './taproot.js';
 import { parseTx, type ParsedTx } from './tx.js';
@@ -111,6 +111,40 @@ export interface VerifyOptions {
    * (0x1d00ffff); pass another chain's limit, or null to disable it.
    */
   powLimitBits?: number | null;
+  /**
+   * The inscription id the caller asked for. A bundle names the inscription it
+   * proves, and every other check in this function reads that claim rather
+   * than testing it, so a verification that omits this option establishes that
+   * the bundle is internally consistent and establishes nothing about whose
+   * inscription it is. A caller that fetched the bundle for a particular id
+   * supplies it here and the mismatch is refused; a caller inspecting a bundle
+   * it did not request leaves it out. Case is normalized before the
+   * comparison, so an id that survived URI case folding still matches.
+   */
+  expectedInscriptionId?: string;
+}
+
+/**
+ * Bind a bundle's own claim to what the caller asked for. The check runs
+ * before any of the bundle's evidence is read, so a bundle for another
+ * inscription is refused as the wrong document rather than reported through
+ * whichever later check its contents happen to fail.
+ */
+function checkExpectedId(id: InscriptionId, expected: string | undefined, claimed: string): void {
+  if (expected === undefined) return;
+  let wanted: InscriptionId;
+  try {
+    wanted = parseInscriptionId(expected);
+  } catch (e) {
+    // the caller's own argument, so it names itself rather than reading as a
+    // defect in the document under verification
+    throw new Error(`expectedInscriptionId: ${(e as Error).message}`);
+  }
+  if (wanted.txid !== id.txid || wanted.index !== id.index) {
+    throw new Error(
+      `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`,
+    );
+  }
 }
 
 function parseHexTx(hex: string, label: string): ParsedTx {
@@ -146,6 +180,7 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
     throw new Error('bundle field reveal is missing or not an object');
   }
   const id = parseInscriptionId(bundle.inscriptionId);
+  checkExpectedId(id, opts.expectedInscriptionId, bundle.inscriptionId);
 
   // ---- header ----
   if (typeof bundle.block.header !== 'string') {

@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import {
   BUNDLE_HEADERS_UNANCHORED,
   HEIGHT_IS_A_CLAIM,
+  inscriptionIdError,
   L2_EXECUTED_LEAF_RESIDUAL,
   verifyCustodyBundle,
   verifyProofBundle,
@@ -127,6 +128,7 @@ const VALUE_FLAGS = new Set([
   'bundle',
   'verify',
   'out',
+  'expect-id',
 ]);
 
 /**
@@ -150,6 +152,7 @@ const FLAG_COMMANDS: Record<string, readonly string[]> = {
   'bundle': ['custody', 'sat'],
   'verify': ['resolve'],
   'out': ['resolve'],
+  'expect-id': ['verify'],
 };
 
 /** Commands with their own dispatch arm; any other first token resolves. */
@@ -232,7 +235,7 @@ async function main(): Promise<void> {
         'usage:',
         '  ord-resolve <uri> [--verify none|L1|L2|L3] [--out FILE] [--json]',
         '  ord-resolve proof <inscription-id> [--level L2|L3]',
-        '  ord-resolve verify <bundle.json> [--json] [--max-steps N]',
+        '  ord-resolve verify <bundle.json> [--json] [--max-steps N] [--expect-id ID]',
         '                                              proof, custody or sat genealogy',
         '      a successful verify prints its JSON report whether or not --json is',
         '      passed; the flag controls the failure channel',
@@ -247,6 +250,9 @@ async function main(): Promise<void> {
         '      verifier reads a genealogy bundle under',
         '  --max-hops N    confirmed transfers the custody walk follows (custody only;',
         '      the custody verifier reads no cap)',
+        '  --expect-id ID  the inscription the bundle must prove (verify, proof bundles);',
+        '      without it a verification says the document is self-consistent and says',
+        '      nothing about whose inscription it is',
         '  --timeout-ms N  whole-request deadline in milliseconds for each backend',
         '      request; a failing request is retried up to 4 times, each attempt under',
         '      its own deadline (proof, custody, sat, resolve)',
@@ -494,6 +500,19 @@ async function main(): Promise<void> {
         fail('verify: --max-steps must be a positive integer', 2);
       }
     }
+    // the id the caller asked for, which the document itself cannot supply.
+    // Only the proof verifier takes it; the other two bundle kinds read their
+    // own claim the same way and refusing here is the honest answer until they
+    // take one too, since a flag accepted in silence tells the caller it bound
+    // something
+    const expectId = str(flags.get('expect-id'));
+    if (expectId !== undefined) {
+      if (kind !== 'proof') {
+        fail(`verify: --expect-id applies to proof bundles, this is a ${kind} bundle`, 2);
+      }
+      const badId = inscriptionIdError(expectId);
+      if (badId) fail(`verify: --expect-id ${badId}`, 2);
+    }
     const anchorNote =
       `header PoW verified; anchor the block hash against your own chain view; ` +
       `${HEIGHT_CLAIM}`;
@@ -572,7 +591,10 @@ async function main(): Promise<void> {
         console.error(BUNDLE_HEADERS_UNANCHORED);
         return;
       }
-      const result = verifyProofBundle(parsed as ProofBundleJson, { trustHeader });
+      const result = verifyProofBundle(parsed as ProofBundleJson, {
+        trustHeader,
+        expectedInscriptionId: expectId,
+      });
       // below L3 the content path carries the same executed-leaf residual the
       // other two branches print, and a multi-input reveal there is the one
       // case a gateway can renumber without the inscriber

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,6 +59,67 @@ describe('--max-steps placement', () => {
     const r = run(['custody', ID, ...OFFLINE, '--max-steps', '10']);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/--max-steps applies to the sat and verify commands/);
+  });
+});
+
+describe('--expect-id', { timeout: 60_000 }, () => {
+  /**
+   * `verify` reads a document the caller did not build, which makes it the one
+   * command where a bundle can name an inscription nobody asked for. The
+   * gateway, the sidecar and the resolver all hand the same id to the builder
+   * and to the verifier, so the check cannot fire there; here it can.
+   */
+  const BUNDLE = join(EXT, `${ID}.bundle.json`);
+  const OTHER = '52b4ea10c2518c954c73594e403ccfb2d50044f5a3b09a224dfa3bf06dd1d499i0';
+
+  it('verifies when the bundle proves the id the caller named', () => {
+    const r = spawnSync('npx', ['tsx', MAIN, 'verify', BUNDLE, '--expect-id', ID], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).inscriptionId).toBe(ID);
+  });
+
+  it('refuses a bundle that verifies for a different inscription', () => {
+    // the substituted-document case: this bundle is internally sound and
+    // proves the wrong inscription, which is INVALID rather than a usage error
+    const r = run(['verify', BUNDLE, '--expect-id', OTHER]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/caller asked for/);
+    expect(r.stderr).toContain(ID);
+    expect(r.stderr).toContain(OTHER);
+  });
+
+  it('refuses an id that is no id at all before reading the bundle', () => {
+    const r = run(['verify', BUNDLE, '--expect-id', 'not-an-id']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--expect-id invalid inscription id/);
+  });
+
+  it('refuses a bundle kind whose verifier does not take one', () => {
+    // the other two verifiers read their own claim the same way, so accepting
+    // the flag there would tell the caller it bound something it did not
+    const custody = join(mkdtempSync(join(tmpdir(), 'ord-expect-')), 'custody.json');
+    writeFileSync(
+      custody,
+      JSON.stringify({ version: 1, inscriptionId: ID, hops: [], finalSatpoint: `${ID.slice(0, 64)}:0:0` }),
+    );
+    const r = run(['verify', custody, '--expect-id', ID]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--expect-id applies to proof bundles, this is a custody bundle/);
+  });
+
+  it('is refused on every command that verifies nothing', () => {
+    const r = run(['custody', ID, ...OFFLINE, '--expect-id', ID]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--expect-id applies to the verify command/);
+  });
+
+  it('refuses an empty value rather than binding nothing', () => {
+    const r = run(['verify', BUNDLE, '--expect-id', '']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--expect-id needs a value/);
   });
 });
 

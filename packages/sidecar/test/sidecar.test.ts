@@ -135,6 +135,19 @@ describe('CoreRpcBackend + sidecar service (stubbed Core RPC)', () => {
     expect(new TextDecoder().decode(verified.inscription.body)).toBe('sidecar proof');
   });
 
+  it('binds the relayed bundle to the id the request named, case folded', async () => {
+    // the sidecar hands the requested id to verifyProofBundle, and the id can
+    // arrive in any case. buildProofBundle stamps the normalized form, so this
+    // is the arrangement where a raw-string binding would refuse a bundle that
+    // is exactly right
+    const folded = `${inscriptionId.slice(0, 64).toUpperCase()}i0`;
+    const res = await fetch(`${base}/ord/v1/proof/${folded}?level=l2`);
+    expect(res.status).toBe(200);
+    const bundle = (await res.json()) as ProofBundleJson;
+    expect(bundle.inscriptionId).toBe(inscriptionId);
+    expect(verifyProofBundle(bundle, NO_POW_FLOOR).height).toBe(height);
+  });
+
   it('rejects malformed ids and 404s unknown inscriptions', async () => {
     expect((await fetch(`${base}/ord/v1/proof/zzz`)).status).toBe(400);
     const unknown = `${'ab'.repeat(32)}i0`;

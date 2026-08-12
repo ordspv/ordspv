@@ -390,8 +390,14 @@ export function createGateway(options: GatewayOptions = {}): Server {
         const bundle = await tryBackends(esploras, (e) => buildProofBundle(e, parsed, wanted));
         // never relay a bundle we cannot verify (SPEC-GATEWAY §3). This sits
         // above sendCached, so a bundle that fails here also never enters the
-        // LRU that would serve it to every later caller.
-        verifyProofBundle(bundle, { powLimitBits: options.powLimitBits });
+        // LRU that would serve it to every later caller. The requested id is
+        // named, so a backend that answers with a well-formed bundle for a
+        // different inscription is refused here rather than relayed under the
+        // caller's id and cached under the caller's key
+        verifyProofBundle(bundle, {
+          powLimitBits: options.powLimitBits,
+          expectedInscriptionId: id,
+        });
         return sendCached(res, cacheKey, new TextEncoder().encode(JSON.stringify(bundle)), {
           'content-type': 'application/vnd.ord.proof+json; version=1',
           'cache-control': IMMUTABLE,

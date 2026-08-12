@@ -211,7 +211,13 @@ export class OrdResolver {
     );
     let verified: VerifiedInscription;
     try {
-      verified = verifyProofBundle(bundle, { powLimitBits: this.options.powLimitBits });
+      // the backend is an untrusted pathfinder, so the id this resolve was
+      // asked for is named here rather than read back out of the bundle it
+      // returned
+      verified = verifyProofBundle(bundle, {
+        powLimitBits: this.options.powLimitBits,
+        expectedInscriptionId: parsed.idString,
+      });
     } catch (e) {
       throw new OrdResolveError('VERIFY_FAILED', (e as Error).message);
     }
