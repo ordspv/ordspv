@@ -97,17 +97,46 @@ describe('--expect-id', { timeout: 60_000 }, () => {
     expect(r.stderr).toMatch(/--expect-id invalid inscription id/);
   });
 
-  it('refuses a bundle kind whose verifier does not take one', () => {
-    // the other two verifiers read their own claim the same way, so accepting
-    // the flag there would tell the caller it bound something it did not
-    const custody = join(mkdtempSync(join(tmpdir(), 'ord-expect-')), 'custody.json');
-    writeFileSync(
-      custody,
-      JSON.stringify({ version: 1, inscriptionId: ID, hops: [], finalSatpoint: `${ID.slice(0, 64)}:0:0` }),
-    );
-    const r = run(['verify', custody, '--expect-id', ID]);
-    expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/--expect-id applies to proof bundles, this is a custody bundle/);
+  /**
+   * A file the other two verifiers classify and then refuse for its own
+   * reasons. What is asserted is where the expectation sits relative to those
+   * reasons: a mismatch reports the wrong document, and a match falls through
+   * to whatever the document's own contents fail on, which is the ordering the
+   * check exists for. Building a whole custody or genealogy bundle here would
+   * assert nothing further.
+   */
+  const stub = (name: string, body: Record<string, unknown>): string => {
+    const path = join(mkdtempSync(join(tmpdir(), 'ord-expect-')), name);
+    writeFileSync(path, JSON.stringify({ version: 1, inscriptionId: ID, ...body }));
+    return path;
+  };
+
+  it('binds a custody bundle to the id the caller named', () => {
+    const custody = stub('custody.json', { hops: [], finalSatpoint: `${ID.slice(0, 64)}:0:0` });
+    const mismatched = run(['verify', custody, '--expect-id', OTHER]);
+    expect(mismatched.status).toBe(1);
+    expect(mismatched.stderr).toMatch(/caller asked for/);
+    expect(mismatched.stderr).toContain(OTHER);
+    // matching, so the bundle's own emptiness is what it fails on
+    const matched = run(['verify', custody, '--expect-id', ID]);
+    expect(matched.status).toBe(1);
+    expect(matched.stderr).toMatch(/custody bundle has no hops/);
+  });
+
+  it('binds a sat genealogy bundle to the id the caller named', () => {
+    const genealogy = stub('genealogy.json', {
+      claimedSat: '0',
+      reveal: {},
+      coinbase: {},
+      funding: [],
+    });
+    const mismatched = run(['verify', genealogy, '--expect-id', OTHER]);
+    expect(mismatched.status).toBe(1);
+    expect(mismatched.stderr).toMatch(/caller asked for/);
+    expect(mismatched.stderr).toContain(OTHER);
+    const matched = run(['verify', genealogy, '--expect-id', ID]);
+    expect(matched.status).toBe(1);
+    expect(matched.stderr).not.toMatch(/caller asked for/);
   });
 
   it('is refused on every command that verifies nothing', () => {

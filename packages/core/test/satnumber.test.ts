@@ -333,6 +333,65 @@ describe('verifySatGenealogy', () => {
     );
   });
 
+  /**
+   * The document names the inscription it traces, and every other check reads
+   * that claim rather than testing it, so a verification given no expectation
+   * says the bundle is self-consistent and says nothing about whose
+   * inscription it traced.
+   */
+  describe('the expected inscription id', () => {
+    it('passes when it matches, whatever case it arrives in', () => {
+      const b = bundle();
+      expect(
+        verifySatGenealogy(b, { ...FIXTURE_OPTS, expectedInscriptionId: b.inscriptionId }).sat,
+      ).toBe(firstSatOfBlock(1000) + 3_000_000_000n);
+      // an id that survived URI authority case folding is the same id
+      expect(
+        verifySatGenealogy(b, {
+          ...FIXTURE_OPTS,
+          expectedInscriptionId: b.inscriptionId.toUpperCase().replace('I', 'i'),
+        }).inscriptionId,
+      ).toBe(b.inscriptionId);
+    });
+
+    it('refuses a bundle that traces a different inscription', () => {
+      const b = bundle();
+      const other = `${'ab'.repeat(32)}i0`;
+      expect(() =>
+        verifySatGenealogy(b, { ...FIXTURE_OPTS, expectedInscriptionId: other }),
+      ).toThrow(/caller asked for/);
+      expect(() =>
+        verifySatGenealogy(b, { ...FIXTURE_OPTS, expectedInscriptionId: other }),
+      ).toThrow(b.inscriptionId);
+      // the same txid at another envelope index is another inscription
+      expect(() =>
+        verifySatGenealogy(b, {
+          ...FIXTURE_OPTS,
+          expectedInscriptionId: b.inscriptionId.replace(/i0$/, 'i1'),
+        }),
+      ).toThrow(/caller asked for/);
+    });
+
+    it('is read above the step cap and above the bundle evidence', () => {
+      // a bundle for another inscription is the wrong document, so refusing
+      // it as one too deep to read would name the wrong problem
+      const b = bundle();
+      expect(() =>
+        verifySatGenealogy(b, {
+          ...FIXTURE_OPTS,
+          maxSteps: 1,
+          expectedInscriptionId: `${'ab'.repeat(32)}i0`,
+        }),
+      ).toThrow(/caller asked for/);
+    });
+
+    it('names the caller argument when the caller argument is the malformed one', () => {
+      expect(() =>
+        verifySatGenealogy(bundle(), { ...FIXTURE_OPTS, expectedInscriptionId: 'nonsense' }),
+      ).toThrow(/expectedInscriptionId: invalid inscription id/);
+    });
+  });
+
   it('verifies a full synthetic genealogy to the coinbase', () => {
     const res = verifySatGenealogy(bundle(), FIXTURE_OPTS);
     expect(res.sat).toBe(firstSatOfBlock(1000) + 3_000_000_000n);

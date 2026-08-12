@@ -340,6 +340,57 @@ describe('verifyCustodyBundle', () => {
     expect(res.height).toBe(expected.blockHeight);
   });
 
+  /**
+   * The document names the inscription whose custody it walks, and every
+   * other check reads that claim rather than testing it, so a verification
+   * given no expectation says the bundle is self-consistent and says nothing
+   * about whose inscription it walked.
+   */
+  describe('the expected inscription id', () => {
+    it('passes when it matches, whatever case it arrives in', () => {
+      const b = singleHopBundle();
+      expect(verifyCustodyBundle(b, { expectedInscriptionId: b.inscriptionId }).hops).toBe(1);
+      // an id that survived URI authority case folding is the same id
+      expect(
+        verifyCustodyBundle(b, {
+          expectedInscriptionId: b.inscriptionId.toUpperCase().replace('I', 'i'),
+        }).inscriptionId,
+      ).toBe(b.inscriptionId);
+    });
+
+    it('refuses a bundle that proves a different inscription', () => {
+      const b = singleHopBundle();
+      const other = `${'ab'.repeat(32)}i0`;
+      expect(() => verifyCustodyBundle(b, { expectedInscriptionId: other })).toThrow(
+        /caller asked for/,
+      );
+      expect(() => verifyCustodyBundle(b, { expectedInscriptionId: other })).toThrow(
+        b.inscriptionId,
+      );
+      // the same txid at another envelope index is another inscription
+      expect(() =>
+        verifyCustodyBundle(b, { expectedInscriptionId: b.inscriptionId.replace(/i0$/, 'i1') }),
+      ).toThrow(/caller asked for/);
+    });
+
+    it('is read above the bundle evidence', () => {
+      // an empty hop list is the document's own defect, and a bundle for
+      // another inscription is the wrong document; the wrong document wins
+      const b = singleHopBundle();
+      b.hops = [];
+      expect(() =>
+        verifyCustodyBundle(b, { expectedInscriptionId: `${'ab'.repeat(32)}i0` }),
+      ).toThrow(/caller asked for/);
+      expect(() => verifyCustodyBundle(b)).toThrow(/custody bundle has no hops/);
+    });
+
+    it('names the caller argument when the caller argument is the malformed one', () => {
+      expect(() =>
+        verifyCustodyBundle(singleHopBundle(), { expectedInscriptionId: 'nonsense' }),
+      ).toThrow(/expectedInscriptionId: invalid inscription id/);
+    });
+  });
+
   it('rejects a wrong claimed final satpoint', () => {
     const b = singleHopBundle();
     b.finalSatpoint = `${expected.revealTxid}:0:1`;

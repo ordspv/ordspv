@@ -21,7 +21,7 @@
 
 import { ParsedTx, parseTx } from './tx.js';
 import { inscriptionsFromTx } from './envelope.js';
-import { parseInscriptionId } from './inscriptionId.js';
+import { checkExpectedInscriptionId, parseInscriptionId } from './inscriptionId.js';
 import { hexToBytes } from './bytes.js';
 import { parseHeader } from './header.js';
 import { verifyWitnessAnchoring, type WitnessSectionJson } from './witnesscommit.js';
@@ -367,6 +367,10 @@ export function verifySatGenealogy(
   }
   const maxSteps = opts.maxSteps ?? 10_000;
   const id = parseInscriptionId(bundle.inscriptionId);
+  // above every read of the bundle's own evidence, the step cap included: a
+  // bundle for another inscription is the wrong document, and refusing it as
+  // one too deep to read would name the wrong problem
+  checkExpectedInscriptionId(id, opts.expectedInscriptionId, bundle.inscriptionId);
   if (!Array.isArray(bundle.funding)) throw new Error('genealogy bundle missing funding array');
   if (bundle.funding.length > maxSteps) {
     // a refusal to read, not a claim that the bundle is forged: a genuinely

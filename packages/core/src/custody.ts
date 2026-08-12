@@ -32,7 +32,7 @@
 
 import { ParsedTx, parseTx } from './tx.js';
 import { Inscription, inscriptionsFromTx } from './envelope.js';
-import { parseInscriptionId } from './inscriptionId.js';
+import { checkExpectedInscriptionId, parseInscriptionId } from './inscriptionId.js';
 import {
   parseHeader,
   checkProofOfWork,
@@ -477,6 +477,20 @@ export interface CustodyVerifyOptions {
    * pass another chain's limit, or null to disable it.
    */
   powLimitBits?: number | null;
+  /**
+   * The inscription id the caller asked for, read by `verifyCustodyBundle` and
+   * by `verifySatGenealogy`, which inherits these options. A bundle names the
+   * inscription it proves, and every other check reads that claim rather than
+   * testing it, so a verification that omits this option establishes that the
+   * bundle is internally consistent and establishes nothing about whose
+   * inscription it is. A caller that fetched the bundle for a particular id
+   * supplies it here and the mismatch is refused; a caller inspecting a bundle
+   * it did not request leaves it out. Case is normalized before the
+   * comparison, so an id that survived URI case folding still matches.
+   * `verifyAnchoredHop` takes these options too and ignores this one: a hop
+   * carries no claim of its own to bind.
+   */
+  expectedInscriptionId?: string;
 }
 
 export interface VerifiedCustody {
@@ -613,6 +627,10 @@ export function verifyCustodyBundle(
     throw new Error('bundle field inscriptionId is missing or not a string');
   }
   const id = parseInscriptionId(bundle.inscriptionId);
+  // above every read of the bundle's own evidence, so a bundle for another
+  // inscription is the wrong document rather than whichever later check its
+  // hops happen to fail
+  checkExpectedInscriptionId(id, opts.expectedInscriptionId, bundle.inscriptionId);
   if (!Array.isArray(bundle.hops) || bundle.hops.length === 0) {
     throw new Error('custody bundle has no hops');
   }

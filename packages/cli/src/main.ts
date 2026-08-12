@@ -250,9 +250,9 @@ async function main(): Promise<void> {
         '      verifier reads a genealogy bundle under',
         '  --max-hops N    confirmed transfers the custody walk follows (custody only;',
         '      the custody verifier reads no cap)',
-        '  --expect-id ID  the inscription the bundle must prove (verify, proof bundles);',
-        '      without it a verification says the document is self-consistent and says',
-        '      nothing about whose inscription it is',
+        '  --expect-id ID  the inscription the bundle must prove (verify, all three',
+        '      bundle kinds); without it a verification says the document is',
+        '      self-consistent and says nothing about whose inscription it is',
         '  --timeout-ms N  whole-request deadline in milliseconds for each backend',
         '      request; a failing request is retried up to 4 times, each attempt under',
         '      its own deadline (proof, custody, sat, resolve)',
@@ -501,15 +501,11 @@ async function main(): Promise<void> {
       }
     }
     // the id the caller asked for, which the document itself cannot supply.
-    // Only the proof verifier takes it; the other two bundle kinds read their
-    // own claim the same way and refusing here is the honest answer until they
-    // take one too, since a flag accepted in silence tells the caller it bound
-    // something
+    // All three verifiers take it, so the flag binds whichever kind the file
+    // turned out to be; a malformed argument is the caller's own and is
+    // refused as usage before any bundle is read
     const expectId = str(flags.get('expect-id'));
     if (expectId !== undefined) {
-      if (kind !== 'proof') {
-        fail(`verify: --expect-id applies to proof bundles, this is a ${kind} bundle`, 2);
-      }
       const badId = inscriptionIdError(expectId);
       if (badId) fail(`verify: --expect-id ${badId}`, 2);
     }
@@ -528,7 +524,11 @@ async function main(): Promise<void> {
     try {
       if (kind === 'genealogy') {
         const bundle = parsed as SatGenealogyBundleJson;
-        const result = verifySatGenealogy(bundle, { maxSteps: verifyMaxSteps, trustHeader });
+        const result = verifySatGenealogy(bundle, {
+          maxSteps: verifyMaxSteps,
+          trustHeader,
+          expectedInscriptionId: expectId,
+        });
         console.log(
           JSON.stringify(
             {
@@ -565,7 +565,10 @@ async function main(): Promise<void> {
         return;
       }
       if (kind === 'custody') {
-        const result = verifyCustodyBundle(parsed as CustodyBundleJson, { trustHeader });
+        const result = verifyCustodyBundle(parsed as CustodyBundleJson, {
+          trustHeader,
+          expectedInscriptionId: expectId,
+        });
         console.log(
           JSON.stringify(
             {

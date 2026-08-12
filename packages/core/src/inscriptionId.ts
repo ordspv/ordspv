@@ -76,6 +76,41 @@ export function inscriptionIdError(s: string): string | undefined {
 }
 
 /**
+ * Bind a bundle's own claim to what the caller asked for, for every verifier
+ * that reads a bundle. A bundle of any kind names the inscription it proves,
+ * and each verifier's remaining checks read that claim rather than testing it,
+ * so a verification that is given no expectation establishes that the document
+ * is internally consistent and establishes nothing about whose inscription it
+ * is. Callers pass what they asked for through `expectedInscriptionId`, and
+ * each verifier calls this before any of the bundle's evidence is read, so a
+ * bundle for another inscription is refused as the wrong document rather than
+ * reported through whichever later check its contents happen to fail.
+ *
+ * `id` is the parsed form of `claimed`, so the comparison survives case
+ * folding on either side. Leaving `expected` undefined is a no-op.
+ */
+export function checkExpectedInscriptionId(
+  id: InscriptionId,
+  expected: string | undefined,
+  claimed: string,
+): void {
+  if (expected === undefined) return;
+  let wanted: InscriptionId;
+  try {
+    wanted = parseInscriptionId(expected);
+  } catch (e) {
+    // the caller's own argument, so it names itself rather than reading as a
+    // defect in the document under verification
+    throw new Error(`expectedInscriptionId: ${(e as Error).message}`);
+  }
+  if (wanted.txid !== id.txid || wanted.index !== id.index) {
+    throw new Error(
+      `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`,
+    );
+  }
+}
+
+/**
  * True when `s` has the grammar of an inscription id, whatever index it names.
  * This is a scheme detector for callers deciding which syntax they are looking
  * at, and never a validity gate: `isInscriptionId` is the gate. An out-of-range

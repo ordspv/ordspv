@@ -8,7 +8,7 @@ import {
   type BlockHeader,
   type HeaderAttestation,
 } from './header.js';
-import { formatInscriptionId, parseInscriptionId, type InscriptionId } from './inscriptionId.js';
+import { checkExpectedInscriptionId, parseInscriptionId } from './inscriptionId.js';
 import { treeHeight, verifyMerkleBranch } from './merkle.js';
 import { extractTapscript, parseControlBlock, verifyScriptPathCommitment } from './taproot.js';
 import { parseTx, type ParsedTx } from './tx.js';
@@ -124,29 +124,6 @@ export interface VerifyOptions {
   expectedInscriptionId?: string;
 }
 
-/**
- * Bind a bundle's own claim to what the caller asked for. The check runs
- * before any of the bundle's evidence is read, so a bundle for another
- * inscription is refused as the wrong document rather than reported through
- * whichever later check its contents happen to fail.
- */
-function checkExpectedId(id: InscriptionId, expected: string | undefined, claimed: string): void {
-  if (expected === undefined) return;
-  let wanted: InscriptionId;
-  try {
-    wanted = parseInscriptionId(expected);
-  } catch (e) {
-    // the caller's own argument, so it names itself rather than reading as a
-    // defect in the document under verification
-    throw new Error(`expectedInscriptionId: ${(e as Error).message}`);
-  }
-  if (wanted.txid !== id.txid || wanted.index !== id.index) {
-    throw new Error(
-      `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`,
-    );
-  }
-}
-
 function parseHexTx(hex: string, label: string): ParsedTx {
   let tx: ParsedTx;
   try {
@@ -180,7 +157,7 @@ export function verifyProofBundle(bundle: ProofBundleJson, opts: VerifyOptions =
     throw new Error('bundle field reveal is missing or not an object');
   }
   const id = parseInscriptionId(bundle.inscriptionId);
-  checkExpectedId(id, opts.expectedInscriptionId, bundle.inscriptionId);
+  checkExpectedInscriptionId(id, opts.expectedInscriptionId, bundle.inscriptionId);
 
   // ---- header ----
   if (typeof bundle.block.header !== 'string') {
