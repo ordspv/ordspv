@@ -694,6 +694,15 @@ export function headerSyncTrust(
       checkpointHit: false,
       sourcesQueried: 1,
       sourcesAgreed: 1,
+      // the synced chain is the one source and it agreed, so the other three
+      // buckets are empty. A chain that named another block at this height
+      // threw above, which is makeHeaderTrust's 'throw' behaviour reached by
+      // the only route this anchor has
+      sourcesDisagreed: 0,
+      sourcesUnreachable: 0,
+      sourcesMalformed: 0,
+      disagreements: [],
+      malformed: [],
       independentSources: 1,
       builderIsSource: false,
       anchored: true,

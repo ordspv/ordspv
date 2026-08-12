@@ -362,6 +362,26 @@ describe('headerSyncTrust as the resolver anchor (drop-in)', () => {
     await expect(trust(someHeader, 766101)).rejects.toThrow(/contradicts synced chain/);
     await expect(trust(someHeader, 766100)).resolves.toMatchObject({ anchoredBySync: true });
   });
+
+  it('reports the answer buckets so one report shape covers every anchor', async () => {
+    // the synced chain is one source and it agreed; a chain naming another
+    // block at the height threw above, which is the only way this anchor
+    // reaches a disagreement at all
+    const chain = await openMainnet();
+    chain.appendBatch(REST.slice(0, 100 * 80));
+    const report = await headerSyncTrust(chain)(chain.headerAt(766100)!, 766100);
+    expect(report.sourcesDisagreed).toBe(0);
+    expect(report.sourcesUnreachable).toBe(0);
+    expect(report.sourcesMalformed).toBe(0);
+    expect(report.disagreements).toEqual([]);
+    expect(report.malformed).toEqual([]);
+    expect(
+      report.sourcesAgreed +
+        report.sourcesDisagreed +
+        report.sourcesMalformed +
+        report.sourcesUnreachable,
+    ).toBe(report.sourcesQueried);
+  });
 });
 
 // ---------------------------------------------------------------------------

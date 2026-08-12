@@ -205,6 +205,17 @@ Composable strategies (reference: `makeHeaderTrust`):
   an outside attester, and one endpoint listed twice counts once. Implementations MUST NOT infer more than that: two
   hostnames operated by one party remain two entries, so callers are
   responsible for the operator diversity this bullet asks for.
+  An implementation MUST distinguish an attester that did not answer from one
+  that answered a well-formed block hash which is not the header's at the
+  proven height, and MUST report the two counts separately, because an
+  endpoint that is down and an endpoint asserting another chain call for
+  different responses. An implementation MUST refuse by default when any
+  attester answers a well-formed competing hash, whatever the agreeing count
+  is: such an answer claims the chain forked at that height, and an
+  implementation cannot adjudicate that. An implementation MAY offer callers
+  an explicit opt-out that records the disagreement instead of refusing, and
+  an implementation that does so MUST NOT assert hash-at-height for a height
+  it recorded a disagreement at.
 - **Header sync** (implemented: `@ordspv/fetch/headersync`, node-only subpath):
   a locally validated header chain. Electrum `blockchain.block.headers` batches are
   validated per header (linkage, PoW, exact pow.cpp retarget arithmetic,

@@ -20,7 +20,16 @@ import { normalizeBaseUrl, type EsploraBackend } from './backends.js';
  *    excluded from this attesting set and contributes no count of its own: a
  *    server vouching for the header it just served is a self-vote, whichever
  *    endpoint carries it. The count is therefore the number of agreeing
- *    outside attesters. Anchoring is FAIL-CLOSED: a height covered by neither
+ *    outside attesters. Agreement is not the only thing the answers carry:
+ *    each one lands in exactly one of four buckets, and the report states all
+ *    four. An attester agreed, or it answered a well-formed hash that is not
+ *    the header's, or it answered something that is no block hash, or it did
+ *    not answer at all. Counting agreement alone reported the last three as
+ *    one number, so an endpoint that was down and an endpoint asserting
+ *    another chain reached the caller identically. An attester that answers a
+ *    competing hash at the proven height claims the chain forked there, which
+ *    this library has no means to adjudicate, so it is refused by default
+ *    (`onDisagreement`). Anchoring is FAIL-CLOSED: a height covered by neither
  *    a checkpoint nor enough independent sources is rejected, never silently
  *    accepted.
  * 3. Header-chain sync from Electrum with local difficulty validation
@@ -70,6 +79,19 @@ export interface HeaderTrustOptions {
    */
   minConfirmations?: number;
   /**
+   * What a reachable disagreement does (default `'throw'`). An attester that
+   * answers a well-formed hash which is not the header's asserts a different
+   * block at the proven height, which is a claim that the chain forked there.
+   * This library has no means to adjudicate that, and the checkpoint arm
+   * already refuses the same shape of evidence, so a compiled-in hash and a
+   * live operator's hash are treated alike. `'flag'` records the disagreement
+   * in the report and lets the call resolve, for an operator who knows one of
+   * their endpoints lags; the anchor then withholds its attestation, so a
+   * sub-BIP34 coinbase height resting on it is refused rather than accepted
+   * on a contested pair.
+   */
+  onDisagreement?: 'throw' | 'flag';
+  /**
    * baseUrl of the backend that produced the proof being anchored. Its
    * hash-at-height answer is excluded from the attesting set so it cannot
    * vote for its own header.
@@ -92,10 +114,41 @@ export interface HeaderTrustOptions {
 
 export interface HeaderTrustReport {
   checkpointHit: boolean;
-  /** attesting sources queried (backends that served the bundle excluded) */
+  /**
+   * attesting sources queried (backends that served the bundle excluded).
+   * Equal to `sourcesAgreed + sourcesDisagreed + sourcesMalformed +
+   * sourcesUnreachable` on every arm, so every source asked is accounted for
+   * rather than dropped into the complement of the agreeing set.
+   */
   sourcesQueried: number;
   /** attesting sources whose hash-at-height matched the header */
   sourcesAgreed: number;
+  /**
+   * attesting sources that answered a well-formed block hash which was not
+   * the header's, so they assert a different block at this height. Counted
+   * apart from the sources that said nothing, because an endpoint that is
+   * down and an endpoint serving another chain are different problems with
+   * different responses.
+   */
+  sourcesDisagreed: number;
+  /** attesting sources whose query failed, so they stated nothing at all */
+  sourcesUnreachable: number;
+  /**
+   * attesting sources that answered something which is no block hash, an HTTP
+   * 200 carrying an error page being the shape that produces it. That is a
+   * broken or intercepted endpoint rather than a competing claim.
+   */
+  sourcesMalformed: number;
+  /** every disagreeing attester and the hash it served at this height */
+  disagreements: { baseUrl: string; hash: string }[];
+  /**
+   * every malformed answer's source and the character count of what it sent,
+   * measured after the same trim and case fold the comparison uses. The body
+   * itself is carried neither here nor into a message: it is attacker
+   * controlled text that would land in somebody's log, and the length already
+   * separates an empty response from an error page.
+   */
+  malformed: { baseUrl: string; length: number }[];
   /**
    * independent sources supporting the header: the agreeing attesters, none
    * of which served the bundle. 0 for checkpoint/sync anchors, which pin the
@@ -114,7 +167,10 @@ export interface HeaderTrustReport {
    * `'hash-at-height'` means this block hash was compared against a view of
    * the chain AT this height and agreed, which is what binds a sub-BIP34
    * coinbase height (see `CoinbaseHeightUnprovenError`). A caller adapting
-   * this async anchor into the core hook returns this value from it.
+   * this async anchor into the core hook returns this value from it. A
+   * disagreement recorded under `onDisagreement: 'flag'` leaves this
+   * undefined: the pair (hash, height) is what a disagreeing attester denies,
+   * so a contested pair must assert nothing.
    */
   attests: HeaderAttestation;
   tipHeight?: number;
@@ -132,6 +188,17 @@ export interface HeaderTrustReport {
 }
 
 export class HeaderTrustError extends Error {}
+
+/**
+ * An attester answered a well-formed block hash that is not the header's at
+ * the proven height. It subclasses `HeaderTrustError` so that a caller
+ * already catching that class keeps working, and exists as its own class so
+ * that a caller can tell a contested height from an unreachable attesting set.
+ */
+export class HeaderTrustDisagreementError extends HeaderTrustError {}
+
+/** a display-order block hash, the only answer this vote can read as one */
+const BLOCK_HASH = /^[0-9a-f]{64}$/;
 
 /**
  * A tip height an attester actually stated, or undefined for an answer that is
@@ -207,6 +274,7 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
   const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
   const esploras = options.esploras ?? [];
   const minConfirmations = options.minConfirmations ?? 0;
+  const onDisagreement = options.onDisagreement ?? 'throw';
   const powLimitBits = options.powLimitBits === undefined ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
   // compared in canonical form: a case variant of a serving endpoint is the
   // same server, and must not pass as an outside attester
@@ -233,6 +301,13 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
         checkpointHit: true,
         sourcesQueried: 0,
         sourcesAgreed: 0,
+        // the arm returns above the vote, so no attester was asked anything
+        // and there is nothing for the four buckets to hold
+        sourcesDisagreed: 0,
+        sourcesUnreachable: 0,
+        sourcesMalformed: 0,
+        disagreements: [],
+        malformed: [],
         independentSources: 0,
         builderIsSource,
         anchored: true,
@@ -259,17 +334,64 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
     const hashResults = await Promise.allSettled(
       attesters.map(async (e) => (await e.getBlockHashAtHeight(height)).trim().toLowerCase()),
     );
-    const agreed = hashResults.filter(
-      (r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled' && r.value === header.hash,
-    );
-    const independentSources = agreed.length;
+    // one bucket per attester, because `Promise.allSettled` holds four
+    // distinguishable states here and keeping the agreeing one collapsed the
+    // other three into its complement. A query that rejected, a well-formed
+    // hash naming another block, and a 200 carrying an error page reached the
+    // caller as the same integer, and only the first of those is an endpoint
+    // being down
+    const disagreements: { baseUrl: string; hash: string }[] = [];
+    const malformed: { baseUrl: string; length: number }[] = [];
+    let agreed = 0;
+    let unreachable = 0;
+    hashResults.forEach((result, i) => {
+      const baseUrl = attesters[i].baseUrl;
+      if (result.status === 'rejected') {
+        unreachable += 1;
+      } else if (!BLOCK_HASH.test(result.value)) {
+        // the answer is attacker-controlled text and travels no further than
+        // its own length, which already tells an empty body from a page of
+        // HTML without putting either in somebody's log
+        malformed.push({ baseUrl, length: result.value.length });
+      } else if (result.value !== header.hash) {
+        disagreements.push({ baseUrl, hash: result.value });
+      } else {
+        agreed += 1;
+      }
+    });
+    const independentSources = agreed;
+
+    // a well-formed competing hash at the proven height is a claim that the
+    // chain forked there, and this library has no means to adjudicate one.
+    // The checkpoint arm above refuses exactly this evidence, and there is no
+    // principle under which a compiled-in hash is fatal while a live
+    // operator's hash is invisible. The threshold is not consulted first:
+    // attesters meeting it do not settle what another attester denies
+    if (disagreements.length > 0 && onDisagreement === 'throw') {
+      throw new HeaderTrustDisagreementError(
+        `height ${height} is contested: ${disagreements.length} attester(s) name another block ` +
+          `where the bundle claims header ${header.hash} (` +
+          disagreements.map((d) => `${d.baseUrl} says ${d.hash}`).join('; ') +
+          `); ${agreed} attester(s) agreed. Check the height against your own chain view, or pass ` +
+          `onDisagreement: 'flag' to record the disagreement and continue with no attestation.`,
+      );
+    }
     if (independentSources < required) {
+      // the breakdown, because `N/M attesters agreed` read the same whether
+      // the missing endpoints were unreachable or were serving another chain
+      const endpoints = [
+        ...disagreements.map((d) => `${d.baseUrl} says ${d.hash}`),
+        ...malformed.map((m) => `${m.baseUrl} answered ${m.length} characters that are no block hash`),
+      ];
       throw new HeaderTrustError(
         `height ${height} not independently anchored: ${independentSources} independent ` +
-          `source(s) support header ${header.hash} (need ${required}; ${agreed.length}/${attesters.length} ` +
-          `attesters agreed` +
-          (builderIsSource ? `, ${serving.size} serving backend(s) excluded from the vote` : '') +
-          `). Pass --anchor-source with at least ${required} endpoints that did not serve ` +
+          `source(s) support header ${header.hash} (need ${required}; of ${attesters.length} ` +
+          `attester(s), ${agreed} agreed, ${disagreements.length} named another block, ` +
+          `${malformed.length} answered no block hash, ${unreachable} did not answer` +
+          (builderIsSource ? `; ${serving.size} serving backend(s) excluded from the vote` : '') +
+          `)` +
+          (endpoints.length > 0 ? `. ${endpoints.join('; ')}` : '') +
+          `. Pass --anchor-source with at least ${required} endpoints that did not serve ` +
           `the bundle, a covering checkpoint, or a headerSyncTrust anchor.`,
       );
     }
@@ -308,16 +430,29 @@ export function makeHeaderTrust(options: HeaderTrustOptions = {}) {
     return {
       checkpointHit: false,
       sourcesQueried: attesters.length,
-      sourcesAgreed: agreed.length,
+      sourcesAgreed: agreed,
+      sourcesDisagreed: disagreements.length,
+      sourcesUnreachable: unreachable,
+      sourcesMalformed: malformed.length,
+      disagreements,
+      malformed,
       independentSources,
       builderIsSource,
+      // the agreeing attesters did meet the threshold, and folding a
+      // disagreement into this field would lose the distinction the buckets
+      // exist to keep. It travels as its own counts, the way builderIsSource
+      // travels rather than being subtracted from independentSources
       anchored: true,
       tipHeight,
       tipsQueried,
       tipsAnswered,
       // every agreeing attester answered /block-height/<n> with this hash, so
-      // the agreement is a hash-at-height attestation
-      attests: 'hash-at-height',
+      // the agreement is a hash-at-height attestation. Reaching here with a
+      // disagreement means the caller chose to flag it, and a pair another
+      // attester denies asserts nothing: a sub-BIP34 coinbase height under
+      // this anchor gets CoinbaseHeightUnprovenError, which names the real
+      // situation
+      attests: disagreements.length > 0 ? undefined : 'hash-at-height',
     };
   };
 }

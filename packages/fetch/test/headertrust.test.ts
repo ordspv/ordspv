@@ -6,6 +6,7 @@ import { parseHeader, hexToBytes } from '@ordspv/core';
 import {
   checkpointTrustHeader,
   EsploraBackend,
+  HeaderTrustDisagreementError,
   HeaderTrustError,
   makeHeaderTrust,
 } from '../src/index.js';
@@ -64,12 +65,20 @@ describe('fail-closed header anchoring', () => {
     const builder = esplora('https://builder.test', agreeRoutes('https://builder.test', HEADER.hash));
     const honest1 = esplora('https://h1.test', agreeRoutes('https://h1.test', otherHash));
     const honest2 = esplora('https://h2.test', agreeRoutes('https://h2.test', otherHash));
-    const trust = makeHeaderTrust({
+    const common = {
       esploras: [builder, honest1, honest2],
-      checkpoints: new Map(),
+      checkpoints: new Map<number, string>(),
       proofSource: 'https://builder.test',
-    });
-    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/not independently anchored/);
+    };
+    // both honest endpoints answering another block is a contested height
+    // before it is a failed vote, and that is what the default reports
+    await expect(makeHeaderTrust(common)(HEADER, HEIGHT)).rejects.toThrow(/is contested/);
+    // the exclusion itself, read through the arm that still counts: flagging
+    // the disagreement leaves one agreeing attester short of the threshold,
+    // because the builder's own agreement was never in the count
+    await expect(
+      makeHeaderTrust({ ...common, onDisagreement: 'flag' })(HEADER, HEIGHT),
+    ).rejects.toThrow(/not independently anchored: 0 independent source/);
   });
 
   it('rejects a bundle served by one backend with only one agreeing outside attester', async () => {
@@ -245,6 +254,242 @@ describe('fail-closed header anchoring', () => {
     await expect(
       makeHeaderTrust({ ...common, minConfirmations: 3 })(HEADER, HEIGHT),
     ).resolves.toMatchObject({ anchored: true, tipHeight: HEIGHT + 2 });
+  });
+});
+
+/**
+ * An attester that answers and disagrees is not an attester that said
+ * nothing. Both used to arrive as the complement of the agreeing count, so
+ * three states of the world (down, serving another chain, serving an error
+ * page under HTTP 200) produced byte-identical reports.
+ */
+describe('what an attester answered, bucket by bucket', () => {
+  const OTHER = 'f'.repeat(64);
+  const builder = () => esplora('https://builder.test', {});
+  const common = {
+    checkpoints: new Map<number, string>(),
+    proofSource: 'https://builder.test',
+  };
+  const agrees = (base: string) => esplora(base, agreeRoutes(base, HEADER.hash));
+  const denies = (base: string) => esplora(base, agreeRoutes(base, OTHER));
+  /** answers /block-height with exactly this text, whatever it is */
+  const says = (base: string, body: string) => esplora(base, agreeRoutes(base, body));
+  /** no route at all, so every query rejects */
+  const down = (base: string) => esplora(base, {});
+
+  it('reports every source it queried in exactly one bucket', async () => {
+    const report = await makeHeaderTrust({
+      ...common,
+      esploras: [
+        builder(),
+        agrees('https://a1.test'),
+        agrees('https://a2.test'),
+        down('https://d1.test'),
+        says('https://m1.test', '<html>bad gateway</html>'),
+      ],
+      onDisagreement: 'flag',
+    })(HEADER, HEIGHT);
+    expect(report.sourcesQueried).toBe(4); // the builder is not asked
+    expect(report.sourcesAgreed).toBe(2);
+    expect(report.sourcesUnreachable).toBe(1);
+    expect(report.sourcesMalformed).toBe(1);
+    expect(report.sourcesDisagreed).toBe(0);
+    expect(
+      report.sourcesAgreed +
+        report.sourcesDisagreed +
+        report.sourcesMalformed +
+        report.sourcesUnreachable,
+    ).toBe(report.sourcesQueried);
+  });
+
+  it('holds the accounting on the arms that query nobody', async () => {
+    // the checkpoint arm and a call with no attesters configured both report
+    // zeroes rather than leaving a reader to infer the shape from absence
+    for (const report of [
+      await makeHeaderTrust({ esploras: [] })(HEADER, HEIGHT), // 767430 is compiled in
+      await makeHeaderTrust({ ...common, esploras: [builder()], minAgreement: 1 })(
+        HEADER,
+        HEIGHT,
+      ).catch((e: Error) => e),
+    ]) {
+      if (report instanceof Error) {
+        expect(report.message).toMatch(/of 0 attester\(s\), 0 agreed/);
+        continue;
+      }
+      expect(report.sourcesDisagreed).toBe(0);
+      expect(report.sourcesUnreachable).toBe(0);
+      expect(report.sourcesMalformed).toBe(0);
+      expect(report.disagreements).toEqual([]);
+      expect(report.malformed).toEqual([]);
+      expect(
+        report.sourcesAgreed +
+          report.sourcesDisagreed +
+          report.sourcesMalformed +
+          report.sourcesUnreachable,
+      ).toBe(report.sourcesQueried);
+    }
+  });
+
+  it('refuses a height a majority of attesters names another block at', async () => {
+    // the threshold is met by two, four contradict them, and the old code
+    // reported the header anchored with the contradiction nowhere in sight.
+    // Reachable on the shipped defaults: DEFAULT_ANCHOR_SOURCES holds five
+    // endpoints and minAgreement is 2
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [
+        builder(),
+        agrees('https://a1.test'),
+        agrees('https://a2.test'),
+        denies('https://d1.test'),
+        denies('https://d2.test'),
+        denies('https://d3.test'),
+        denies('https://d4.test'),
+      ],
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(HeaderTrustDisagreementError);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/4 attester\(s\) name another block/);
+    // every disagreeing endpoint and the hash it served
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(
+      new RegExp(`https://d4.test says ${OTHER}`),
+    );
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/2 attester\(s\) agreed/);
+  });
+
+  it('refuses a single disagreement while the threshold is met', async () => {
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [builder(), agrees('https://a1.test'), agrees('https://a2.test'), denies('https://d1.test')],
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(HeaderTrustDisagreementError);
+  });
+
+  it('is caught by a caller already catching HeaderTrustError', async () => {
+    // subclassing is the compatibility contract: existing callers test the
+    // base class and must keep seeing this refusal
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [builder(), agrees('https://a1.test'), agrees('https://a2.test'), denies('https://d1.test')],
+    });
+    const thrown = await trust(HEADER, HEIGHT).catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(HeaderTrustError);
+    expect(thrown).toBeInstanceOf(HeaderTrustDisagreementError);
+  });
+
+  it('flags a disagreement, keeps anchored, and withholds the attestation', async () => {
+    // an operator who knows one of their endpoints lags opts out by name; the
+    // agreeing attesters did meet the threshold, so anchored stays true and
+    // the disagreement travels as its own counts. The contested pair asserts
+    // nothing, so a sub-BIP34 coinbase height under this anchor is refused
+    const report = await makeHeaderTrust({
+      ...common,
+      esploras: [builder(), agrees('https://a1.test'), agrees('https://a2.test'), denies('https://d1.test')],
+      onDisagreement: 'flag',
+    })(HEADER, HEIGHT);
+    expect(report.anchored).toBe(true);
+    expect(report.attests).toBeUndefined();
+    expect(report.sourcesDisagreed).toBe(1);
+    expect(report.disagreements).toEqual([{ baseUrl: 'https://d1.test', hash: OTHER }]);
+    expect(report.independentSources).toBe(2);
+    // an uncontested vote still attests, so the withholding is the
+    // disagreement's doing and not the flag's
+    const clean = await makeHeaderTrust({
+      ...common,
+      esploras: [builder(), agrees('https://a1.test'), agrees('https://a2.test')],
+      onDisagreement: 'flag',
+    })(HEADER, HEIGHT);
+    expect(clean.attests).toBe('hash-at-height');
+  });
+
+  it('reads a 200 carrying a non-hash body as malformed, not as a disagreement', async () => {
+    // an endpoint serving an error page is broken, and calling it a competing
+    // claim would refuse a height nobody contested
+    const report = await makeHeaderTrust({
+      ...common,
+      esploras: [
+        builder(),
+        agrees('https://a1.test'),
+        agrees('https://a2.test'),
+        says('https://m1.test', '<html>bad gateway</html>'),
+      ],
+    })(HEADER, HEIGHT);
+    expect(report.sourcesMalformed).toBe(1);
+    expect(report.sourcesDisagreed).toBe(0);
+    expect(report.attests).toBe('hash-at-height');
+    // the source and the length, never the body: that text is attacker
+    // controlled and would land in somebody's log
+    expect(report.malformed).toEqual([{ baseUrl: 'https://m1.test', length: 24 }]);
+    expect(JSON.stringify(report)).not.toContain('bad gateway');
+  });
+
+  it('reads a truncated or overlong hex answer as malformed', async () => {
+    for (const [body, length] of [
+      ['', 0],
+      ['f'.repeat(63), 63],
+      ['f'.repeat(65), 65],
+      ['g'.repeat(64), 64],
+    ] as const) {
+      const report = await makeHeaderTrust({
+        ...common,
+        esploras: [builder(), agrees('https://a1.test'), agrees('https://a2.test'), says('https://m1.test', body)],
+      })(HEADER, HEIGHT);
+      expect(report.malformed, body).toEqual([{ baseUrl: 'https://m1.test', length }]);
+    }
+  });
+
+  it('reads an upper-case answer as the same hash rather than as malformed', async () => {
+    // the answer is trimmed and lowercased before it is compared, and the
+    // shape check has to run on the same normalized form
+    const report = await makeHeaderTrust({
+      ...common,
+      esploras: [
+        builder(),
+        agrees('https://a1.test'),
+        says('https://a2.test', `  ${HEADER.hash.toUpperCase()}\n`),
+      ],
+    })(HEADER, HEIGHT);
+    expect(report.sourcesAgreed).toBe(2);
+    expect(report.sourcesMalformed).toBe(0);
+  });
+
+  it('names the breakdown when the threshold is not met', async () => {
+    // "N/M attesters agreed" read the same whether the missing endpoints were
+    // unreachable or were serving another chain
+    const trust = makeHeaderTrust({
+      ...common,
+      esploras: [
+        builder(),
+        agrees('https://a1.test'),
+        denies('https://d1.test'),
+        down('https://x1.test'),
+        says('https://m1.test', 'nope'),
+      ],
+      onDisagreement: 'flag',
+    });
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(
+      /of 4 attester\(s\), 1 agreed, 1 named another block, 1 answered no block hash, 1 did not answer/,
+    );
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(/1 serving backend\(s\) excluded/);
+    await expect(trust(HEADER, HEIGHT)).rejects.toThrow(
+      /https:\/\/m1.test answered 4 characters that are no block hash/,
+    );
+    await expect(trust(HEADER, HEIGHT)).rejects.not.toThrow(/nope/);
+  });
+
+  it('lets the checkpoint arm settle a height before any attester is asked', async () => {
+    // 767430 is compiled in, so the vote never runs and a disagreeing
+    // attester at that height changes nothing
+    const report = await makeHeaderTrust({ esploras: [denies('https://d1.test')] })(HEADER, HEIGHT);
+    expect(report.checkpointHit).toBe(true);
+    expect(report.sourcesQueried).toBe(0);
+    expect(report.sourcesDisagreed).toBe(0);
+    // and a header contradicting the checkpoint still fails on the checkpoint
+    await expect(
+      makeHeaderTrust({
+        esploras: [denies('https://d1.test')],
+        checkpoints: new Map([[HEIGHT, OTHER]]),
+      })(HEADER, HEIGHT),
+    ).rejects.toThrow(/contradicts checkpoint/);
   });
 });
 

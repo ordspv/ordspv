@@ -38,6 +38,7 @@ import {
   CustodyBuildError,
   CustodyError,
   CustodyHopLimitError,
+  HeaderTrustDisagreementError,
   HeaderTrustError,
   HopConsistencyError,
   OrdResolveError,
@@ -340,6 +341,16 @@ export const EXCLUDED_ERRORS: readonly { ctor: ErrorClass; reason: string }[] = 
       `HEADER_TRUST code; offline verify surfaces a checkpoint contradiction ` +
       `through the command's own invalid path at exit 1, since a header that ` +
       `contradicts a compiled-in checkpoint is a document defect`,
+  },
+  {
+    ctor: HeaderTrustDisagreementError,
+    reason:
+      `an attester naming another block at the height a proof claims. It is a ` +
+      `HeaderTrustError raised by the live anchor alone, so it reaches callers under ` +
+      `the HEADER_TRUST code exactly as the rest of that class does and needs no row ` +
+      `of its own; the offline hook verify supplies is the checkpoint adapter, which ` +
+      `raises the base class. The subclass exists so a library caller can tell a ` +
+      `contested height from an attesting set that went unanswered`,
   },
   {
     ctor: ReorgLinkError,
