@@ -3,6 +3,89 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`verifyProofBundle` can be told which inscription the caller asked for.**
+  A bundle names the inscription it proves, and every check in the verifier
+  read that claim rather than testing it, so a verification established that
+  the document was internally consistent and established nothing about whose
+  inscription it was. `VerifyOptions.expectedInscriptionId` binds the two: it
+  is refused when it is supplied and disagrees with `bundle.inscriptionId`,
+  before any of the bundle's own evidence is read, so a bundle for another
+  inscription is reported as the wrong document instead of through whichever
+  later check its contents happen to fail. Ids are compared in parsed form, so
+  an id that survived URI case folding still matches. Leaving the option out
+  keeps every existing caller working and means exactly what it meant before.
+  The gateway, the sidecar and the resolver now name the id they were asked
+  for. None of them could be handed a mismatched bundle today, because
+  `buildProofBundle` stamps the requested id into what it returns, so this is
+  the guarantee holding by construction rather than by the builder's good
+  behaviour. `ord-resolve verify` gains `--expect-id`, which is the one place
+  the check has live work to do, since a bundle read off disk was built by
+  somebody else. It applies to proof bundles and is refused at exit 2 on the
+  other two kinds, whose verifiers read their own claim the same way and do
+  not take an expectation yet.
+
+### Fixed
+
+- **A CBOR map key of `__proto__` reached the `Object.prototype` setter.** The
+  decoder built its maps as plain object literals from attacker-supplied
+  bytes, so a map value under that key replaced the decoded object's prototype
+  and a primitive value was discarded with no error and no trace. Both
+  allocations now use `Object.create(null)`, which makes the key ordinary
+  data and fixes the silent loss in the same stroke. Both of them matters:
+  the decoder's map case alone moves the defect rather than closing it,
+  because `decodeCborJson` was safe only for the accidental reason that the
+  setter consumed the key before the walk could enumerate it. Give the decoder
+  a null prototype on its own and the key becomes a real own property,
+  `Object.entries` hands it over, and the walk's own literal takes the
+  assignment the decoder no longer takes, which turns the metadata path into
+  the one path that replaces a prototype. Nothing downstream reads an
+  inherited method off a decoded value, and `JSON.stringify` does not read the
+  prototype, so the walk still returns what it promises. The reach was one
+  object rather than the runtime: each decode allocates fresh and merges into
+  nothing, so `Object.prototype` was never touched and no state crossed a
+  call. Gallery reads change with it. A properties map whose `__proto__` key
+  carried an Items array used to answer that lookup by inheritance, and now
+  does not.
+- **A requested confirmation depth could go unenforced in silence.**
+  `makeHeaderTrust` queried tip heights behind a truthiness test on
+  `minConfirmations` and read every fulfilled answer as a height. Four
+  behaviours came out of that. An unvalidated `NaN`, which
+  `Number(process.env.X)` produces, is falsy, so the phase never ran and the
+  report carried no field to say the floor had been skipped. Every tip query
+  failing left the height undefined and the depth check was skipped rather
+  than refused, so the call resolved as anchored. `Number('')` is 0, so an
+  empty response read as tip height zero and blamed confirmation depth for a
+  malformed answer. And `Number` on anything else unparseable is `NaN`, whose
+  comparator leaves `Array.prototype.sort` input order alone, so whether the
+  garbage landed on the midpoint depended on which attester answered first and
+  the same two attesters in opposite order gave opposite outcomes.
+  `minConfirmations` is now validated at construction the way `minAgreement`
+  is, tip answers that are not a non-negative integer are dropped before the
+  median, and a depth the caller asked for is enforced or refused rather than
+  skipped. `HeaderTrustReport` gains `tipsQueried` and `tipsAnswered`, absent
+  on the arms that never reach the phase, so a caller can see the check ran on
+  something.
+
+### Changed
+
+- Two verification-path judgement calls are recorded where the code makes
+  them. `ByteReader.readVarInt` accepts a CompactSize wider than its value
+  needs, where Bitcoin Core refuses one, and the comment now states what that
+  costs, which is not what a reader expects: the txid comes from a
+  re-serialization that writes counts canonically, so a padded copy of a real
+  transaction reproduces the real txid and its merkle proof passes rather than
+  failing on its own. It carries nothing forged, since the same count parses
+  to the same fields. The wtxid is over the bytes as received, so the copy
+  fails an L3 proof. `inscriptionGallery`'s encoding guard tests truthiness,
+  so a tag-19 field present and empty does not raise `GalleryEncodingError`
+  and the still-compressed bytes reach the CBOR parser, which refuses them.
+  The answer is no gallery, which is a false negative rather than a member
+  list nobody declared.
+
 ## [0.3.1] - 2026-08-10
 
 ### Fixed
