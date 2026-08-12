@@ -24,9 +24,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the guarantee holding by construction rather than by the builder's good
   behaviour. `ord-resolve verify` gains `--expect-id`, which is the one place
   the check has live work to do, since a bundle read off disk was built by
-  somebody else. It applies to proof bundles and is refused at exit 2 on the
-  other two kinds, whose verifiers read their own claim the same way and do
-  not take an expectation yet.
+  somebody else. All three verifiers take the option, so the flag binds
+  whichever kind the file turned out to be. `CustodyVerifyOptions` carries it
+  for `verifyCustodyBundle`, and `GenealogyVerifyOptions` inherits it from
+  there for `verifySatGenealogy`; both read it above every read of the
+  bundle's own evidence, the genealogy step cap included, since a bundle for
+  another inscription is the wrong document and refusing it as one too deep to
+  read would name the wrong problem. One implementation sits behind all three,
+  `checkExpectedInscriptionId` in `inscriptionId.ts`, so the three cannot
+  drift on what counts as the same id.
 
 ### Fixed
 
@@ -68,7 +74,54 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   median, and a depth the caller asked for is enforced or refused rather than
   skipped. `HeaderTrustReport` gains `tipsQueried` and `tipsAnswered`, absent
   on the arms that never reach the phase, so a caller can see the check ran on
-  something.
+  something. None of the four is a regression. The tip filter has kept every
+  fulfilled result since the function was written: `v0.2.1`'s copy of
+  `headertrust.ts` carries the same unfiltered `status === 'fulfilled'` test
+  the fix replaced, and no commit ever removed a finiteness check from it.
+- **An attester that answered and disagreed was indistinguishable from one
+  that said nothing.** `makeHeaderTrust` filtered its `Promise.allSettled`
+  results down to the fulfilled ones matching the header's hash and reported
+  the count. The other three outcomes collapsed into the complement of that
+  count, which nothing named or reported: a query that rejected, a
+  well-formed hash naming a different block at the proven height, and an HTTP
+  200 carrying an error page all left the caller reading the same integer.
+  Three states of the world produced byte-identical reports. The middle one
+  was worse than indistinguishable, since it was invisible: two agreeing attesters met
+  the default threshold while four others named another block, and the header
+  came back anchored with `attests: 'hash-at-height'`. That is reachable on
+  the shipped defaults, since `DEFAULT_ANCHOR_SOURCES` holds five endpoints
+  and `minAgreement` is 2, and the attestation is not decoration. It is what
+  lets a terminal coinbase below the BIP34 boundary have its claimed height
+  accepted, so sat identity for early inscriptions rested on it while the
+  contradiction went unrecorded. Each answer now lands in exactly one of four
+  buckets and `HeaderTrustReport` states all four: `sourcesDisagreed`,
+  `sourcesUnreachable`, `sourcesMalformed`, and the endpoints behind the first
+  and third in `disagreements` and `malformed`. `sourcesQueried` equals their
+  sum on every arm, the checkpoint arm and `headerSyncTrust` included. A
+  malformed answer travels as its source and its length and never as its body,
+  which is attacker-controlled text that would otherwise land in somebody's
+  log. This is a behaviour change: an attester answering a well-formed
+  competing hash now raises `HeaderTrustDisagreementError`, whatever the
+  agreeing count is, because such an answer claims the chain forked at that
+  height and this library has no means to adjudicate one. The checkpoint arm
+  already refused exactly that evidence, and there was no principle under
+  which a compiled-in hash was fatal while a live operator's hash was
+  invisible. The class extends `HeaderTrustError`, so a caller catching that
+  keeps working. `onDisagreement: 'flag'` is the escape hatch for an operator
+  who knows one of their endpoints lags: it records the counts and lets the
+  call resolve with `anchored: true`, since the agreeing attesters did meet
+  the threshold, and withholds the attestation by leaving `attests` undefined,
+  since the contested pair is exactly what a disagreeing attester denies. A
+  caller who flags a disagreement and then asks for sat identity on an early
+  inscription gets `CoinbaseHeightUnprovenError`, which names the real
+  situation. The under-threshold message gives the breakdown, because
+  `N/M attesters agreed` read the same whether the missing endpoints were
+  unreachable or were serving another chain. SPEC-VERIFICATION's M-of-N bullet
+  states the rule now instead of being silent on it. A depth-aware default,
+  tolerating disagreement inside a reorg window of the median attester tip,
+  was considered and left out: it costs a tip query on every anchor, which the
+  hash phase deliberately avoids, and it would make the default outcome
+  depend on a second round trip that can itself fail.
 
 ### Changed
 
