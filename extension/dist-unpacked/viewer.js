@@ -107,7 +107,22 @@
       this.pos += n;
       return out;
     }
-    /** Bitcoin CompactSize varint. */
+    /**
+     * Bitcoin CompactSize varint. A wider encoding than the value needs is
+     * accepted here, where Bitcoin Core's ReadCompactSize refuses it, so no such
+     * transaction is in any block. The consequence is recorded in
+     * `parsers.props.test.ts` under "varint: canonicality" and is not what a
+     * reader expects: `parseTx` derives the txid from `serializeStripped`, which
+     * writes every count canonically, so a padded copy of a real transaction
+     * reproduces the real txid and its txid merkle proof passes rather than
+     * failing. Nothing forged rides along, because a wider encoding states the
+     * same count and every field parses identically, the padding being dropped.
+     * The wtxid is the hash of the bytes as received, so the same copy fails an
+     * L3 wtxid proof, and the 64-byte leaf/node rule reads the stripped
+     * serialization, so padding cannot carry a transaction around it. What stays
+     * open is stated in the legacy-transaction test: `tx.raw` is not pinned by
+     * either identifier, so future code must not treat it as though it were.
+     */
     readVarInt() {
       const first = this.readU8();
       if (first < 253) return BigInt(first);
@@ -3135,6 +3150,20 @@
   }
 
   // packages/core/src/proof.ts
+  function checkExpectedId(id, expected, claimed) {
+    if (expected === void 0) return;
+    let wanted;
+    try {
+      wanted = parseInscriptionId(expected);
+    } catch (e) {
+      throw new Error(`expectedInscriptionId: ${e.message}`);
+    }
+    if (wanted.txid !== id.txid || wanted.index !== id.index) {
+      throw new Error(
+        `bundle proves ${claimed.toLowerCase()}, caller asked for ${formatInscriptionId(wanted.txid, wanted.index)}`
+      );
+    }
+  }
   function parseHexTx(hex, label) {
     let tx;
     try {
@@ -3159,6 +3188,7 @@
       throw new Error("bundle field reveal is missing or not an object");
     }
     const id = parseInscriptionId(bundle.inscriptionId);
+    checkExpectedId(id, opts.expectedInscriptionId, bundle.inscriptionId);
     if (typeof bundle.block.header !== "string") {
       throw new Error("bundle field block.header is missing or not a string");
     }
@@ -3373,7 +3403,7 @@
         return out;
       }
       case 5: {
-        const out = {};
+        const out = /* @__PURE__ */ Object.create(null);
         const put = () => {
           const key = keyToString(decodeItem(r, depth + 1));
           out[key] = decodeItem(r, depth + 1);
@@ -3427,7 +3457,7 @@
       if (typeof v === "bigint") return v.toString();
       if (Array.isArray(v)) return v.map(walk);
       if (v && typeof v === "object") {
-        const out = {};
+        const out = /* @__PURE__ */ Object.create(null);
         for (const [k, inner] of Object.entries(v)) out[k] = walk(inner);
         return out;
       }
@@ -3886,14 +3916,25 @@
   ]);
   var HeaderTrustError = class extends Error {
   };
+  function tipHeightFrom(text) {
+    if (!/^[0-9]+$/.test(text)) return void 0;
+    const height = Number(text);
+    return Number.isSafeInteger(height) ? height : void 0;
+  }
   function makeHeaderTrust(options = {}) {
     if (options.minAgreement !== void 0 && (!Number.isInteger(options.minAgreement) || options.minAgreement < 1)) {
       throw new HeaderTrustError(
         `minAgreement ${options.minAgreement} is not a whole number of agreeing sources; pass an integer of 1 or more, and pair 1 with checkpoints or a synced chain`
       );
     }
+    if (options.minConfirmations !== void 0 && (!Number.isInteger(options.minConfirmations) || options.minConfirmations < 0)) {
+      throw new HeaderTrustError(
+        `minConfirmations ${options.minConfirmations} is not a whole number of blocks; pass an integer of 0 or more, where 0 enforces no depth`
+      );
+    }
     const checkpoints = options.checkpoints ?? MAINNET_CHECKPOINTS;
     const esploras = options.esploras ?? [];
+    const minConfirmations = options.minConfirmations ?? 0;
     const powLimitBits = options.powLimitBits === void 0 ? MAINNET_CHAIN_PARAMS.powLimitBits : options.powLimitBits;
     const serving = new Set([...options.proofSources ?? []].map(normalizeBaseUrl));
     if (options.proofSource !== void 0) serving.add(normalizeBaseUrl(options.proofSource));
@@ -3944,17 +3985,24 @@
         );
       }
       let tipHeight;
-      if (options.minConfirmations) {
+      let tipsQueried;
+      let tipsAnswered;
+      if (minConfirmations > 0) {
         const tipResults = await Promise.allSettled(
-          attesters.map(async (e) => Number((await e.getTipHeight()).trim()))
+          attesters.map(async (e) => (await e.getTipHeight()).trim())
         );
-        const tips = tipResults.filter((r) => r.status === "fulfilled").map((r) => r.value).sort((a, b) => a - b);
-        tipHeight = tips.length ? tips[Math.floor(tips.length / 2)] : void 0;
-        if (tipHeight !== void 0) {
-          const confs = tipHeight - height + 1;
-          if (confs < options.minConfirmations) {
-            throw new HeaderTrustError(`only ${confs} confirmations, need ${options.minConfirmations}`);
-          }
+        const tips = tipResults.filter((r) => r.status === "fulfilled").map((r) => tipHeightFrom(r.value)).filter((h) => h !== void 0).sort((a, b) => a - b);
+        tipsQueried = attesters.length;
+        tipsAnswered = tips.length;
+        if (tips.length === 0) {
+          throw new HeaderTrustError(
+            `confirmation depth ${minConfirmations} was requested and no attester stated a usable tip height (${tipsQueried} queried, 0 answered). Pass --anchor-source with endpoints that serve /blocks/tip/height, or drop the depth requirement.`
+          );
+        }
+        tipHeight = tips[Math.floor(tips.length / 2)];
+        const confs = tipHeight - height + 1;
+        if (confs < minConfirmations) {
+          throw new HeaderTrustError(`only ${confs} confirmations, need ${minConfirmations}`);
         }
       }
       return {
@@ -3965,6 +4013,8 @@
         builderIsSource,
         anchored: true,
         tipHeight,
+        tipsQueried,
+        tipsAnswered,
         // every agreeing attester answered /block-height/<n> with this hash, so
         // the agreement is a hash-at-height attestation
         attests: "hash-at-height"
@@ -4092,7 +4142,10 @@ ${errors.join("\n")}`);
       );
       let verified;
       try {
-        verified = verifyProofBundle(bundle, { powLimitBits: this.options.powLimitBits });
+        verified = verifyProofBundle(bundle, {
+          powLimitBits: this.options.powLimitBits,
+          expectedInscriptionId: parsed.idString
+        });
       } catch (e) {
         throw new OrdResolveError("VERIFY_FAILED", e.message);
       }
