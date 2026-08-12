@@ -287,3 +287,46 @@ describe('gallery: reading off a parsed inscription', () => {
     expect(galleryItems(inscription)).toEqual([]);
   });
 });
+
+describe('gallery: a __proto__ key in the properties map', () => {
+  /** a properties map with one text key, which the uint-keyed cbMap cannot build */
+  const textKeyedMap = (key: string, value: Uint8Array) =>
+    concatBytes(head(5, 1), cbText(key), value);
+
+  const items = cbArray([inlineItem(TXID_A), inlineItem(TXID_C, 5)]);
+
+  it('reads no member list through a __proto__ key that an own key would carry', () => {
+    // `at(map, 0)` is `map['0']`, so before the decoder allocated its maps with
+    // a null prototype this blob's value became the prototype and the Items
+    // lookup found the array by inheritance. The members are the attacker's
+    // either way, which is why this was never a trust boundary, but a lookup
+    // that resolves through a prototype is not one this parser intends
+    const viaProto = textKeyedMap('__proto__', cbMap([[0, items]]));
+    expect(parseGallery(viaProto)).toEqual({ isGallery: false, items: [], skipped: 0 });
+
+    // the same members under the own key the format specifies
+    const viaOwnKey = cbMap([[0, items]]);
+    expect(parseGallery(viaOwnKey)).toEqual({
+      isGallery: true,
+      items: [`${TXID_A}i0`, `${TXID_C}i5`],
+      skipped: 0,
+    });
+  });
+
+  it('carries a __proto__ key alongside a real gallery without disturbing it', () => {
+    const props = concatBytes(
+      head(5, 2),
+      cbText('__proto__'),
+      cbMap([[0, cbArray([inlineItem(TXID_B, 9)])]]),
+      cbUint(0),
+      items,
+    );
+    // the own Items key answers, and the decoded map is an ordinary object
+    expect(parseGallery(props).items).toEqual([`${TXID_A}i0`, `${TXID_C}i5`]);
+  });
+
+  it('treats a __proto__ key inside an Item the way it treats any other', () => {
+    const item = concatBytes(head(5, 2), cbUint(0), cbBytes(serializedId(TXID_A, 0)), cbText('__proto__'), cbUint(1));
+    expect(parseGallery(cbMap([[0, cbArray([item])]])).items).toEqual([`${TXID_A}i0`]);
+  });
+});

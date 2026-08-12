@@ -131,7 +131,14 @@ function decodeItem(r: CborReader, depth: number): CborValue {
       return out;
     }
     case 5: {
-      const out: { [key: string]: CborValue } = {};
+      // null prototype: map keys come from attacker-supplied bytes, and a
+      // `__proto__` key assigned into a plain literal reaches the
+      // Object.prototype setter instead of becoming a data property. A map
+      // value replaced the decoded object's prototype and an assignment the
+      // setter refuses, a primitive, was dropped with no error. Both become
+      // ordinary data here. The other allocation in this file, decodeCborJson's
+      // walk, has to match: it enumerates what this one keeps
+      const out: { [key: string]: CborValue } = Object.create(null);
       const put = () => {
         const key = keyToString(decodeItem(r, depth + 1));
         out[key] = decodeItem(r, depth + 1);
@@ -190,7 +197,13 @@ export function decodeCborJson(bytes: Uint8Array): unknown {
     if (typeof v === 'bigint') return v.toString();
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      const out: Record<string, unknown> = {};
+      // null prototype for the same reason the decoder's map case has one, and
+      // it is this site that needs it once that one has it: a `__proto__` key
+      // survives decoding as a real own property now, so Object.entries hands
+      // it over and a plain literal here would run the setter the decoder no
+      // longer runs. JSON.stringify does not read the prototype, so the walk's
+      // serializable-output contract is unaffected
+      const out: Record<string, unknown> = Object.create(null);
       for (const [k, inner] of Object.entries(v)) out[k] = walk(inner);
       return out;
     }
