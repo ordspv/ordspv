@@ -136,7 +136,22 @@ export class ByteReader {
     return out;
   }
 
-  /** Bitcoin CompactSize varint. */
+  /**
+   * Bitcoin CompactSize varint. A wider encoding than the value needs is
+   * accepted here, where Bitcoin Core's ReadCompactSize refuses it, so no such
+   * transaction is in any block. The consequence is recorded in
+   * `parsers.props.test.ts` under "varint: canonicality" and is not what a
+   * reader expects: `parseTx` derives the txid from `serializeStripped`, which
+   * writes every count canonically, so a padded copy of a real transaction
+   * reproduces the real txid and its txid merkle proof passes rather than
+   * failing. Nothing forged rides along, because a wider encoding states the
+   * same count and every field parses identically, the padding being dropped.
+   * The wtxid is the hash of the bytes as received, so the same copy fails an
+   * L3 wtxid proof, and the 64-byte leaf/node rule reads the stripped
+   * serialization, so padding cannot carry a transaction around it. What stays
+   * open is stated in the legacy-transaction test: `tx.raw` is not pinned by
+   * either identifier, so future code must not treat it as though it were.
+   */
   readVarInt(): bigint {
     const first = this.readU8();
     if (first < 0xfd) return BigInt(first);

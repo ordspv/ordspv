@@ -114,6 +114,13 @@ export function parseTx(
   }
 
   const exactRaw = raw.slice(start, end);
+  // the txid is the hash of a re-serialization and the wtxid is the hash of
+  // the bytes as received. The difference shows on input this parser accepts
+  // and Bitcoin Core does not, a count encoded wider than its value needs:
+  // writing the counts canonically here reproduces the real txid from a padded
+  // copy, while the wtxid changes and an L3 proof over it fails. See
+  // ByteReader.readVarInt in bytes.ts for what that leniency does and does not
+  // cost
   const strippedRaw = serializeStripped({ version, inputs, outputs, locktime });
   const txidLE = sha256d(strippedRaw);
   const wtxidLE = hasWitness ? sha256d(exactRaw) : txidLE;

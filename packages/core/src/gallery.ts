@@ -169,7 +169,13 @@ export function inscriptionGallery(
   const raw = options.decodedProperties ?? inscription.properties;
   if (!raw) return NOT_A_GALLERY;
   // compressed bytes are not CBOR, and an inscription that declares none is
-  // the one answer this must never be confused with
+  // the one answer this must never be confused with.
+  // The guard is truthiness, so a tag-19 field present and empty decodes to ''
+  // and does not reach the throw. Measured: the compressed bytes go on to
+  // decodeCbor, which refuses them, parseGallery catches that and answers
+  // NOT_A_GALLERY. That is the wrong answer for a gallery this inscription may
+  // hold, and it is a false negative rather than a member list nobody
+  // declared, so it fails in the safe direction
   if (!options.decodedProperties && inscription.propertyEncoding) {
     throw new GalleryEncodingError(inscription.propertyEncoding);
   }

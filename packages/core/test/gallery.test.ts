@@ -280,6 +280,17 @@ describe('gallery: reading off a parsed inscription', () => {
     expect(inscriptionGallery(withProperties(undefined, 'br')).isGallery).toBe(false);
   });
 
+  it('answers no gallery for an encoding field that is present and empty', () => {
+    // the guard is truthiness, so '' does not reach GalleryEncodingError and
+    // the still-compressed bytes go to the CBOR parser instead. It refuses
+    // them and the answer is NOT_A_GALLERY, which is a false negative and not
+    // a member list nobody declared
+    const compressed = new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0x00]);
+    const insc = withProperties(compressed, '');
+    expect(() => inscriptionGallery(insc)).not.toThrow();
+    expect(inscriptionGallery(insc)).toEqual({ isGallery: false, items: [], skipped: 0 });
+  });
+
   it('has no gallery for an inscription with no properties field', () => {
     const script = envelopeScript({ fields: [[1, 'text/plain']], body: ['x'] });
     const inscription = inscriptionFromScript(script);
