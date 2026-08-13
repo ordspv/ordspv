@@ -105,6 +105,23 @@ const TABLE: Requirement[] = [
       'MAY on the next sentence is pinned in the same test.',
   },
   {
+    id: 'verify-local-first',
+    section: '§2',
+    title: 'a verify gateway MUST serve /content only after verifying the bytes locally',
+    quote: 'a verify-personality gateway MUST serve `/content/<id>` only after',
+    binds: 'verify-personality gateways',
+    status: 'tested here',
+    why:
+      'the sentence named no party and carried no keyword until 0.3.4, which left the ' +
+      'personality that exists to verify bound by nothing. The upstream in this file ' +
+      'answers every path with bytes of its own, so the test reads the verify ' +
+      "gateway's body and asserts it is the chain's rather than the upstream's, on the " +
+      'same path the proxy personality serves the upstream on. The other half is that ' +
+      'there is no fallback: an inscription the configured backends cannot supply ' +
+      'evidence for is refused rather than proxied, which is the arm a gateway would ' +
+      'reach for under load.',
+  },
+  {
     id: 'verify-attestation',
     section: '§2',
     title: 'a verify gateway MUST emit attestation headers',
@@ -466,6 +483,26 @@ describe('SPEC-GATEWAY conformance', () => {
     expect(verified.status).toBe(200);
     expect(verified.headers.get('x-ord-verification')).toBe('L2');
     expect(await verified.text()).toBe(PNG_BODY);
+  });
+
+  conformance('verify-local-first', async () => {
+    // the same path on both personalities. The upstream answers it with bytes
+    // of its own, so a verify gateway that proxied under load would be visible
+    const served = await fetch(`${verify()}/content/${PLAIN.id}`);
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe(PNG_BODY);
+
+    const proxied = await fetch(`${proxy()}/content/${PLAIN.id}`);
+    expect(await proxied.text()).toContain('upstream body');
+
+    // and no fallback: an id the configured backends hold no evidence for is
+    // refused, where the upstream would have answered it happily. 404 is §3's
+    // classification once every backend asked says the inscription is absent
+    const unknown = `${'ab'.repeat(32)}i0`;
+    const refused = await fetch(`${verify()}/content/${unknown}`);
+    expect(refused.status).toBe(404);
+    expect(await refused.text()).not.toContain('upstream body');
+    expect((await fetch(`${proxy()}/content/${unknown}`)).status).toBe(200);
   });
 
   conformance('verify-attestation', async () => {

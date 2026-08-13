@@ -6,9 +6,13 @@
  * `packages/core/test/spec-verification.conformance.test.ts`. The rows whose
  * code lives in `@ordspv/fetch` (header anchoring in `headertrust.ts`, the
  * resolver's L0 labelling and its delegate hop) are driven from
- * `packages/fetch/test/spec-verification.anchoring.test.ts`. The table itself
- * is one array so the split cannot lose a row: the accounting test in the core
- * file sums the whole spec against every row here, whichever file drives it.
+ * `packages/fetch/test/spec-verification.anchoring.test.ts`. One row is a
+ * requirement on the servers this repository ships rather than on a library,
+ * and is driven from `packages/sidecar/test/spec-verification.servers.test.ts`,
+ * because the sidecar package is the only one that may import both servers.
+ * The table itself is one array so the split cannot lose a row: the accounting
+ * test in the core file sums the whole spec against every row here, whichever
+ * file drives it.
  *
  * Quote-anchored, not line-anchored. Every row carries a verbatim fragment of
  * its normative sentence, asserted to appear exactly once in the spec before
@@ -67,8 +71,8 @@ export interface Requirement {
   /** who the sentence binds */
   binds: string;
   status: Status;
-  /** which of the two files drives this row */
-  file: 'core' | 'fetch';
+  /** which of the three files drives this row */
+  file: 'core' | 'fetch' | 'servers';
   /** why the status is what it is, and what the test does not reach */
   why: string;
 }
@@ -144,6 +148,24 @@ export const TABLE: Requirement[] = [
       'command.',
   },
   {
+    id: 'l3-checks',
+    section: '§2',
+    title: 'the four L3 checks are all MUST for a verifier reporting L3',
+    quote: 'A verifier\nreporting L3 MUST apply all of the checks below',
+    binds: 'verifiers reporting L3',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'the L2 list carried "all MUST" and this one carried nothing until 0.3.4, so a ' +
+      'verifier could report L3 having skipped the coinbase or the commitment output ' +
+      'and point at the spec. Each of the four is driven on its own bundle: a coinbase ' +
+      'that is not one, a coinbase branch built for another position, a commitment ' +
+      'output whose reserved value the coinbase witness does not carry, the wtxid fold ' +
+      'itself, and an envelope index the committed witness does not hold. The OPTIONAL ' +
+      'half is driven beside them, since a bundle with no commit section still reports ' +
+      'L3, which is what makes the list a different requirement from L2\'s.',
+  },
+  {
     id: 'l3-wtxid',
     section: '§2',
     title: 'the wtxid fold MUST self-pair the zeroed coinbase at pos 1 and MUST NOT accept position 0',
@@ -166,6 +188,26 @@ export const TABLE: Requirement[] = [
   // -------------------------------------------------------------------------
   // §3 Proof bundle format v1
   // -------------------------------------------------------------------------
+  {
+    id: 'wire-byte-order',
+    section: '§3',
+    title: 'a bundle MUST carry every 32-byte hash in display order and every transaction as hex',
+    quote:
+      'A bundle MUST carry every\n' +
+      '32-byte hash in display order (reversed) hex, matching every public API, and every\n' +
+      'transaction as hex.',
+    binds: 'proof bundles and the verifiers that read them',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'a keywordless "reversed hex" invites a producer to write the internal order it ' +
+      'already holds, and every field would then verify against nothing. The test reads ' +
+      'the direction off a bundle that verifies, on all four hash-carrying fields at ' +
+      'once, and reverses each in turn to show the verifier is reading the order the ' +
+      'sentence states rather than accepting either. What it does not reach is a bundle ' +
+      'whose reversal happens to be a valid hash of its own, which no construction ' +
+      'produces.',
+  },
   {
     id: 'txcount-required',
     section: '§3',
@@ -250,24 +292,25 @@ export const TABLE: Requirement[] = [
       'what verifiers MUST do is consult a compiled-in checkpoint\n' +
       'where one applies (the first strategy below)',
     binds: 'verifiers',
-    status: finding(
-      'the three core verifiers consult no checkpoint of their own, and two shipped ' +
-        'servers call them that way',
-    ),
-    file: 'fetch',
+    status: 'tested here',
+    file: 'servers',
     why:
-      'the requirement is met on two surfaces and not on the verifiers the sentence ' +
-      'binds. `ord-resolve verify` passes `checkpointTrustHeader()` to all three ' +
-      'verifiers and `OrdResolver` anchors through `makeHeaderTrust` with ' +
-      'MAINNET_CHECKPOINTS, so both refuse a bundle contradicting a checkpoint. ' +
-      '`verifyProofBundle`, `verifyCustodyBundle` and `verifySatGenealogy` consult ' +
-      'nothing unless the caller supplies a hook, and MAINNET_CHECKPOINTS lives in ' +
-      '@ordspv/fetch, which core cannot import. The gateway proof endpoint ' +
-      '(packages/gateway/src/index.ts) and the sidecar (packages/sidecar/src/index.ts) ' +
-      'both call verifyProofBundle with no hook, so a bundle whose claimed height ' +
-      'contradicts a compiled-in checkpoint is verified, relayed and cached. The test ' +
-      'this row would carry fails against current code and is reported with its ' +
-      'reproduction instead of committed.',
+      'the two shipped servers are what this drives, because they are the surfaces ' +
+      'that verified without consulting anything until 0.3.4: the gateway proof ' +
+      'endpoint and the sidecar each refuse a bundle whose claimed height contradicts ' +
+      'their checkpoint set, on the mainnet set they hold by default, and each serves ' +
+      'the same bundle when an operator configures the set the chain in front of them ' +
+      'needs. The other two surfaces are covered elsewhere: `ord-resolve verify` ' +
+      'passes `checkpointTrustHeader()` to all three verifiers ' +
+      '(packages/cli/test/checkpoint.test.ts), and `OrdResolver` anchors through ' +
+      '`makeHeaderTrust` with the same set, which the checkpoint-refuse row drives. ' +
+      'What no test here reaches, because no code does it: a library caller of ' +
+      '`verifyProofBundle`, `verifyCustodyBundle` or `verifySatGenealogy` that ' +
+      'supplies no hook still consults no checkpoint, since MAINNET_CHECKPOINTS lives ' +
+      'in @ordspv/fetch and core cannot import it. Moving the set into core so the ' +
+      'three verifiers apply it by default is the deferred structural option in ' +
+      'private/DEFERRED.md, and until it lands this sentence binds more verifiers ' +
+      'than the reference implementation obliges.',
   },
   {
     id: 'unanchored-note',
@@ -517,6 +560,25 @@ export const TABLE: Requirement[] = [
       'asserted to be the one asked for, which is the "same level" half.',
   },
 
+  {
+    id: 'metadata-level',
+    section: '§6',
+    title: 'a resolver MUST verify /metadata at the same level as content',
+    quote: '- A resolver MUST verify `/metadata` at the same level as content',
+    binds: 'resolvers',
+    status: 'tested here',
+    file: 'fetch',
+    why:
+      'the sentence said metadata "verifies identically to content" and named no party ' +
+      'until 0.3.4, which left room to serve the CBOR off a gateway while the content ' +
+      'path verified. The test resolves the metadata referent at L2 and at L3, asserts ' +
+      'the level and the block reported are the ones the content path reports, and ' +
+      'breaks the same evidence to show the metadata path refuses where the content ' +
+      'path refuses. The bytes are asserted to be the raw CBOR of the tag-5 chunks, ' +
+      'since a resolver that verified the right inscription and returned the body ' +
+      'would pass a thinner test.',
+  },
+
   // -------------------------------------------------------------------------
   // §7 Galleries
   // -------------------------------------------------------------------------
@@ -536,6 +598,28 @@ export const TABLE: Requirement[] = [
       '32-byte end, the absent packed index defaulting to 0, and the txid slice taken ' +
       'at the item position. The 36-byte end of the serialization is driven at ' +
       'packages/core/test/gallery.test.ts.',
+  },
+  {
+    id: 'gallery-lenient',
+    section: '§7',
+    title: 'an undecodable entry MUST be skipped and empty Items MUST yield a non-gallery result',
+    quote:
+      'implementation MUST skip an entry that does not decode rather than invalidating\n' +
+      'the list, and MUST yield a non-gallery result for properties carrying no Items\n' +
+      'array, where an Items array that is empty is a gallery with no members.',
+    binds: 'implementations reading galleries',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'both clauses are one leniency rule and both are driven, in the arrangement that ' +
+      'separates skipping from failing: a list whose middle entry is a truncated id ' +
+      'decodes to the entries around it, in order, with the skipped count stating what ' +
+      'was dropped. The second clause gained its trailing condition when the test went ' +
+      'red on the promoted sentence: `parseGallery` reads an Items array that is empty ' +
+      'as a gallery with no members, and reserves the non-gallery answer for properties ' +
+      'that carry no Items array at all. The old wording said "properties with no ' +
+      'Items", which reads either way, and promoting it without measuring would have ' +
+      'made a MUST out of the reading the code does not take. Both are driven here.',
   },
   {
     id: 'gallery-compressed',
@@ -566,25 +650,21 @@ export const TABLE: Requirement[] = [
     title: 'each negative vector MUST fail with the paired reason',
     quote: '- Negative (each MUST fail with the paired reason): tampered content byte',
     binds: 'implementations claiming conformance',
-    status: finding(
-      'the first vector pairs a reason no implementation can give, since the txid ' +
-        'does not commit to the content',
-    ),
-    file: 'core',
+    status: 'tested here',
+    file: 'fetch',
     why:
-      'six of the seven pairings hold and are driven by other rows in this file: the ' +
-      'witness swap by l3-wtxid, the absent envelope index and the tampered tapscript ' +
-      'by l2-checks, the txCount inflation by merkle-depth-position, the checkpoint ' +
-      'contradiction at packages/cli/test/checkpoint.test.ts, and the integrity pin at ' +
-      'packages/fetch/test/spec-uri.conformance.test.ts. The first pairs "tampered ' +
+      'all seven vectors are read out of the spec paragraph rather than retyped, so a ' +
+      'vector added to the line is driven without anybody remembering to copy it, and ' +
+      'each is failed with the reason paired with it there. The row sits in the fetch ' +
+      'file because two of the seven name codes only a resolver assigns ' +
+      '(`HEADER_TRUST` and `INTEGRITY`); the other five are bundle-level and would run ' +
+      'in either file. The first vector was a finding until 0.3.4: it paired "tampered ' +
       'content byte" with a txid mismatch, and §1 of this same spec says the txid does ' +
-      "not commit to the content: this repository's own vector for it " +
-      '(packages/fetch/test/resolver.test.ts, "detects a corrupted reveal tx from a ' +
-      'malicious backend") flips a byte of the PNG, leaves the txid identical, and ' +
-      'fails on the BIP-341 fold, which is the reason the fifth vector already names. ' +
-      'The requirement is that each vector fails with the paired reason, so a green ' +
-      'test over the six would speak for a sentence one seventh of which no ' +
-      'implementation can satisfy. Reported with a proposed correction instead.',
+      'not commit to the content, so no implementation could give that reason. ' +
+      'Measured on inscription 0, a flipped content byte leaves the txid identical, ' +
+      'moves the wtxid, and fails the BIP-341 fold at L2 and the witness commitment at ' +
+      'L3, which is what the corrected parenthetical now says and what this test ' +
+      'drives on both levels.',
   },
 ];
 
@@ -612,13 +692,13 @@ export function row(id: string): Requirement {
   return found;
 }
 
-/** The ids this spec's rows assign to one of the two files. */
-export function idsFor(file: 'core' | 'fetch'): string[] {
+/** The ids this spec's rows assign to one of the three files. */
+export function idsFor(file: Requirement['file']): string[] {
   return TABLE.filter((r) => r.file === file).map((r) => r.id);
 }
 
 /** Rows a file is expected to drive: everything but the two untestable statuses. */
-export function drivenIdsFor(file: 'core' | 'fetch'): string[] {
+export function drivenIdsFor(file: Requirement['file']): string[] {
   return TABLE.filter(
     (r) =>
       r.file === file &&

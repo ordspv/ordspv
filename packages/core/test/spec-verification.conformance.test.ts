@@ -58,6 +58,7 @@ import {
   commitTx,
   envelopeScript,
   l3Bundle,
+  mineHeader,
   revealTx,
   taprootCommit,
   type EnvelopeSpec,
@@ -426,6 +427,84 @@ describe('SPEC-VERIFICATION conformance', () => {
     expect(L2_NUMBERING_RESIDUAL).toMatch(/L3 witness commitment/);
   });
 
+  conformance('l3-checks', () => {
+    const good = l3Bundle(MAIN, AT.plain, PLAIN.id);
+    expect(verifyProofBundle(good, NO_POW_FLOOR).level).toBe('L3');
+    // the OPTIONAL half of the same sentence, which is what makes this list a
+    // different requirement from L2's: no commit section, and still L3
+    expect(good.commit).toBeUndefined();
+
+    // 7. the coinbase parses, IS a coinbase, and merkle-proves at position 0
+    const notCoinbase = clone(good);
+    notCoinbase.witness!.coinbaseHex = bytesToHex(MAIN.txs[AT.plain].raw);
+    expect(() => verifyProofBundle(notCoinbase, NO_POW_FLOOR)).toThrow(
+      /claimed coinbase is not a coinbase/,
+    );
+    const offPosition = clone(good);
+    offPosition.witness!.coinbaseTxidBranch = MAIN.txidBranch(AT.plain);
+    expect(() => verifyProofBundle(offPosition, NO_POW_FLOOR)).toThrow(
+      /coinbase txid merkle proof does not match/,
+    );
+
+    // 8. the commitment output, and the reserved value read from the
+    // coinbase's own witness. The reserved value is not txid-committed, so
+    // this arm reaches through a bundle: the branch of check 7 still folds
+    const reserved = clone(good);
+    const cb = parseTx(hexToBytes(reserved.witness!.coinbaseHex));
+    reserved.witness!.coinbaseHex = bytesToHex(
+      serializeFull({ ...cb, inputs: [{ ...cb.inputs[0], witness: [sha256(ZERO32)] }] }),
+    );
+    expect(parseTx(hexToBytes(reserved.witness!.coinbaseHex)).txid, 'the tamper moved the txid')
+      .toBe(cb.txid);
+    expect(() => verifyProofBundle(reserved, NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
+
+    // the output itself cannot be removed through a bundle, since removing it
+    // moves the coinbase txid and check 7 refuses first, so the rule is driven
+    // on a block mined around a coinbase that never had one
+    const bare = parseTx(
+      serializeFull({
+        version: 1,
+        inputs: [
+          {
+            prevTxidLE: ZERO32,
+            prevTxid: '0'.repeat(64),
+            vout: 0xffffffff,
+            scriptSig: new Uint8Array([0x03, 0x09, 0x09, 0x09]),
+            sequence: 0xffffffff,
+            witness: [ZERO32],
+          },
+        ],
+        outputs: [{ value: 312_500_000n, scriptPubKey: new Uint8Array([0x51]) }],
+        locktime: 0,
+      }),
+    );
+    const leaves = [bare.txidLE, PLAIN.reveal.txidLE];
+    expect(() =>
+      verifyWitnessAnchoring({
+        witness: {
+          coinbaseHex: bytesToHex(bare.raw),
+          coinbaseTxidBranch: buildMerkleBranch(leaves, 0).map(internalToDisplay),
+          wtxidBranch: [internalToDisplay(ZERO32)],
+        },
+        header: parseHeader(mineHeader(computeMerkleRoot(leaves), 0x207fffff)),
+        txCount: 2,
+        reveal: PLAIN.reveal,
+        pos: 1,
+      }),
+    ).toThrow(/no BIP-141 witness commitment output/);
+
+    // 9. the fold itself, which l3-wtxid drives on its own rules as well
+    const foldedWrong = clone(good);
+    foldedWrong.witness!.wtxidBranch = MAIN.wtxidBranch(AT.multileaf);
+    expect(() => verifyProofBundle(foldedWrong, NO_POW_FLOOR)).toThrow(
+      /witness commitment mismatch/,
+    );
+
+    // 10. the envelope at the id's index, read from the now-committed witness
+    const absent = l3Bundle(MAIN, AT.plain, `${PLAIN.id.slice(0, 64)}i9`);
+    expect(() => verifyProofBundle(absent, NO_POW_FLOOR)).toThrow(/9/);
+  });
+
   conformance('l3-wtxid', () => {
     // pos 1 is reachable only in a block of two transactions, where the
     // sibling of the reveal's wtxid leaf is the zeroed coinbase leaf
@@ -472,6 +551,45 @@ describe('SPEC-VERIFICATION conformance', () => {
   // -------------------------------------------------------------------------
   // §3 Proof bundle format v1
   // -------------------------------------------------------------------------
+
+  conformance('wire-byte-order', () => {
+    const bundle = l2Bundle(MAIN, AT.plain, PLAIN);
+    const verified = verifyProofBundle(bundle, NO_POW_FLOOR);
+    const reverseHex = (h: string) => bytesToHex(hexToBytes(h).reverse());
+
+    // display order is the reverse of what the hash function produces, and it
+    // is what the public API prints, which is the whole of the sentence
+    expect(bundle.block.hash).toBe(reverseHex(bytesToHex(sha256d(hexToBytes(bundle.block.header)))));
+    expect(bundle.block.hash).toBe(verified.header.hash);
+    expect(bundle.inscriptionId.slice(0, 64)).toBe(verified.revealTx.txid);
+
+    // each hash-carrying field in turn, written the other way round. A
+    // verifier that read either order would pass all four of these
+    const flippedHash = clone(bundle);
+    flippedHash.block.hash = reverseHex(bundle.block.hash);
+    expect(() => verifyProofBundle(flippedHash, NO_POW_FLOOR)).toThrow(/header hashes to/);
+
+    const flippedId = clone(bundle);
+    flippedId.inscriptionId = `${reverseHex(bundle.inscriptionId.slice(0, 64))}i0`;
+    expect(() => verifyProofBundle(flippedId, NO_POW_FLOOR)).toThrow(/reveal tx hashes to/);
+
+    const flippedBranch = clone(bundle);
+    flippedBranch.reveal.txidBranch = bundle.reveal.txidBranch.map(reverseHex);
+    expect(flippedBranch.reveal.txidBranch).not.toEqual(bundle.reveal.txidBranch);
+    expect(() => verifyProofBundle(flippedBranch, NO_POW_FLOOR)).toThrow(/merkle/);
+
+    const l3 = l3Bundle(MAIN, AT.plain, PLAIN.id);
+    for (const field of ['coinbaseTxidBranch', 'wtxidBranch'] as const) {
+      const flipped = clone(l3);
+      flipped.witness![field] = l3.witness![field].map(reverseHex);
+      expect(() => verifyProofBundle(flipped, NO_POW_FLOOR), field).toThrow();
+    }
+
+    // and the transactions, which the same sentence says are hex
+    const notHex = clone(bundle);
+    notHex.reveal.hex = Buffer.from(hexToBytes(bundle.reveal.hex)).toString('base64');
+    expect(() => verifyProofBundle(notHex, NO_POW_FLOOR)).toThrow();
+  });
 
   conformance('txcount-required', () => {
     const good = l2Bundle(MAIN, AT.plain, PLAIN);
@@ -761,6 +879,63 @@ describe('SPEC-VERIFICATION conformance', () => {
     expect(parseGallery(packed).items).toEqual(parseGallery(inline).items);
   });
 
+  conformance('gallery-lenient', () => {
+    const a = 'a'.repeat(64);
+    const b = '00'.repeat(31) + 'ff';
+
+    // the middle entry is a truncated id, which decodes to nothing. The
+    // entries around it survive, in order, and the count states what was
+    // dropped, so a caller can tell a complete list from a partial one
+    const withJunk = cbMap([
+      [
+        0,
+        cbArray([
+          cbMap([[0, cbBytes(serializedId(a, 0))]]),
+          cbMap([[0, cbBytes(serializedId(b, 0).slice(0, 12))]]),
+          cbMap([[0, cbBytes(serializedId(b, 7))]]),
+        ]),
+      ],
+    ]);
+    expect(parseGallery(withJunk)).toEqual({
+      isGallery: true,
+      items: [`${a}i0`, `${b}i7`],
+      skipped: 1,
+    });
+
+    // the same list with the junk removed, so the skip is shown to cost the
+    // list nothing but the entry that did not decode
+    const clean = cbMap([
+      [
+        0,
+        cbArray([
+          cbMap([[0, cbBytes(serializedId(a, 0))]]),
+          cbMap([[0, cbBytes(serializedId(b, 7))]]),
+        ]),
+      ],
+    ]);
+    expect(parseGallery(clean).items).toEqual(parseGallery(withJunk).items);
+    expect(parseGallery(clean).skipped).toBe(0);
+
+    // properties carrying no Items array: a non-gallery result. The packed
+    // txids alone are not a member list, since nothing says how many members
+    // they name
+    expect(parseGallery(cbMap([[2, cbBytes(displayToInternal(a))]]))).toEqual({
+      isGallery: false,
+      items: [],
+      skipped: 0,
+    });
+    expect(parseGallery(cbMap([])).isGallery).toBe(false);
+
+    // and the condition the promoted sentence had to gain: an Items array
+    // that IS there and IS empty declares a gallery with no members, which
+    // keeps it distinguishable from an inscription declaring no gallery
+    expect(parseGallery(cbMap([[0, cbArray([])]]))).toEqual({
+      isGallery: true,
+      items: [],
+      skipped: 0,
+    });
+  });
+
   conformance('gallery-compressed', () => {
     const items = cbMap([[0, cbArray([cbMap([[0, cbBytes(serializedId('a'.repeat(64), 0))]])])]]);
 
@@ -796,15 +971,11 @@ describe('SPEC-VERIFICATION conformance', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * §9's negative vectors have no test here. Six of the seven pairings hold
-   * and are driven by the rows above: the witness swap by `l3-wtxid`, the
-   * absent envelope index and the tampered tapscript by `l2-checks`, the
-   * txCount inflation by `merkle-depth-position`, the checkpoint
-   * contradiction at packages/cli/test/checkpoint.test.ts, and the integrity
-   * pin at packages/fetch/test/spec-uri.conformance.test.ts. The seventh
-   * pairs a reason the code does not give, which is the finding this row
-   * carries, so committing a green test for the line would say the whole
-   * sentence holds.
+   * §9's negative vectors are driven in the fetch companion, because two of
+   * the seven fail with codes only a resolver assigns. Five of them are also
+   * covered by rows above, harder and one mechanism at a time: the witness
+   * swap by `l3-wtxid`, the absent envelope index and the tampered tapscript
+   * by `l2-checks`, and the txCount inflation by `merkle-depth-position`.
    */
 
   // -------------------------------------------------------------------------
@@ -857,7 +1028,7 @@ describe('SPEC-VERIFICATION conformance', () => {
     // the rows no test asserts, kept visible rather than counted: a reader of
     // the list sees the coverage gap without reading the file
     const notTested = TABLE.filter((r) => r.status.startsWith('unimplemented,')).map((r) => r.id);
-    expect(notTested).toEqual(['checkpoint-consult', 'negative-vectors']);
+    expect(notTested).toEqual([]);
   });
 
   it('SPEC-VERIFICATION.md: every `tested at` row names a test that still exists', () => {
@@ -875,20 +1046,21 @@ describe('SPEC-VERIFICATION conformance', () => {
   });
 
   /**
-   * The split across two files, checked from both ends. The fetch companion
-   * (packages/fetch/test/spec-verification.anchoring.test.ts) runs the same
-   * check for its own rows, so a row that moved between files without a test
-   * moving with it fails on one side or the other.
+   * The split across three files, checked from both ends. Each companion runs
+   * the same check for its own rows, so a row that moved between files without
+   * a test moving with it fails on one side or the other. Each is named here
+   * and asserted to read this table, so a companion deleted wholesale takes
+   * this test down with it rather than leaving its rows unspoken for.
    */
   it('SPEC-VERIFICATION.md: this file speaks for exactly the core rows', () => {
     expect([...SPOKEN].sort()).toEqual(drivenIdsFor('core').sort());
-    expect(idsFor('fetch').length).toBeGreaterThan(0);
-    expect(
-      readFileSync(
-        join(ROOT, 'packages/fetch/test/spec-verification.anchoring.test.ts'),
-        'utf8',
-      ),
-    ).toContain('spec-verification.rows.js');
+    for (const [file, path] of [
+      ['fetch', 'packages/fetch/test/spec-verification.anchoring.test.ts'],
+      ['servers', 'packages/sidecar/test/spec-verification.servers.test.ts'],
+    ] as const) {
+      expect(idsFor(file).length, `${file} drives no rows`).toBeGreaterThan(0);
+      expect(readFileSync(join(ROOT, path), 'utf8')).toContain('spec-verification.rows.js');
+    }
   });
 });
 

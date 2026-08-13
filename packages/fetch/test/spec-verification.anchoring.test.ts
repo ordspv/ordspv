@@ -1,14 +1,15 @@
 /**
  * The SPEC-VERIFICATION rows whose code lives in @ordspv/fetch: §4's header
  * anchoring (`headertrust.ts`), §2's L0 labelling and §6's delegate hop (both
- * `resolver.ts`).
+ * `resolver.ts`), and §9's negative vectors, two of which fail with codes only
+ * a resolver assigns.
  *
  * The accounting table is shared with the core suite
  * (`packages/core/test/spec-verification.rows.ts`), and the accounting test
  * that sums the whole spec lives in
- * `packages/core/test/spec-verification.conformance.test.ts`. Neither file can
- * lose a row: the table names which of the two drives each one, and each file
- * asserts it drives exactly the rows assigned to it.
+ * `packages/core/test/spec-verification.conformance.test.ts`. No file can lose
+ * a row: the table names which one drives each, and each asserts it drives
+ * exactly the rows assigned to it.
  *
  * Most rows here are `tested at headertrust.test.ts`, which drives the anchor
  * across its arms and its failure modes. What these tests add is traceability
@@ -24,17 +25,23 @@ import {
   hexToBytes,
   internalToDisplay,
   parseHeader,
+  parseTx,
   serializeBlock,
+  sha256,
+  verifyProofBundle,
   type ParsedTx,
+  type ProofBundleJson,
 } from '@ordspv/core';
 import {
   ROOT,
+  SPEC,
   anchor,
   drivenIdsFor,
   idsFor,
   row,
 } from '../../core/test/spec-verification.rows.js';
 import {
+  NO_POW_FLOOR,
   buildBlock,
   commitTx,
   envelopeScript,
@@ -48,6 +55,7 @@ import {
   HeaderTrustDisagreementError,
   HeaderTrustError,
   MAINNET_CHECKPOINTS,
+  OrdResolveError,
   OrdResolver,
   checkpointTrustHeader,
   makeHeaderTrust,
@@ -180,13 +188,22 @@ const DELEGATING = inscribe({
   ],
   body: ['the delegating body, which /content never serves'],
 });
+/** the raw CBOR a tag-5 field carries, as `{"k":"v"}` */
+const META_CBOR = Uint8Array.from([0xa1, 0x61, 0x6b, 0x61, 0x76]);
+const WITH_META = inscribe({
+  fields: [
+    [1, 'text/plain'],
+    [5, META_CBOR],
+  ],
+  body: ['a body the metadata referent is not'],
+});
 /**
  * Two blocks, so one inscription's evidence can be broken without touching the
  * other's. In one block a corrupted witness moves the block's own witness
  * root, which would break the addressed inscription's L3 proof along with the
  * delegate's and leave the test unable to say which one refused.
  */
-const BLOCK_A = buildBlock([DELEGATING.reveal]);
+const BLOCK_A = buildBlock([DELEGATING.reveal, WITH_META.reveal]);
 const BLOCK_B = buildBlock([DELEGATE.reveal]);
 const HEIGHT_B = BLOCK_HEIGHT + 1;
 
@@ -195,10 +212,112 @@ function delegateRoutes(): Record<string, Route> {
     ...blockRoutes(BLOCK_A, BLOCK_HEIGHT),
     ...blockRoutes(BLOCK_B, HEIGHT_B),
   };
-  for (const i of [DELEGATING, DELEGATE]) {
+  for (const i of [DELEGATING, DELEGATE, WITH_META]) {
     routes[`${E}/tx/${i.commit.txid}/hex`] = bytesToHex(i.commit.raw);
   }
   return routes;
+}
+
+// ---------------------------------------------------------------------------
+// §9's negative vectors: bundles over BLOCK_B, where the delegate's reveal
+// sits at position 1 behind the coinbase
+// ---------------------------------------------------------------------------
+
+const DELEGATE_POS = 1;
+const DELEGATE_BODY = '<h1>the delegate body</h1>';
+
+function blockJson(block: TestBlock, height: number) {
+  return { height, hash: block.blockHash, header: block.headerHex, txCount: block.txCount };
+}
+
+function l2Bundle(raw = BLOCK_B.txs[DELEGATE_POS].raw, id = DELEGATE.id): ProofBundleJson {
+  return {
+    version: 1,
+    inscriptionId: id,
+    level: 'L2',
+    block: blockJson(BLOCK_B, HEIGHT_B),
+    reveal: {
+      hex: bytesToHex(raw),
+      pos: DELEGATE_POS,
+      txidBranch: BLOCK_B.txidBranch(DELEGATE_POS),
+    },
+    commit: { hex: bytesToHex(DELEGATE.commit.raw) },
+  };
+}
+
+function l3Bundle(raw = BLOCK_B.txs[DELEGATE_POS].raw): ProofBundleJson {
+  return {
+    ...l2Bundle(raw),
+    level: 'L3',
+    witness: {
+      coinbaseHex: bytesToHex(BLOCK_B.txs[0].raw),
+      coinbaseTxidBranch: BLOCK_B.txidBranch(0),
+      wtxidBranch: BLOCK_B.wtxidBranch(DELEGATE_POS),
+    },
+  };
+}
+
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (haystack[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * Flip one byte inside the reveal's WITNESS. The txid hashes the stripped
+ * serialization, so it cannot move, which is the whole reason §9's first
+ * vector could not fail the way it used to claim.
+ */
+function flipInWitness(tx: ParsedTx, target: string): Uint8Array {
+  const raw = tx.raw.slice();
+  const at = indexOfBytes(raw, new TextEncoder().encode(target));
+  expect(at, `"${target}" is not in the serialized reveal`).toBeGreaterThan(0);
+  raw[at] ^= 0xff;
+  return raw;
+}
+
+/**
+ * §9's negative vectors, read out of the spec rather than retyped, so a vector
+ * added to the line is driven here without anybody remembering to copy it.
+ * Commas separate the vectors and also appear inside a reason, so the split
+ * tracks parenthesis depth.
+ */
+function negativeVectors(): { name: string; reason: string }[] {
+  const lead = '- Negative (each MUST fail with the paired reason):';
+  const start = SPEC.indexOf(lead);
+  expect(start, 'SPEC-VERIFICATION.md no longer states the negative vectors').toBeGreaterThan(0);
+  const end = SPEC.indexOf('\n\n', start);
+  const paragraph = SPEC.slice(start + lead.length, end === -1 ? undefined : end)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.$/, '');
+
+  const items: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of paragraph) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      items.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  items.push(current);
+
+  return items.map((item) => {
+    const at = item.indexOf('(');
+    return at === -1
+      ? { name: item.trim(), reason: '' }
+      : {
+          name: item.slice(0, at).trim(),
+          reason: item.slice(at + 1, item.lastIndexOf(')')).trim(),
+        };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +578,163 @@ describe('SPEC-VERIFICATION conformance: anchoring, labelling, delegation', () =
       const bare = await bad.resolve(`ord:${DELEGATING.id}`, { verification: level });
       expect(new TextDecoder().decode(bare.body), level).toContain('the delegating body');
     }
+  });
+
+  conformance('metadata-level', async () => {
+    const resolver = new OrdResolver({
+      esplora: [E],
+      fetchFn: stubFetch(delegateRoutes()),
+      ...SYNTHETIC,
+    });
+
+    for (const level of ['L2', 'L3'] as const) {
+      const meta = await resolver.resolve(`ord:${WITH_META.id}/metadata`, {
+        verification: level,
+      });
+      // the raw CBOR of the tag-5 chunks, so a resolver returning the body
+      // under this referent fails here rather than passing on the level alone
+      expect(meta.body, level).toEqual(META_CBOR);
+
+      // at the same level as content: the level asked for is the level
+      // reported, and the chain context is the one the content path reports
+      const content = await resolver.resolve(`ord:${WITH_META.id}`, { verification: level });
+      expect(meta.verification.level, level).toBe(level);
+      expect(meta.verification.level, level).toBe(content.verification.level);
+      expect(meta.verification.blockHash, level).toBe(content.verification.blockHash);
+      expect(meta.verification.height, level).toBe(content.verification.height);
+    }
+
+    // and it refuses on the evidence the content path refuses on: the backend
+    // serves another block under this block's hash, on both routes a builder
+    // reads
+    const corrupted = delegateRoutes();
+    corrupted[`${E}/block/${BLOCK_A.blockHash}/header`] = BLOCK_B.headerHex;
+    corrupted[`${E}/block/${BLOCK_A.blockHash}/raw`] = serializeBlock(
+      hexToBytes(BLOCK_B.headerHex),
+      BLOCK_B.txs,
+    );
+    const bad = new OrdResolver({ esplora: [E], fetchFn: stubFetch(corrupted), ...SYNTHETIC });
+    for (const level of ['L2', 'L3'] as const) {
+      await expect(
+        bad.resolve(`ord:${WITH_META.id}/metadata`, { verification: level }),
+        level,
+      ).rejects.toThrow();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // §9 Conformance vectors
+  // -------------------------------------------------------------------------
+
+  conformance('negative-vectors', async () => {
+    const vectors = negativeVectors();
+    expect(vectors.map((v) => v.name)).toEqual([
+      'tampered content byte',
+      'witness swap',
+      'absent envelope index',
+      '`txCount` inflation',
+      'tampered tapscript',
+      'checkpoint contradiction',
+      'integrity pin mismatch',
+    ]);
+    const reasonOf = (name: string) => vectors.find((v) => v.name === name)!.reason;
+
+    // the bundle every vector below starts from, so a refusal is the tamper
+    expect(verifyProofBundle(l2Bundle(), NO_POW_FLOOR).level).toBe('L2');
+    expect(verifyProofBundle(l3Bundle(), NO_POW_FLOOR).level).toBe('L3');
+
+    // 1. tampered content byte. The reason this vector pairs is the one the
+    // code gives, which was the finding this row carried until 0.3.4: the id's
+    // txid does not commit to the witness, so the tamper leaves the txid
+    // matching and the commitment over the witness is what refuses
+    const content = reasonOf('tampered content byte');
+    expect(content).toContain('BIP-341 mismatch at L2');
+    expect(content).toContain('witness commitment mismatch at L3');
+    expect(content).toContain('the txid does not commit to the witness');
+    const tampered = flipInWitness(BLOCK_B.txs[DELEGATE_POS], DELEGATE_BODY);
+    expect(parseTx(tampered).txid, 'the tamper moved the txid, so it tampered the wrong bytes')
+      .toBe(BLOCK_B.txs[DELEGATE_POS].txid);
+    expect(() => verifyProofBundle(l2Bundle(tampered), NO_POW_FLOOR)).toThrow(/taproot commitment mismatch/);
+    expect(() => verifyProofBundle(l3Bundle(tampered), NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
+
+    // 2. witness swap: another inscription's script under this id's txid, which
+    // only the L3 commitment can see
+    expect(reasonOf('witness swap')).toContain('witness commitment mismatch');
+    const swapped = revealTx(
+      [
+        {
+          script: envelopeScript(
+            { fields: [[1, 'text/html']], body: ['<h1>a body nobody committed</h1>'] },
+            { checksigPrefix: true },
+          ),
+          controlBlock: taprootCommit(
+            envelopeScript({ body: ['another taptree'] }, { checksigPrefix: true }),
+          ).controlBlock,
+        },
+      ],
+      { prevTxidLE: DELEGATE.commit.txidLE, vout: 0 },
+    );
+    expect(swapped.txid).toBe(BLOCK_B.txs[DELEGATE_POS].txid);
+    expect(() => verifyProofBundle(l3Bundle(swapped.raw), NO_POW_FLOOR)).toThrow(/witness commitment mismatch/);
+
+    // 3. absent envelope index: the only vector the line pairs no reason with,
+    // so what is asserted is the refusal and that it names the index asked for
+    expect(reasonOf('absent envelope index')).toBe('');
+    expect(() =>
+      verifyProofBundle(
+        l2Bundle(BLOCK_B.txs[DELEGATE_POS].raw, `${DELEGATE.id.slice(0, 64)}i7`),
+        NO_POW_FLOOR,
+      ),
+    ).toThrow(/7/);
+
+    // 4. txCount inflation: one more transaction than the block holds puts the
+    // tree a level taller, and the branch that folded is now the wrong length
+    expect(reasonOf('`txCount` inflation')).toContain('depth mismatch');
+    const inflated = l2Bundle();
+    inflated.block.txCount = BLOCK_B.txCount + 1;
+    expect(() => verifyProofBundle(inflated, NO_POW_FLOOR)).toThrow(/branch length|depth/);
+
+    // 5. tampered tapscript: the same fold as vector 1 at L2, which is what
+    // the corrected first parenthetical now says. This one moves a field push
+    // rather than the body, so the two vectors stay distinct tampers
+    expect(reasonOf('tampered tapscript')).toContain('BIP-341 mismatch');
+    expect(() =>
+      verifyProofBundle(
+        l2Bundle(flipInWitness(BLOCK_B.txs[DELEGATE_POS], 'text/html')),
+        NO_POW_FLOOR,
+      ),
+    ).toThrow(/taproot commitment mismatch/);
+
+    // 6. checkpoint contradiction: a compiled-in hash at the proven height that
+    // is not the header's, which the anchor refuses before it asks an attester
+    expect(reasonOf('checkpoint contradiction')).toContain('HEADER_TRUST');
+    const contradicted = new OrdResolver({
+      esplora: [E],
+      fetchFn: stubFetch(delegateRoutes()),
+      ...SYNTHETIC,
+      checkpoints: new Map([[HEIGHT_B, bytesToHex(sha256(new TextEncoder().encode('elsewhere')))]]),
+    });
+    await expect(contradicted.resolve(`ord:${DELEGATE.id}`, { verification: 'L2' }))
+      .rejects.toMatchObject({ code: 'HEADER_TRUST' });
+
+    // 7. integrity pin mismatch: the bytes verify against the chain and are
+    // not the bytes the pin names, which fails the resolution whatever the
+    // verification level established
+    expect(reasonOf('integrity pin mismatch')).toContain('INTEGRITY');
+    const honest = new OrdResolver({
+      esplora: [E],
+      fetchFn: stubFetch(delegateRoutes()),
+      ...SYNTHETIC,
+    });
+    const wrongPin = bytesToHex(sha256(new TextEncoder().encode('not the delegate body')));
+    await expect(
+      honest.resolve(`ord:${DELEGATE.id}#integrity=sha256-${wrongPin}`, { verification: 'L2' }),
+    ).rejects.toMatchObject({ code: 'INTEGRITY' });
+    // and the same resolve without the pin, so the refusal is the digest
+    expect(
+      (await honest.resolve(`ord:${DELEGATE.id}`, { verification: 'L2' })).verification
+        .integrityChecked,
+    ).toBe(false);
   });
 
   // -------------------------------------------------------------------------

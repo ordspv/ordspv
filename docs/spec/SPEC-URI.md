@@ -57,14 +57,17 @@ digest         = 64hexdig / base64-32bytes  ; hex preferred; SRI-style base64(ur
   delegate."
 - `ord:<id>/content` with a delegate whose reveal is not yet inscribed MUST fail
   (upstream 404 semantics), not fall back to the delegating inscription's own body.
-- Referents are **immutable**: same URI, same bytes, forever. Caches MAY treat
-  resolutions as `immutable` (see SPEC-GATEWAY §4).
+- Referents are **immutable**: same URI, same bytes, forever. A resolver MUST NOT let
+  anything outside the chain data a URI names decide its referent, so the same URI
+  resolves to the same bytes whichever source answers and whenever it is asked. Caches
+  MAY treat resolutions as `immutable` (see SPEC-GATEWAY §4).
 - An inscription with no body (bare form), or whose effective content source has no
   body (`/content` form), has no referent: resolution MUST fail with a
   not-found-equivalent error.
 - Envelope index semantics: `<id>` addresses the Nth envelope of the reveal
-  transaction, counting every parsed envelope (cursed and unbound included) flat across
-  inputs in order, matching ord. Unbound/cursed inscriptions are valid referents.
+  transaction. A resolver MUST count every parsed envelope, cursed and unbound
+  included, flat across inputs in order, matching ord. Unbound/cursed inscriptions are
+  valid referents.
 
 ## 4. The integrity fragment
 
@@ -75,9 +78,10 @@ ord:<id>/content#integrity=sha256-<base64url-of-32-bytes>
 
 - The digest domain is the **stored body bytes** of the effective content source (the
   addressed inscription for the bare form; the delegate for `/content` when
-  delegation applies; the raw CBOR bytes for `/metadata`): exactly the
-  concatenated envelope body pushes, BEFORE any content-encoding is decoded and before
-  any transport re-encoding. This makes the digest a pure function of on-chain data.
+  delegation applies; the raw CBOR bytes for `/metadata`). A resolver MUST hash exactly
+  the concatenated envelope body pushes, BEFORE any content-encoding is decoded and
+  before any transport re-encoding. This makes the digest a pure function of on-chain
+  data.
 - Fragments are client-side by design (never sent to gateways). A resolver that is
   given an integrity fragment MUST verify it and MUST fail resolution on mismatch,
   regardless of verification level.

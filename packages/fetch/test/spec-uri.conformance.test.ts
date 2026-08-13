@@ -28,8 +28,10 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { gzipSync } from 'node:zlib';
 import {
   bytesToHex,
+  concatBytes,
   hexToBytes,
   internalToDisplay,
   buildMerkleBranch,
@@ -126,6 +128,42 @@ const TABLE: Requirement[] = [
     why: 'the delegating inscription is given a body of its own, so a fallback would be visible.',
   },
   {
+    id: 'referent-immutable',
+    section: '§3',
+    title: 'a resolver MUST NOT let anything outside the chain data decide a referent',
+    quote:
+      'A resolver MUST NOT let\n' +
+      '  anything outside the chain data a URI names decide its referent',
+    binds: 'resolvers',
+    status: 'tested here',
+    why:
+      'the immutability claim was keywordless until 0.3.4 and the MAY beside it was the ' +
+      'only keyword on the line, so the caching permission was normative and the fact it ' +
+      'rests on was not. What is asserted is the resolver side of it: the same id mined ' +
+      'into two different blocks, at two heights, in two positions, beside different ' +
+      'neighbours, resolves to the same bytes and the same content type through two ' +
+      'resolvers over two backends. What no test can reach is "forever", which is a ' +
+      'claim about the chain and not about this code.',
+  },
+  {
+    id: 'envelope-index',
+    section: '§3',
+    title: 'a resolver MUST count every envelope flat across inputs, cursed and unbound included',
+    quote:
+      'A resolver MUST count every parsed envelope, cursed and unbound\n' +
+      '  included, flat across inputs in order, matching ord.',
+    binds: 'resolvers',
+    status: 'tested here',
+    why:
+      'the counting rule decides which bytes an id names, and a resolver counting per ' +
+      'input or skipping the envelopes ord calls cursed would serve the wrong ' +
+      'inscription under a well-formed id. A two-input reveal carrying two envelopes on ' +
+      'the first input and one on the second is resolved at each of its three indices, ' +
+      'so per-input counting and skip-the-second-in-an-input both fail here. The second ' +
+      'envelope in one input is cursed by ord numbering, which is what makes it the ' +
+      'entry a counter is tempted to drop.',
+  },
+  {
     id: 'no-referent',
     section: '§3',
     title: 'an inscription with no body has no referent and MUST fail',
@@ -143,6 +181,25 @@ const TABLE: Requirement[] = [
     binds: 'resolvers',
     status: 'tested here',
     why: '"regardless of verification level" is the load-bearing clause, so every level is driven.',
+  },
+  {
+    id: 'digest-domain',
+    section: '§4',
+    title: 'a resolver MUST hash the stored body pushes, before any decoding',
+    quote:
+      'A resolver MUST hash exactly\n' +
+      '  the concatenated envelope body pushes, BEFORE any content-encoding is decoded and\n' +
+      '  before any transport re-encoding.',
+    binds: 'resolvers',
+    status: 'tested here',
+    why:
+      'the domain is what makes a pin a fact about the chain rather than about a ' +
+      'resolver, so it is driven on an inscription whose stored bytes and decoded bytes ' +
+      'differ: gzip on chain, tag 9 declaring it, the resolver decoding it for the ' +
+      'caller. The pin over the stored bytes verifies and the pin over the bytes the ' +
+      'caller receives is refused, which is the direction a resolver hashing what it ' +
+      'returns would get backwards. The `/metadata` arm of the same sentence is driven ' +
+      'beside it on the raw CBOR.',
   },
   {
     id: 'indeterminate',
@@ -443,9 +500,116 @@ describe('SPEC-URI conformance', () => {
     });
   });
 
+  conformance('referent-immutable', async () => {
+    const stored = 'the bytes this id names, wherever it is asked about';
+    const one = inscribe({ fields: [[1, 'text/plain']], body: [stored] });
+    const filler = inscribe({ fields: [[1, 'text/plain']], body: ['a neighbour'] });
+
+    // the same inscription mined into two different blocks: different height,
+    // different position, different neighbours, different backend answers
+    const first = await chain([one], 100).resolve(`ord:${one.id}`);
+    const second = await chain([filler, one], 250).resolve(`ord:${one.id}`);
+
+    expect(new TextDecoder().decode(second.body)).toBe(stored);
+    expect(second.body).toEqual(first.body);
+    expect(second.contentType).toBe(first.contentType);
+    // and the chain context each resolve established really did differ, so the
+    // sameness above is the referent and not two identical resolves
+    expect(second.verification.blockHash).not.toBe(first.verification.blockHash);
+    expect(second.verification.height).not.toBe(first.verification.height);
+  });
+
+  conformance('envelope-index', async () => {
+    // one input carrying two envelopes, then an input carrying one. The second
+    // envelope in an input is cursed by ord numbering and counts all the same
+    const twoInOne = concatBytes(
+      envelopeScript({ fields: [[1, 'text/plain']], body: ['envelope 0'] }, { checksigPrefix: true }),
+      envelopeScript({ fields: [[1, 'text/plain']], body: ['envelope 1'] }),
+    );
+    const alone = envelopeScript(
+      { fields: [[1, 'text/plain']], body: ['envelope 2'] },
+      { checksigPrefix: true },
+    );
+    const tapFirst = taprootCommit(twoInOne);
+    const tapSecond = taprootCommit(alone);
+    const commit = commitTx(tapFirst.scriptPubKey);
+    const reveal = revealTx(
+      [
+        { script: twoInOne, controlBlock: tapFirst.controlBlock },
+        { script: alone, controlBlock: tapSecond.controlBlock },
+      ],
+      { prevTxidLE: commit.txidLE, vout: 0 },
+    );
+    const inscribed = { id: `${reveal.txid}i0`, reveal, commit };
+    const resolver = chain([inscribed]);
+
+    // flat across inputs in order: index 2 is the second input's envelope, and
+    // a resolver counting per input or dropping the cursed one would land
+    // somewhere else on at least one of these
+    for (const [index, body] of [
+      [0, 'envelope 0'],
+      [1, 'envelope 1'],
+      [2, 'envelope 2'],
+    ] as const) {
+      const at = await resolver.resolve(`ord:${reveal.txid}i${index}`, { verification: 'L3' });
+      expect(new TextDecoder().decode(at.body), `index ${index}`).toBe(body);
+    }
+    // and one past the end is not a referent at all
+    await expect(resolver.resolve(`ord:${reveal.txid}i3`)).rejects.toThrow();
+  });
+
   // -------------------------------------------------------------------------
   // §4 The integrity fragment
   // -------------------------------------------------------------------------
+
+  conformance('digest-domain', async () => {
+    // stored bytes and delivered bytes differ, which is the only arrangement
+    // where the domain is observable
+    const decoded = 'the text a caller receives once the resolver inflates it';
+    const gzipped = new Uint8Array(gzipSync(Buffer.from(decoded)));
+    const one = inscribe({
+      fields: [
+        [1, 'text/plain'],
+        [9, 'gzip'],
+      ],
+      body: [gzipped],
+    });
+    const resolver = chain([one]);
+
+    const served = await resolver.resolve(`ord:${one.id}`);
+    expect(new TextDecoder().decode(served.body)).toBe(decoded);
+    expect(served.decoded).toBe(true);
+
+    const storedDigest = bytesToHex(sha256(gzipped));
+    const deliveredDigest = bytesToHex(sha256(new TextEncoder().encode(decoded)));
+    expect(storedDigest).not.toBe(deliveredDigest);
+
+    // the pin over the stored pushes verifies; the pin over the bytes the
+    // caller was handed does not, which is the direction a resolver hashing
+    // its own output would get backwards
+    const pinned = await resolver.resolve(`ord:${one.id}#integrity=sha256-${storedDigest}`);
+    expect(pinned.verification.integrityChecked).toBe(true);
+    await expect(
+      resolver.resolve(`ord:${one.id}#integrity=sha256-${deliveredDigest}`),
+    ).rejects.toMatchObject({ code: 'INTEGRITY' });
+
+    // the /metadata arm of the same sentence: the raw CBOR chunks, as stored
+    const meta = Uint8Array.from([0xa1, 0x61, 0x6b, 0x61, 0x76]); // {"k":"v"}
+    const withMeta = inscribe({
+      fields: [
+        [1, 'text/plain'],
+        [5, meta],
+      ],
+      body: ['a body the metadata pin must not hash'],
+    });
+    const metaResolver = chain([withMeta]);
+    const metaDigest = bytesToHex(sha256(meta));
+    const metaPinned = await metaResolver.resolve(
+      `ord:${withMeta.id}/metadata#integrity=sha256-${metaDigest}`,
+    );
+    expect(metaPinned.body).toEqual(meta);
+    expect(metaPinned.verification.integrityChecked).toBe(true);
+  });
 
   conformance('integrity', async () => {
     const stored = 'pinned bytes';

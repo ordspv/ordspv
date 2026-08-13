@@ -33,9 +33,10 @@ Integrity fragments never reach the gateway (fragments are client-side).
   surface. It MAY emit `x-ord-verification` on `/ord/v1/verified/<id>`, which
   verifies locally in either personality, so the header there reports work the
   gateway performed.
-- `verify`: serves `/content/<id>` only after locally verifying the bytes against
-  Bitcoin at L2+ via configured esplora/electrum backends. A compromised upstream
-  cannot make a verify-gateway serve forged bytes. MUST emit attestation headers (§5).
+- `verify`: a verify-personality gateway MUST serve `/content/<id>` only after
+  locally verifying the bytes against Bitcoin at L2+ via configured esplora/electrum
+  backends. A compromised upstream cannot make a verify-gateway serve forged bytes.
+  MUST emit attestation headers (§5).
 
 Both personalities MUST serve `/ord/v1/proof` (§3) if they advertise this spec.
 
@@ -168,6 +169,13 @@ ordinals.com down (ord#3873).
   disables it); the default is mainnet's `0x1d00ffff`, so a gateway on a chain
   with an easier limit refuses every header it is served until this is set.
   Signet is `0x1e0377ae` and regtest is `0x207fffff`.
+  `CHECKPOINTS` sets the compiled-in `height → hash` pairs every bundle is held
+  to (SPEC-VERIFICATION §4), as `off` or as a comma-separated list of
+  `<height>:<display-order hash>`; the default is the mainnet set, whose hashes
+  contradict every honest bundle another chain produces at those heights, so a
+  gateway off mainnet sets `off` or its own chain's pairs. An entry that does
+  not read leaves the whole variable on the mainnet default and says so on
+  stderr, because a partial set is a weaker chain view than either.
 - Observability: one JSON log line per request (ip, route, status, ms,
   cache) and Prometheus text at `/metrics` (`gateway_http_requests_total`,
   latency histogram by route label, cache hit/miss counters, rate-limit

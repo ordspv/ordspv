@@ -86,8 +86,9 @@ length as proven at L2 unless `singleInputReveal` is true. At L3 the list is pro
 ### L3: witness commitment
 Adds the BIP-141 coinbase witness commitment; equivalent to full-node treatment of the
 reveal witness. Additional ingredients: coinbase tx (full, with witness), its txid
-merkle branch at position 0, and a wtxid-tree branch for the reveal. Checks (beyond
-L2's 1–4; the commit-tx/BIP-341 steps become OPTIONAL):
+merkle branch at position 0, and a wtxid-tree branch for the reveal. A verifier
+reporting L3 MUST apply all of the checks below, beyond L2's 1–4, where the
+commit-tx and BIP-341 steps become OPTIONAL:
 
 7. Coinbase parses, is a coinbase, and merkle-proves at position 0 (every fold
    left-anchored) with correct depth.
@@ -104,8 +105,9 @@ rejected (test: "detects forged witness content").
 
 ## 3. Proof bundle format v1
 
-Media type `application/vnd.ord.proof+json; version=1`. All 32-byte hashes in
-display order (reversed) hex, matching every public API; transactions as hex.
+Media type `application/vnd.ord.proof+json; version=1`. A bundle MUST carry every
+32-byte hash in display order (reversed) hex, matching every public API, and every
+transaction as hex.
 
 ```jsonc
 {
@@ -263,7 +265,8 @@ Composable strategies (reference: `makeHeaderTrust`):
   same level (the delegating envelope proves the delegate *pointer*; the delegate's own
   proof binds the *bytes*). One hop only; the delegate's own delegate field is ignored
   (ord parity). Reference: `OrdResolver.resolveVerified`.
-- Metadata (`/metadata`) verifies identically to content. It is envelope data.
+- A resolver MUST verify `/metadata` at the same level as content: the metadata is
+  envelope data.
 - Recursive HTML content executing against `/r/*` endpoints is beyond byte-level
   verification (rendering depends on runtime context); SPEC-GATEWAY §6 tiers which
   recursion endpoints can themselves be served trustlessly.
@@ -288,10 +291,11 @@ Two encodings are interchangeable and implementations MUST accept both:
   array position `i` takes txid slice `i`.
 
 Decoding is lenient, matching ord's treatment of malformed envelope data: an
-entry that does not decode is skipped rather than invalidating the list, and
-properties with no Items yield a non-gallery result. Implementations SHOULD
-report how many entries were skipped, so a caller claiming a *complete* member
-list can tell whether it has one.
+implementation MUST skip an entry that does not decode rather than invalidating
+the list, and MUST yield a non-gallery result for properties carrying no Items
+array, where an Items array that is empty is a gallery with no members.
+Implementations SHOULD report how many entries were skipped, so a caller
+claiming a *complete* member list can tell whether it has one.
 
 Properties may declare a `property_encoding` (tag 19). Decompression is subject
 to the same bomb limits as content (SPEC-GATEWAY), and a gallery reader given
@@ -319,7 +323,8 @@ Reference: `@ordspv/core` (`gallery.ts`).
   verified in `resolver.test.ts`); synthetic L3 bundles at positions 1 and 2
   (`proofbundle.test.ts`).
 - Negative (each MUST fail with the paired reason): tampered content byte
-  (`VERIFY_FAILED`: txid mismatch), witness swap (L3 `witness commitment mismatch`),
-  absent envelope index, `txCount` inflation (depth mismatch), tampered tapscript
-  (BIP-341 mismatch), checkpoint contradiction (`HEADER_TRUST`), integrity pin
-  mismatch (`INTEGRITY`).
+  (`VERIFY_FAILED`: BIP-341 mismatch at L2, witness commitment mismatch at L3,
+  since the txid does not commit to the witness), witness swap (L3 `witness
+  commitment mismatch`), absent envelope index, `txCount` inflation (depth
+  mismatch), tampered tapscript (BIP-341 mismatch), checkpoint contradiction
+  (`HEADER_TRUST`), integrity pin mismatch (`INTEGRITY`).
