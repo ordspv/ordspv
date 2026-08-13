@@ -29,6 +29,7 @@ import {
   computeMerkleRoot,
   concatBytes,
   displayToInternal,
+  firstSatOfBlock,
   galleryItems,
   hexToBytes,
   inscriptionGallery,
@@ -54,7 +55,10 @@ import {
 } from '../src/index.js';
 import {
   NO_POW_FLOOR,
+  anchoredHop,
   buildBlock,
+  buildCoinbase,
+  buildTx,
   commitTx,
   envelopeScript,
   l3Bundle,
@@ -250,6 +254,41 @@ function genealogyStub(block: TestBlock, pos: number, i: Inscribed): SatGenealog
 
 function headerOf(block: TestBlock) {
   return parseHeader(hexToBytes(block.headerHex));
+}
+
+/**
+ * A genealogy bundle that walks: coinbase -> commit -> reveal, one funding
+ * step. Two rows need one, because the rules they speak for sit past the
+ * funding walk and no stub reaches them.
+ */
+const GENEALOGY_HEIGHT = 1000;
+const GENEALOGY_OPTS = { ...NO_POW_FLOOR, trustHeader: (): 'hash-at-height' => 'hash-at-height' };
+const GENEALOGY_LEAF = envelopeScript({ body: ['g'] }, { checksigPrefix: true });
+const GENEALOGY_TAP = taprootCommit(GENEALOGY_LEAF);
+const GENEALOGY_CB = buildCoinbase([{ value: 3_000_000_000n }]);
+const GENEALOGY_COMMIT = buildTx(
+  [{ txid: GENEALOGY_CB.tx.txid, vout: 0 }],
+  [{ value: 10_000n, spk: GENEALOGY_TAP.scriptPubKey }],
+);
+const GENEALOGY_REVEAL = revealTx(
+  [{ script: GENEALOGY_LEAF, controlBlock: GENEALOGY_TAP.controlBlock }],
+  { prevTxidLE: GENEALOGY_COMMIT.tx.txidLE, vout: 0 },
+);
+
+function genealogyChain(): SatGenealogyBundleJson {
+  return {
+    version: 1,
+    inscriptionId: `${GENEALOGY_REVEAL.txid}i0`,
+    reveal: anchoredHop(
+      GENEALOGY_REVEAL.txidLE,
+      bytesToHex(GENEALOGY_REVEAL.raw),
+      GENEALOGY_HEIGHT + 1000,
+      [GENEALOGY_COMMIT.hex],
+    ),
+    funding: [{ tx: { hex: GENEALOGY_COMMIT.hex }, prevTxs: [GENEALOGY_CB.hex] }],
+    coinbase: anchoredHop(GENEALOGY_CB.tx.txidLE, GENEALOGY_CB.hex, GENEALOGY_HEIGHT, []),
+    claimedSat: firstSatOfBlock(GENEALOGY_HEIGHT).toString(),
+  };
 }
 
 /**
@@ -832,13 +871,17 @@ describe('SPEC-VERIFICATION conformance', () => {
       }),
     ).not.toThrow();
 
-    // The genealogy verifier's own copy of the rule, which nothing in this
-    // repository drives: reaching it needs a coinbase that hashes to the txid
-    // the funding chain arrived at, so a whole chain has to be built first.
-    // Asserted as the source line it lives on, which is weaker than every
-    // other assertion in this file and is reported as a coverage gap
-    const source = readFileSync(join(ROOT, 'packages/core/src/satnumber.ts'), 'utf8');
-    expect(source).toContain('coinbase must be at position 0, bundle says');
+    // The genealogy verifier's own copy of the rule, on a chain that walks to
+    // the coinbase it names. This was a source-text assertion until the
+    // SPEC-SAT session moved the chain builders into helpers.ts
+    const moved = genealogyChain();
+    moved.coinbase.tx.pos = 1;
+    expect(() => verifySatGenealogy(moved, GENEALOGY_OPTS)).toThrow(
+      /coinbase must be at position 0, bundle says 1/,
+    );
+    expect(verifySatGenealogy(genealogyChain(), GENEALOGY_OPTS).coinbaseHeight).toBe(
+      GENEALOGY_HEIGHT,
+    );
   });
 
   // -------------------------------------------------------------------------

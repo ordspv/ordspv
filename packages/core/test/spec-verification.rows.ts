@@ -511,11 +511,10 @@ export const TABLE: Requirement[] = [
       'the sentence enumerates its sites, so one 64-byte transaction built for the ' +
       'purpose is put through four of them: the reveal of a proof bundle, a custody ' +
       'hop, the reveal endpoint of a genealogy bundle, and the coinbase of a witness ' +
-      'section. Two sites are not reached, and no test in this repository reaches ' +
-      'them: the terminal coinbase of a genealogy bundle and a genealogy funding step, ' +
-      'both of which need a whole funding chain to arrive at. They run the same guard ' +
-      '(parseHexTxChecked in satnumber.ts), which is what the reveal endpoint drives. ' +
-      'The prev-tx exemption the sentence states is not driven either: a 64-byte ' +
+      'section. The two remaining sites, the terminal coinbase of a genealogy bundle ' +
+      'and a genealogy funding step, need a whole funding chain to arrive at and are ' +
+      'driven by the SPEC-SAT suite (sixty-four-byte-endpoints), which builds one. ' +
+      'The prev-tx exemption the sentence states is not driven anywhere: a 64-byte ' +
       'transaction has no room for a P2TR output, so no reveal can spend one, and the ' +
       'exemption is reachable only on the funding walk.',
   },
@@ -528,14 +527,14 @@ export const TABLE: Requirement[] = [
     status: 'tested here',
     file: 'core',
     why:
-      'the witness-section site is driven: verifyWitnessAnchoring folds the coinbase ' +
-      'branch at 0, which is not a field the caller supplies, and refuses a branch ' +
-      'built for any other position. The genealogy site is the weak half of this row ' +
-      'and is reported as such: verifySatGenealogy refuses a terminal coinbase the ' +
-      'bundle places anywhere else, no test in this repository drives that refusal, ' +
-      'and reaching it needs a whole funding chain, so what is asserted here is that ' +
-      'the check is still in the source. The SPEC-SAT session builds those fixtures ' +
-      'and should drive it.',
+      'both sites are driven. verifyWitnessAnchoring folds the coinbase branch at 0, ' +
+      'which is not a field the caller supplies, and refuses a branch built for any ' +
+      'other position. verifySatGenealogy reads the position off the bundle, so it is ' +
+      'driven on a chain that walks to the coinbase it names, moved to position 1 and ' +
+      'refused there. That half was a source-text assertion until the SPEC-SAT session ' +
+      'moved the chain builders into helpers.ts; the SPEC-SAT row for the same rule is ' +
+      'format-coinbase-pos-and-prevtxs, which drives it against the format block that ' +
+      'states it.',
   },
 
   // -------------------------------------------------------------------------
