@@ -86,15 +86,24 @@ const TABLE: Requirement[] = [
   {
     id: 'lowercase',
     section: '§2',
-    title: 'resolvers MUST normalize to lowercase before use',
-    quote: 'Resolvers MUST normalize to\n  lowercase before use.',
+    title: 'resolvers MUST normalize to lowercase before use, except the base64 digest',
+    quote:
+      'Resolvers MUST normalize to\n' +
+      '  lowercase before use. (Inscription IDs survive URI authority case-folding by\n' +
+      '  construction.) The one carve-out is the base64 digest form of `#integrity=`, whose\n' +
+      '  alphabet is case-significant: resolvers MUST fold the frame around such a digest\n' +
+      '  (scheme, id, path, fragment key, algorithm prefix) and MUST NOT fold the digest\n' +
+      '  value, since folding it would name different bytes.',
     binds: 'resolvers',
     status: 'tested here',
     why:
-      'parseOrdUri normalizes the scheme, the inscription id and a hex digest. The ' +
-      'path segment and the fragment key are matched case-sensitively, so an ' +
-      'all-uppercase URI with either one is refused; that residual is reported ' +
-      'against §2 line 29 ("case-insensitive everywhere") rather than asserted here.',
+      'every part of the grammar that can fold is asserted folding: the scheme, the ' +
+      'inscription id, the path segment, the fragment key, the algorithm prefix and a ' +
+      'hex digest. A whole URI uppercased end to end, which is the QR alphanumeric case ' +
+      'line 29 gives as the rationale, is asserted to parse identically to its lowercase ' +
+      'twin. The one part that does not fold is the base64 digest form, because base64 ' +
+      'is case-significant and folding it would name a different 32 bytes; §2 carries ' +
+      'that carve-out and the test drives the frame around such a digest instead.',
   },
   {
     id: 'alias',
@@ -345,6 +354,35 @@ describe('SPEC-URI conformance', () => {
     expect(parseOrdUri(`ord:${ID}#integrity=sha256-${digest}`).integrity?.digestHex).toBe(
       'a'.repeat(64),
     );
+
+    // everywhere: the path segment, the fragment key and the algorithm prefix
+    // fold as well, each on its own so a failure names which one
+    expect(parseOrdUri(`ord:${ID}/CONTENT`).path).toBe('content');
+    expect(parseOrdUri(`ord:${ID}/Metadata`).path).toBe('metadata');
+    expect(parseOrdUri(`ord:${ID}#INTEGRITY=sha256-${digest}`).integrity?.digestHex).toBe(
+      'a'.repeat(64),
+    );
+    expect(parseOrdUri(`ord:${ID}#integrity=SHA256-${digest}`).integrity?.digestHex).toBe(
+      'a'.repeat(64),
+    );
+
+    // the case the rationale on line 29 names: QR alphanumeric mode is
+    // uppercase-only, so an entire URI shouted must be the same URI
+    const hexUri = `ord:${ID}/content#integrity=sha256-${'a'.repeat(64)}`;
+    expect(parseOrdUri(hexUri.toUpperCase())).toEqual(parseOrdUri(hexUri));
+
+    // and the one value that MUST NOT fold with the rest: base64 is
+    // case-significant, so the frame around it folds and it does not
+    const bytes = Uint8Array.from({ length: 32 }, (_, i) => (i * 37 + 11) & 0xff);
+    const b64 = Buffer.from(bytes).toString('base64').replace(/=+$/, '');
+    // the vector is only a test of case preservation if it has both cases in it
+    expect(b64).not.toBe(b64.toLowerCase());
+    expect(b64).not.toBe(b64.toUpperCase());
+    const expected = bytesToHex(bytes);
+    expect(parseOrdUri(`ord:${ID}#integrity=sha256-${b64}`).integrity?.digestHex).toBe(expected);
+    expect(
+      parseOrdUri(`ORD://${ID.toUpperCase()}/CONTENT#INTEGRITY=SHA256-${b64}`).integrity?.digestHex,
+    ).toBe(expected);
   });
 
   conformance('alias', () => {

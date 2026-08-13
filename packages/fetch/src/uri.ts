@@ -38,8 +38,13 @@ const HEX64_RE = /^[0-9a-fA-F]{64}$/;
 function decodeIntegrity(fragment: string): { algorithm: 'sha256'; digestHex: string } {
   const eq = fragment.indexOf('=');
   const value = fragment.slice(eq + 1);
-  if (!value.startsWith('sha256-')) throw new Error(`unsupported integrity algorithm in "${fragment}"`);
-  const digest = value.slice('sha256-'.length);
+  // the algorithm prefix folds; the digest after it does not. Base64 is
+  // case-significant, so folding it would name a different 32 bytes.
+  const prefix = 'sha256-';
+  if (value.slice(0, prefix.length).toLowerCase() !== prefix) {
+    throw new Error(`unsupported integrity algorithm in "${fragment}"`);
+  }
+  const digest = value.slice(prefix.length);
   if (HEX64_RE.test(digest)) return { algorithm: 'sha256', digestHex: digest.toLowerCase() };
   if (B64_RE.test(digest)) {
     // base64 / base64url (SRI style)
@@ -63,7 +68,11 @@ export function parseOrdUri(input: string): ParsedOrdUri {
   if (hash !== -1) {
     const fragment = decodeURIComponent(rest.slice(hash + 1));
     rest = rest.slice(0, hash);
-    if (fragment.startsWith('integrity=')) integrity = decodeIntegrity(fragment);
+    // the key folds, the value it introduces does not (see decodeIntegrity).
+    // A fragment with no `=` is not a key and keeps its own refusal.
+    const eq = fragment.indexOf('=');
+    const key = eq === -1 ? '' : fragment.slice(0, eq).toLowerCase();
+    if (key === 'integrity') integrity = decodeIntegrity(fragment);
     else if (fragment.length > 0) throw new Error(`unknown ord URI fragment "${fragment}"`);
   }
 
@@ -85,8 +94,12 @@ export function parseOrdUri(input: string): ParsedOrdUri {
   const id = parseInscriptionId(segments[0]);
   let path: OrdPath = 'undelegated';
   if (segments.length === 2) {
-    if (segments[1] === 'content') path = 'content';
-    else if (segments[1] === 'metadata') path = 'metadata';
+    // folded before matching, so the uppercase form a QR alphanumeric payload
+    // carries resolves to the same referent. The refusal quotes what was
+    // written rather than the folded form, because that is what the caller sees.
+    const segment = segments[1].toLowerCase();
+    if (segment === 'content') path = 'content';
+    else if (segment === 'metadata') path = 'metadata';
     else throw new Error(`unknown ord URI path "/${segments[1]}"`);
   } else if (segments.length > 2) {
     throw new Error(`ord URI has too many path segments: ${input}`);

@@ -29,7 +29,11 @@ digest         = 64hexdig / base64-32bytes  ; hex preferred; SRI-style base64(ur
 - Matching is **case-insensitive** everywhere (upstream requirement, preserves QR
   alphanumeric mode); producers SHOULD emit lowercase. Resolvers MUST normalize to
   lowercase before use. (Inscription IDs survive URI authority case-folding by
-  construction.)
+  construction.) The one carve-out is the base64 digest form of `#integrity=`, whose
+  alphabet is case-significant: resolvers MUST fold the frame around such a digest
+  (scheme, id, path, fragment key, algorithm prefix) and MUST NOT fold the digest
+  value, since folding it would name different bytes. Producers targeting QR
+  alphanumeric mode SHOULD use the hex digest form, which folds.
 - `ord://` is a **compatibility alias**: resolvers MUST accept it and MUST treat
   `ord://X` identically to `ord:X`. Producers SHOULD emit `ord:`. (Rationale: upstream
   chose no hierarchical part; existing URL-detection heuristics in wallets and
