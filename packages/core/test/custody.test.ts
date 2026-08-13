@@ -24,13 +24,17 @@ import {
   type ParsedTx,
   hexToBytes,
   bytesToHex,
+  concatBytes,
   sha256,
   sha256d,
   internalToDisplay,
 } from '../src/index.js';
 import {
   buildBlock,
+  buildSegwitTx,
+  buildTx,
   envelopeScript,
+  mineSingleTxBlock,
   script,
   taprootCommit,
   NO_POW_FLOOR,
@@ -54,53 +58,10 @@ const expected = JSON.parse(readFileSync(join(FIXTURES, 'expected.json'), 'utf8'
 const INSC0_TXCOUNT = 2332; // block 767430; consistent with the 12-node branch depth
 
 // ---------------------------------------------------------------------------
-// hand-built legacy transactions (values are all FIFO arithmetic needs)
+// hand-built legacy transactions (values are all FIFO arithmetic needs) come
+// from `helpers.ts`, shared with the genealogy fixtures in satnumber.test.ts
+// and the two conformance suites.
 // ---------------------------------------------------------------------------
-
-function u32le(n: number): Uint8Array {
-  const b = new Uint8Array(4);
-  new DataView(b.buffer).setUint32(0, n, true);
-  return b;
-}
-function u64le(n: bigint): Uint8Array {
-  const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigUint64(0, n, true);
-  return b;
-}
-function varint(n: number): Uint8Array {
-  if (n > 0xfc) throw new Error('test varint only supports small counts');
-  return new Uint8Array([n]);
-}
-function cat(...parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
-  }
-  return out;
-}
-
-/** Build a legacy (no-witness) transaction from outpoints and output values. */
-function buildTx(
-  inputs: { txid: string; vout: number }[],
-  outputValues: bigint[],
-): { hex: string; tx: ParsedTx } {
-  const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
-  for (const inp of inputs) {
-    const txidLE = hexToBytes(inp.txid).reverse();
-    parts.push(txidLE, u32le(inp.vout), varint(1), new Uint8Array([0x51]), u32le(0xffffffff));
-  }
-  parts.push(varint(outputValues.length));
-  for (const v of outputValues) {
-    parts.push(u64le(v), varint(1), new Uint8Array([0x51]));
-  }
-  parts.push(u32le(0));
-  const raw = cat(...parts);
-  const hex = bytesToHex(raw);
-  return { hex, tx: parseTx(raw) };
-}
 
 function mkInscription(partial: Partial<Inscription>): Inscription {
   return {
@@ -128,15 +89,15 @@ const T2 = '33'.repeat(32);
 
 describe('transferSatpoint FIFO arithmetic', () => {
   // funding txs give the input values
-  const fundA = buildTx([{ txid: T0, vout: 0 }], [1000n]);
-  const fundB = buildTx([{ txid: T0, vout: 1 }], [2000n]);
+  const fundA = buildTx([{ txid: T0, vout: 0 }], [{ value: 1000n }]);
+  const fundB = buildTx([{ txid: T0, vout: 1 }], [{ value: 2000n }]);
   // spend: inputs [A(1000), B(2000)] -> outputs [1500, 1400], fee 100
   const spend = buildTx(
     [
       { txid: fundA.tx.txid, vout: 0 },
       { txid: fundB.tx.txid, vout: 0 },
     ],
-    [1500n, 1400n],
+    [{ value: 1500n }, { value: 1400n }],
   );
   const values = provenInputValues(spend.tx, [fundA.hex, fundB.hex], 1);
 
@@ -176,7 +137,7 @@ describe('transferSatpoint FIFO arithmetic', () => {
   });
 
   it('skips zero-value outputs', () => {
-    const z = buildTx([{ txid: fundA.tx.txid, vout: 0 }], [0n, 500n]);
+    const z = buildTx([{ txid: fundA.tx.txid, vout: 0 }], [{ value: 0n }, { value: 500n }]);
     const sp = transferSatpoint(z.tx, [1000n], { txid: fundA.tx.txid, vout: 0, offset: 0n });
     expect(sp.vout).toBe(1);
     expect(sp.offset).toBe(0n);
@@ -194,15 +155,15 @@ describe('transferSatpoint FIFO arithmetic', () => {
 // ---------------------------------------------------------------------------
 
 describe('genesisSatpoint', () => {
-  const fund1 = buildTx([{ txid: T0, vout: 0 }], [600n]);
-  const fund2 = buildTx([{ txid: T0, vout: 1 }], [400n]);
+  const fund1 = buildTx([{ txid: T0, vout: 0 }], [{ value: 600n }]);
+  const fund2 = buildTx([{ txid: T0, vout: 1 }], [{ value: 400n }]);
   // reveal-shaped legacy tx: inputs [600, 400] -> outputs [500, 450], fee 50
   const reveal = buildTx(
     [
       { txid: fund1.tx.txid, vout: 0 },
       { txid: fund2.tx.txid, vout: 0 },
     ],
-    [500n, 450n],
+    [{ value: 500n }, { value: 450n }],
   );
   const values = [600n, 400n];
 
@@ -229,18 +190,18 @@ describe('genesisSatpoint', () => {
         { txid: fund1.tx.txid, vout: 0 },
         { txid: fund2.tx.txid, vout: 0 },
       ],
-      [900n],
+      [{ value: 900n }],
     );
     // envelope on input 1: abs 600 < 900 -> fine. Use offset past outputs: input 1 with fund2=400
     // total inputs 1000, outputs 900. envelope on a third input would start at 1000.
-    const fund3 = buildTx([{ txid: T0, vout: 2 }], [300n]);
+    const fund3 = buildTx([{ txid: T0, vout: 2 }], [{ value: 300n }]);
     const r2 = buildTx(
       [
         { txid: fund1.tx.txid, vout: 0 },
         { txid: fund2.tx.txid, vout: 0 },
         { txid: fund3.tx.txid, vout: 0 },
       ],
-      [900n],
+      [{ value: 900n }],
     );
     expect(() =>
       genesisSatpoint(r2.tx, mkInscription({ input: 2 }), [600n, 400n, 300n]),
@@ -262,7 +223,7 @@ describe('genesisSatpoint', () => {
   });
 
   it('refuses ord-unbound inscriptions: zero-value envelope input', () => {
-    const fundZero = buildTx([{ txid: T0, vout: 3 }], [0n]);
+    const fundZero = buildTx([{ txid: T0, vout: 3 }], [{ value: 0n }]);
     // envelope input 1 spends a zero-value output; outputs still cover the
     // default position (600 < 700), so only the unbound rule can refuse this
     const r = buildTx(
@@ -270,7 +231,7 @@ describe('genesisSatpoint', () => {
         { txid: fund1.tx.txid, vout: 0 },
         { txid: fundZero.tx.txid, vout: 0 },
       ],
-      [700n],
+      [{ value: 700n }],
     );
     expect(() =>
       genesisSatpoint(r.tx, mkInscription({ input: 1 }), [600n, 0n]),
@@ -294,20 +255,6 @@ describe('genesisSatpoint', () => {
 // ---------------------------------------------------------------------------
 // custody bundles end to end
 // ---------------------------------------------------------------------------
-
-/** Build an easiest-PoW (regtest-bits) header containing exactly one tx. */
-function mineSingleTxBlock(txidLE: Uint8Array, prevHashLE: Uint8Array): { headerHex: string; hash: string } {
-  const bits = 0x207fffff;
-  for (let nonce = 0; nonce < 100000; nonce++) {
-    const header = cat(u32le(2), prevHashLE, txidLE, u32le(1700000000), u32le(bits), u32le(nonce));
-    const hashLE = sha256d(header);
-    // target for 0x207fffff is enormous; require top byte < 0x7f to pass quickly
-    if (hashLE[31] === 0) {
-      return { headerHex: bytesToHex(header), hash: internalToDisplay(hashLE) };
-    }
-  }
-  throw new Error('failed to mine test header');
-}
 
 describe('verifyCustodyBundle', () => {
   const revealTx = parseTx(hexToBytes(revealHex));
@@ -492,8 +439,8 @@ describe('verifyCustodyBundle', () => {
 
   it('names the same absences on a later hop through the walk', () => {
     const outValue = revealTx.outputs[0].value;
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: outValue - 200n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     function twoHop(): CustodyBundleJson {
       const b = singleHopBundle();
       b.hops.push({
@@ -557,8 +504,8 @@ describe('verifyCustodyBundle', () => {
 
   it('refuses the same surplus on a later hop', () => {
     const outValue = revealTx.outputs[0].value;
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: outValue - 200n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     const bundle = singleHopBundle();
     bundle.hops.push({
       block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -580,8 +527,8 @@ describe('verifyCustodyBundle', () => {
   it('verifies a two-hop path through a mined test block', () => {
     // hop 1 spends the reveal's output 0 (value read from the real tx)
     const outValue = revealTx.outputs[0].value;
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: outValue - 200n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     const bundle = singleHopBundle();
     bundle.hops.push({
       block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -597,8 +544,8 @@ describe('verifyCustodyBundle', () => {
 
   it('rejects hops that go backwards in chain order', () => {
     const outValue = revealTx.outputs[0].value;
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: outValue - 200n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     const bundle = singleHopBundle();
     bundle.hops.push({
       block: { height: expected.blockHeight - 1, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -612,8 +559,8 @@ describe('verifyCustodyBundle', () => {
   it('surfaces fee-spillover paths as CustodyUnsupportedError', () => {
     const outValue = revealTx.outputs[0].value;
     // spend sends everything but the tracked sat range to outputs: output smaller than needed
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [0n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: 0n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     const bundle = singleHopBundle();
     bundle.hops.push({
       block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -627,8 +574,8 @@ describe('verifyCustodyBundle', () => {
 
   it('rejects a duplicate hop transaction', () => {
     const outValue = revealTx.outputs[0].value;
-    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [{ value: outValue - 200n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     const bundle = singleHopBundle();
     const hop = {
       block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -643,8 +590,8 @@ describe('verifyCustodyBundle', () => {
   });
 
   it('refuses a coinbase as a later hop with CustodyUnsupportedError', () => {
-    const coinbase = buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff }], [5000000000n, 0n]);
-    const mined = mineSingleTxBlock(coinbase.tx.txidLE, new Uint8Array(32));
+    const coinbase = buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff }], [{ value: 5000000000n }, { value: 0n }]);
+    const mined = mineSingleTxBlock(coinbase.tx.txidLE);
     const bundle = singleHopBundle();
     bundle.hops.push({
       block: { height: expected.blockHeight + 10, hash: mined.hash, header: mined.headerHex, txCount: 1 },
@@ -659,29 +606,20 @@ describe('verifyCustodyBundle', () => {
   it('rejects hop txs whose STRIPPED serialization is 64 bytes (leaf/node ambiguity)', () => {
     // stripped: version(4) inCount(1) outpoint(36) scriptSigLen(1)=0 seq(4)
     //           outCount(1) value(8) spkLen(1) spk(4) locktime(4) = 64 bytes
-    const stripped = cat(
-      u32le(2),
-      varint(1),
-      hexToBytes(T0).reverse(),
-      u32le(0),
-      varint(0),
-      u32le(0xffffffff),
-      varint(1),
-      u64le(1000n),
-      varint(4),
-      new Uint8Array([0x51, 0x51, 0x51, 0x51]),
-      u32le(0),
+    const stripped = hexToBytes(
+      buildTx(
+        [{ txid: T0, vout: 0, scriptSig: new Uint8Array(0) }],
+        [{ value: 1000n, spk: new Uint8Array([0x51, 0x51, 0x51, 0x51]) }],
+      ).hex,
     );
     expect(stripped.length).toBe(64);
     // segwit-wrap it: marker+flag and a one-item witness stack, so the RAW
     // length grows past 64 while the txid preimage stays exactly 64
-    const raw = cat(
+    const raw = concatBytes(
       stripped.slice(0, 4),
       new Uint8Array([0x00, 0x01]),
       stripped.slice(4, 60),
-      varint(1),
-      varint(1),
-      new Uint8Array([0x00]),
+      new Uint8Array([0x01, 0x01, 0x00]),
       stripped.slice(60),
     );
     const b = singleHopBundle();
@@ -811,52 +749,6 @@ const tapB = taprootCommit(envB);
 const plainScript = script(sha256(new TextEncoder().encode('key')), 0xac);
 const tapPlain = taprootCommit(plainScript);
 
-/** legacy funding tx whose outputs carry chosen scriptPubKeys */
-function fundingTx(
-  inputs: { txid: string; vout: number }[],
-  outputs: { value: bigint; spk?: Uint8Array }[],
-): { hex: string; tx: ParsedTx } {
-  const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
-  for (const inp of inputs) {
-    parts.push(
-      hexToBytes(inp.txid).reverse(),
-      u32le(inp.vout),
-      varint(1),
-      new Uint8Array([0x51]),
-      u32le(0xffffffff),
-    );
-  }
-  parts.push(varint(outputs.length));
-  for (const o of outputs) {
-    const spk = o.spk ?? new Uint8Array([0x51]);
-    parts.push(u64le(o.value), varint(spk.length), spk);
-  }
-  parts.push(u32le(0));
-  const raw = cat(...parts);
-  return { hex: bytesToHex(raw), tx: parseTx(raw) };
-}
-
-/** segwit reveal with one witness stack per input */
-function segwitReveal(
-  inputs: { txid: string; vout: number; witness: Uint8Array[] }[],
-  outputs: bigint[],
-): { hex: string; tx: ParsedTx } {
-  const raw = serializeFull({
-    version: 2,
-    inputs: inputs.map((i) => ({
-      prevTxidLE: hexToBytes(i.txid).reverse(),
-      prevTxid: i.txid,
-      vout: i.vout,
-      scriptSig: new Uint8Array(0),
-      sequence: 0xfffffffd,
-      witness: i.witness,
-    })),
-    outputs: outputs.map((value) => ({ value, scriptPubKey: new Uint8Array([0x51]) })),
-    locktime: 0,
-  });
-  return { hex: bytesToHex(raw), tx: parseTx(raw) };
-}
-
 /** re-serialize with some witnesses replaced; the txid cannot change */
 function withWitnesses(tx: ParsedTx, witnesses: (Uint8Array[] | undefined)[]): ParsedTx {
   return parseTx(
@@ -883,7 +775,7 @@ describe('envelope index binding (multi-input reveals)', () => {
     prevTxs: string[],
     finalSatpoint: string,
   ): CustodyBundleJson {
-    const mined = mineSingleTxBlock(reveal.txidLE, new Uint8Array(32));
+    const mined = mineSingleTxBlock(reveal.txidLE);
     return {
       version: 1,
       inscriptionId: `${reveal.txid}i${index}`,
@@ -899,19 +791,16 @@ describe('envelope index binding (multi-input reveals)', () => {
   }
 
   it('refuses a multi-input reveal that carries no witness section', () => {
-    const commit = fundingTx(
+    const commit = buildTx(
       [{ txid: T1, vout: 0 }],
-      [
-        { value: 10_000n, spk: tapA.scriptPubKey },
-        { value: 20_000n, spk: tapB.scriptPubKey },
-      ],
+      [{ value: 10_000n, spk: tapA.scriptPubKey }, { value: 20_000n, spk: tapB.scriptPubKey }],
     );
-    const reveal = segwitReveal(
+    const reveal = buildSegwitTx(
       [
         { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
         { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
       ],
-      [25_000n],
+      [{ value: 25_000n }],
     );
     const bundle = oneHopBundle(
       reveal.tx,
@@ -931,19 +820,16 @@ describe('envelope index binding (multi-input reveals)', () => {
     // on chain: input 0 spends tapA by KEY path, so ord sees no envelope
     // there and envB on input 1 is index 0. tapA's author committed the leaf,
     // so they can serve a script-path witness that binds at depth 0 anyway.
-    const commit = fundingTx(
+    const commit = buildTx(
       [{ txid: T2, vout: 0 }],
-      [
-        { value: 10_000n, spk: tapA.scriptPubKey },
-        { value: 20_000n, spk: tapB.scriptPubKey },
-      ],
+      [{ value: 10_000n, spk: tapA.scriptPubKey }, { value: 20_000n, spk: tapB.scriptPubKey }],
     );
-    const reveal = segwitReveal(
+    const reveal = buildSegwitTx(
       [
         { txid: commit.tx.txid, vout: 0, witness: [SIG] },
         { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
       ],
-      [25_000n],
+      [{ value: 25_000n }],
     );
     const forgedTx = withWitnesses(reveal.tx, [[SIG, envA, tapA.controlBlock], undefined]);
     expect(forgedTx.txid).toBe(reveal.tx.txid);
@@ -991,10 +877,10 @@ describe('envelope index binding (multi-input reveals)', () => {
   });
 
   it('verifies a single-input reveal with no witness section', () => {
-    const commit = fundingTx([{ txid: T1, vout: 1 }], [{ value: 10_000n, spk: tapA.scriptPubKey }]);
-    const reveal = segwitReveal(
+    const commit = buildTx([{ txid: T1, vout: 1 }], [{ value: 10_000n, spk: tapA.scriptPubKey }]);
+    const reveal = buildSegwitTx(
       [{ txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] }],
-      [9_000n],
+      [{ value: 9_000n }],
     );
     const bundle = oneHopBundle(reveal.tx, reveal.hex, 0, [commit.hex], `${reveal.tx.txid}:0:0`);
     const res = verifyCustodyBundle(bundle, NO_POW_FLOOR);
@@ -1012,36 +898,30 @@ describe('envelope index binding (multi-input reveals)', () => {
 describe('wtxid-anchored reveals (custody)', () => {
   // batch reveal: envelope A on input 0, envelope B on input 1, each
   // committed by its own prevout
-  const commit = fundingTx(
+  const commit = buildTx(
     [{ txid: T0, vout: 3 }],
-    [
-      { value: 10_000n, spk: tapA.scriptPubKey },
-      { value: 20_000n, spk: tapB.scriptPubKey },
-    ],
+    [{ value: 10_000n, spk: tapA.scriptPubKey }, { value: 20_000n, spk: tapB.scriptPubKey }],
   );
-  const reveal = segwitReveal(
+  const reveal = buildSegwitTx(
     [
       { txid: commit.tx.txid, vout: 0, witness: [SIG, envA, tapA.controlBlock] },
       { txid: commit.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
     ],
-    [25_000n],
+    [{ value: 25_000n }],
   );
   const block = buildBlock([reveal.tx]);
 
   // the pointer-bundle shape: key-path funding input ahead of the envelope
-  const commitKey = fundingTx(
+  const commitKey = buildTx(
     [{ txid: T1, vout: 3 }],
-    [
-      { value: 10_000n },
-      { value: 20_000n, spk: tapB.scriptPubKey },
-    ],
+    [{ value: 10_000n }, { value: 20_000n, spk: tapB.scriptPubKey }],
   );
-  const revealKey = segwitReveal(
+  const revealKey = buildSegwitTx(
     [
       { txid: commitKey.tx.txid, vout: 0, witness: [SIG] },
       { txid: commitKey.tx.txid, vout: 1, witness: [SIG, envB, tapB.controlBlock] },
     ],
-    [25_000n],
+    [{ value: 25_000n }],
   );
   const blockKey = buildBlock([revealKey.tx]);
 
@@ -1261,8 +1141,8 @@ describe('wtxid-anchored reveals (custody)', () => {
 
   it('refuses a witness section on a later custody hop', () => {
     const b = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
-    const spend = fundingTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
-    const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+    const spend = buildTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
+    const mined = mineSingleTxBlock(spend.tx.txidLE);
     b.hops.push({
       block: { height: 800_010, hash: mined.hash, header: mined.headerHex, txCount: 1 },
       tx: { hex: spend.hex, pos: 0, txidBranch: [] },
@@ -1278,8 +1158,8 @@ describe('wtxid-anchored reveals (custody)', () => {
     // data; the rule is stated without exception, so presence is what counts
     for (const value of [0, '', false, null]) {
       const b = wtxidBundle(block, reveal.hex, 1, [commit.hex, commit.hex], `${reveal.tx.txid}:0:10000`);
-      const spend = fundingTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
-      const mined = mineSingleTxBlock(spend.tx.txidLE, new Uint8Array(32));
+      const spend = buildTx([{ txid: reveal.tx.txid, vout: 0 }], [{ value: 24_000n }]);
+      const mined = mineSingleTxBlock(spend.tx.txidLE);
       b.hops.push({
         block: { height: 800_010, hash: mined.hash, header: mined.headerHex, txCount: 1 },
         tx: { hex: spend.hex, pos: 0, txidBranch: [] },
