@@ -233,6 +233,54 @@ const BARE_COMMIT = singleChain({
   commitSpk: new Uint8Array([0x51]),
 });
 
+/**
+ * A funding step with two inputs funded by two DIFFERENT transactions, which
+ * is the only shape where prev tx alignment is visible: every multi-input
+ * fixture below spends one commit twice, so its entries are interchangeable
+ * and swapping them would prove nothing.
+ *
+ * coinbase -> fundA and fundB -> commit (two inputs) -> reveal. The reveal
+ * spends the commit's SECOND output, so the position arrives at the commit
+ * at 5,000, past input 0's whole 1,000 sats, and the sat came in through
+ * input 1. Reading the entries at their positions is therefore what values
+ * input 0 and what finds input 1.
+ */
+const ALIGN = (() => {
+  const coinbase = buildCoinbase([{ value: 3_000_000_000n }, { value: 2_000_000_000n }]);
+  const fundA = buildTx([{ txid: coinbase.tx.txid, vout: 0 }], [{ value: 1_000n }]);
+  const fundB = buildTx([{ txid: coinbase.tx.txid, vout: 1 }], [{ value: 1_000_000_000n }]);
+  const commit = buildTx(
+    [
+      { txid: fundA.tx.txid, vout: 0 },
+      { txid: fundB.tx.txid, vout: 0 },
+    ],
+    [{ value: 5_000n }, { value: 10_000n, spk: TAP.scriptPubKey }],
+  );
+  const reveal = revealTx([{ script: ENV, controlBlock: TAP.controlBlock }], {
+    prevTxidLE: commit.tx.txidLE,
+    vout: 1,
+  });
+  // 5,000 at the commit, less input 0's 1,000, is offset 4,000 into fundB's
+  // only output, which came out of the coinbase's second output
+  const sat = firstSatOfBlock(HEIGHT) + 3_000_000_000n + 4_000n;
+  return {
+    fundA,
+    fundB,
+    sat,
+    bundle: (): SatGenealogyBundleJson => ({
+      version: 1,
+      inscriptionId: `${reveal.txid}i0`,
+      reveal: anchoredHop(reveal.txidLE, bytesToHex(reveal.raw), HEIGHT + 1000, [commit.hex]),
+      funding: [
+        { tx: { hex: commit.hex }, prevTxs: [fundA.hex, fundB.hex] },
+        { tx: { hex: fundB.hex }, prevTxs: [coinbase.hex] },
+      ],
+      coinbase: anchoredHop(coinbase.tx.txidLE, coinbase.hex, HEIGHT, []),
+      claimedSat: sat.toString(),
+    }),
+  };
+})();
+
 interface PairChain {
   cb: { hex: string; tx: ParsedTx };
   commit: { hex: string; tx: ParsedTx };
@@ -449,6 +497,33 @@ const ENDPOINTS = ['reveal', 'coinbase'] as const;
 
 describe('SPEC-SAT conformance', () => {
   // -------------------------------------------------------------------------
+  // Sat numbering
+  // -------------------------------------------------------------------------
+
+  conformance('theoretical-subsidy', () => {
+    // a coinbase paying less than its subsidy, which is what an underpaid
+    // block looks like from inside a genealogy: the walk numbers the sat off
+    // the schedule position, so what the block actually paid moves nothing
+    const underpaid = singleChain({
+      outputs: [{ value: 3_000_000_000n }, { value: 1_000_000_000n }],
+      height: HEIGHT,
+    });
+    const paid = underpaid.coinbase.tx.outputs.reduce((total, o) => total + o.value, 0n);
+    expect(paid, 'the fixture underpays its subsidy').toBeLessThan(SUBSIDY);
+    expect(verifySatGenealogy(underpaid.bundle(), ATTESTS).sat).toBe(
+      firstSatOfBlock(HEIGHT) + 3_000_000_000n,
+    );
+
+    // the other clause is about blocks after the underpaying one, which a
+    // genealogy never reads, so it is driven on the numbering itself: each
+    // block's first sat is the one before it plus the THEORETICAL subsidy, at
+    // every height and across an epoch boundary in both directions
+    for (const h of [0, 1, HEIGHT, 209_999, 210_000, 210_001, 419_999, 420_000]) {
+      expect(firstSatOfBlock(h + 1) - firstSatOfBlock(h), `height ${h}`).toBe(subsidySats(h));
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Start position in the reveal
   // -------------------------------------------------------------------------
 
@@ -605,6 +680,22 @@ describe('SPEC-SAT conformance', () => {
     expect(res.singleInputReveal).toBe(false);
   });
 
+  conformance('multi-input-no-section-refused', () => {
+    // index 0 on a two-input reveal, which is the case a verifier could think
+    // it knows without proof: the first envelope it finds is the one the id
+    // asks for, whatever the second input carries
+    const noSection = PAIR.bundle(0, PAIR_SAT_0);
+    delete noSection.reveal.witness;
+    expect(noSection.reveal.prevTxs, 'the reveal spends more than one input').toHaveLength(2);
+    expect(() => verifySatGenealogy(noSection, ATTESTS)).toThrow(EnvelopeIndexUnprovenError);
+
+    // one input fewer needs nothing more, and the same two inputs with a
+    // section are read, so what the refusal rests on is the input count
+    // meeting the absent proof
+    expect(verifySatGenealogy(singleInBlock(), ATTESTS).indexProof).toBe('single-input');
+    expect(verifySatGenealogy(PAIR.bundle(0, PAIR_SAT_0), ATTESTS).sat).toBe(PAIR_SAT_0);
+  });
+
   conformance('unproven-index-distinguishable', () => {
     const noSection = PAIR.bundle(1, PAIR_SAT_1);
     delete noSection.reveal.witness;
@@ -727,6 +818,36 @@ describe('SPEC-SAT conformance', () => {
     const swapped = SINGLE.bundle();
     swapped.funding[1] = { tx: { hex: edited.hex }, prevTxs: [SINGLE.coinbase.hex] };
     expect(() => verifySatGenealogy(swapped, ATTESTS)).toThrow(/chain expects/);
+  });
+
+  conformance('prevtx-alignment', () => {
+    // the aligned list reads, and the sat it folds to came in through the
+    // step's input 1
+    expect(verifySatGenealogy(ALIGN.bundle(), ATTESTS).sat).toBe(ALIGN.sat);
+
+    // swapped: both entries are transactions the step really spends, so a
+    // verifier matching them by txid finds each of them and accepts
+    const swapped = ALIGN.bundle();
+    swapped.funding[0].prevTxs = [ALIGN.fundB.hex, ALIGN.fundA.hex];
+    expect(() => verifySatGenealogy(swapped, ATTESTS)).toThrow(
+      new RegExp(`prev tx 0 hashes to ${ALIGN.fundB.tx.txid}, input spends ${ALIGN.fundA.tx.txid}`),
+    );
+
+    // the sharper arm: the entry supplied is the one the answer needs, it is
+    // correct, and the list is still refused, because a list is a prefix from
+    // input 0 rather than the entries a verifier happens to want
+    const needed = ALIGN.bundle();
+    needed.funding[0].prevTxs = [ALIGN.fundB.hex];
+    expect(() => verifySatGenealogy(needed, ATTESTS)).toThrow(
+      new RegExp(`prev tx 0 hashes to ${ALIGN.fundB.tx.txid}, input spends ${ALIGN.fundA.tx.txid}`),
+    );
+
+    // and that input 1 is load-bearing at all, which is what makes the arm
+    // above about position rather than about a spare entry: input 0's entry
+    // alone values the wrong input and stops short of the position
+    const short = ALIGN.bundle();
+    short.funding[0].prevTxs = [ALIGN.fundA.hex];
+    expect(() => verifySatGenealogy(short, ATTESTS)).toThrow(SatFundingIncompleteError);
   });
 
   conformance('values-reach-position', () => {
@@ -1012,7 +1133,7 @@ describe('SPEC-SAT conformance', () => {
       /^coinbase: 64-byte transactions are rejected/,
     );
 
-    // and a funding step, which :232 makes a SHOULD and the implementation
+    // and a funding step, which :233 makes a SHOULD and the implementation
     // rejects on the same guard, so what is recorded here is what the code
     // does rather than only what this line requires
     const atStep = SINGLE.bundle();
@@ -1076,6 +1197,29 @@ describe('SPEC-SAT conformance', () => {
     expect(verifySatGenealogy(SINGLE.bundle(), ATTESTS).coinbaseHeight).toBe(HEIGHT);
   });
 
+  conformance('verifier-step-cap', () => {
+    // no cap is passed here, so what refuses the bundle is the bound the
+    // verifier carries of its own. The steps are junk because the length is
+    // read above every evidence read, which is the property that makes the
+    // bound a guard against a hostile document
+    const over = SINGLE.bundle();
+    over.funding = Array.from({ length: 10_001 }, () => ({ tx: { hex: 'ff' }, prevTxs: [] }));
+    let thrown: unknown;
+    try {
+      verifySatGenealogy(over, ATTESTS);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(SatStepLimitError);
+    expect((thrown as Error).message).toMatch(/genealogy has 10001 steps, verifier cap is 10000/);
+
+    // one step below the same bound is admitted and read, so 10,000 is the
+    // boundary the sentence names rather than a figure the message prints
+    const at = SINGLE.bundle();
+    at.funding = Array.from({ length: 10_000 }, () => ({ tx: { hex: 'ff' }, prevTxs: [] }));
+    expect(() => verifySatGenealogy(at, ATTESTS)).not.toThrow(SatStepLimitError);
+  });
+
   conformance('step-cap-distinguishable', () => {
     const b = SINGLE.bundle();
     let thrown: unknown;
@@ -1115,12 +1259,32 @@ describe('SPEC-SAT conformance', () => {
   });
 
   // -------------------------------------------------------------------------
+  // What sat identity proofs cannot say
+  // -------------------------------------------------------------------------
+
+  conformance('first-inscription-trusted', () => {
+    // what a caller reads off a proof that verified: the sat, the attributes
+    // derived from it, and the shape of the walk that reached it. No field
+    // answers whether this inscription was the first bound to that sat, so
+    // there is nothing here for a caller to over-read
+    const res = verifySatGenealogy(SINGLE.bundle(), ATTESTS);
+    expect(res.sat).toBe(SINGLE.sat);
+    expect(Object.keys(res).filter((k) => /first/i.test(k))).toEqual([]);
+
+    // and neither the code that folds a genealogy nor the code that builds
+    // one names the status anywhere, so no other surface offers it either
+    for (const path of ['packages/core/src/satnumber.ts', 'packages/fetch/src/satbuilder.ts']) {
+      expect(readFileSync(join(ROOT, path), 'utf8'), path).not.toMatch(/first[ -]?inscription/i);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // the accounting
   // -------------------------------------------------------------------------
 
   /**
-   * SPEC-SAT states every requirement with MUST: 53 occurrences over 50 lines,
-   * 8 of them MUST NOT, and no REQUIRED, SHALL or RECOMMENDED anywhere in the
+   * SPEC-SAT states every requirement with MUST: 62 occurrences over 59 lines,
+   * 10 of them MUST NOT, and no REQUIRED, SHALL or RECOMMENDED anywhere in the
    * file. The pattern catches MUST NOT as well, since it contains MUST. The
    * spec has no RFC 2119 boilerplate line, so no line is excluded by name.
    */
@@ -1166,9 +1330,9 @@ describe('SPEC-SAT conformance', () => {
     for (const keyword of ['REQUIRED', 'SHALL', 'RECOMMENDED']) {
       expect(SPEC.match(new RegExp(`\\b${keyword}\\b`, 'g')), keyword).toBeNull();
     }
-    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(53);
-    expect(SPEC.match(/\bMUST NOT\b/g)).toHaveLength(8);
-    expect(SPEC.split('\n').filter((l) => /\bMUST\b/.test(l))).toHaveLength(50);
+    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(62);
+    expect(SPEC.match(/\bMUST NOT\b/g)).toHaveLength(10);
+    expect(SPEC.split('\n').filter((l) => /\bMUST\b/.test(l))).toHaveLength(59);
   });
 
   it('SPEC-SAT.md: the table says how each requirement is covered', () => {

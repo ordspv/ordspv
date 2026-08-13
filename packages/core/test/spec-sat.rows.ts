@@ -13,18 +13,18 @@
  *
  * Which sentences bind which package does not follow the section headings. The
  * builder rules are mostly the last section, but :128 sits in the envelope
- * binding section and binds builders, and :289 sits inside the builder
+ * binding section and binds builders, and :291 sits inside the builder
  * paragraph's own section and binds verifiers. Every row is assigned by reading
  * the code it asserts.
  *
- * THE KEYWORD FILTER. Measured on this file: 53 occurrences of MUST over 50
- * lines, 8 of them MUST NOT, and no REQUIRED, SHALL or RECOMMENDED anywhere.
+ * THE KEYWORD FILTER. Measured on this file: 62 occurrences of MUST over 59
+ * lines, 10 of them MUST NOT, and no REQUIRED, SHALL or RECOMMENDED anywhere.
  * The normative set here is therefore every line matching `/\bMUST\b/`, which
  * catches MUST NOT as well. SPEC-VERIFICATION needed `MUST|REQUIRED` because it
  * states three requirements with REQUIRED alone; widening the pattern here
- * would change nothing, and narrowing it below MUST is not available. The four
- * SHOULD lines (:128, :134, :232, :272) and the one MAY (:70) are outside the
- * set by that choice and are named in the rows whose sentences carry them, so
+ * would change nothing, and narrowing it below MUST is not available. The five
+ * SHOULD lines (:128, :134, :233, :273, :274) and the one MAY (:70) are outside
+ * the set by that choice and are named in the rows whose sentences carry them, so
  * a reader can see they were read rather than missed. This spec has no RFC 2119
  * boilerplate line, so nothing is excluded by name.
  */
@@ -86,6 +86,31 @@ export interface Requirement {
 
 export const TABLE: Requirement[] = [
   // -------------------------------------------------------------------------
+  // Sat numbering
+  // -------------------------------------------------------------------------
+  {
+    id: 'theoretical-subsidy',
+    section: 'Sat numbering',
+    title:
+      'implementations MUST number by the theoretical subsidy, and an underpaid one MUST NOT shift later blocks',
+    quote:
+      'Implementations MUST number sats by the *theoretical* subsidy. An underpaid or\n' +
+      'unclaimed subsidy MUST NOT shift the numbers of later blocks, because ordinals\n' +
+      'depend on how many sats could have been mined rather than on how many were.',
+    binds: 'implementations that number sats',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'two clauses of different reach. The first is driven through a whole bundle whose ' +
+      'terminal coinbase pays out less than its subsidy: the sat the walk folds to is ' +
+      'the schedule position, unmoved by what the block actually paid. The second is ' +
+      'about blocks a genealogy never reads, so no bundle can show it and the test ' +
+      'drives `firstSatOfBlock` directly, across both sides of an epoch boundary: ' +
+      'consecutive first sats differ by the theoretical subsidy at every height, so ' +
+      'nothing an underpaying block does can reach a later one.',
+  },
+
+  // -------------------------------------------------------------------------
   // Start position in the reveal
   // -------------------------------------------------------------------------
   {
@@ -107,7 +132,7 @@ export const TABLE: Requirement[] = [
       'position sits in input 0, where input 1\'s value can change nothing, and whose ' +
       'second entry is a real transaction the input does not name. A verifier reading ' +
       'only as far as the position needs would accept it. The reach clause is stated ' +
-      'again at :159 and driven by the values-reach-position row, since it is the same ' +
+      'again at :160 and driven by the values-reach-position row, since it is the same ' +
       'rule seen from the verifier side.',
   },
   {
@@ -225,6 +250,23 @@ export const TABLE: Requirement[] = [
       'reported beside the answer.',
   },
   {
+    id: 'multi-input-no-section-refused',
+    section: 'Envelope binding',
+    title: 'a verifier MUST refuse a reveal with more than one input and no witness section',
+    quote: 'A verifier MUST refuse a reveal with more than one input and no witness',
+    binds: 'verifiers',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'that the refusal happens at all, where the two rows after it are about how it ' +
+      'reads and when it fires. It is driven at index 0, which is the case a verifier ' +
+      'could think it knows without proof: the first envelope it finds is the one the ' +
+      'id asks for, whatever the other input carries. The same reveal one input ' +
+      'shorter is read, and the same two-input reveal with a section is read, so the ' +
+      'refusal is the input count meeting the absent proof rather than anything else ' +
+      'in the document.',
+  },
+  {
     id: 'unproven-index-distinguishable',
     section: 'Envelope binding',
     title: 'the verifier MUST refuse an unprovable index distinguishably from a forgery, naming the count and the index',
@@ -338,6 +380,28 @@ export const TABLE: Requirement[] = [
       'anywhere else would have to be given them, and the refusal is the hash. Both the ' +
       'reveal hop and a funding step are driven, which are the two places the walk reads ' +
       'values.',
+  },
+  {
+    id: 'prevtx-alignment',
+    section: 'Backward step',
+    title:
+      'a bundle MUST align prev txs from input 0 as a prefix, and a verifier MUST read them at those positions',
+    quote:
+      'A bundle MUST align prev txs from input 0 so that they form a prefix of\n' +
+      'the input list, and a verifier MUST read them at those positions.',
+    binds: 'bundles and verifiers',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'positional rather than matched by txid, which is only visible where two entries ' +
+      'differ. Every two-input fixture above spends one commit twice, so their entries ' +
+      'are interchangeable and a swap there would prove nothing; this row gets a ' +
+      'funding step with two inputs from two different transactions. Swapping its ' +
+      'entries is refused at entry 0, and so is supplying the entry for input 1 alone, ' +
+      'which is the sharper arm: that entry is the one the answer needs, it is correct, ' +
+      'and it is still refused for not being at its position. A verifier matching by ' +
+      'txid accepts both. That input 1 is load-bearing at all is driven beside them, by ' +
+      'supplying input 0 alone and reading the shortfall.',
   },
   {
     id: 'values-reach-position',
@@ -559,9 +623,9 @@ export const TABLE: Requirement[] = [
       'both named endpoints are driven, each on a bundle whose walk reaches it, and the ' +
       'refusal names the endpoint. The guard runs above the txid comparison at each, ' +
       'which is why a 64-byte transaction that hashes to nothing the chain expects still ' +
-      'reaches it. The funding step is driven beside them: :232 makes that a SHOULD and ' +
+      'reaches it. The funding step is driven beside them: :233 makes that a SHOULD and ' +
       'the implementation runs the same guard there, so the test records what the code ' +
-      'does rather than only what this line requires. The prev-tx carve-out of :233 is ' +
+      'does rather than only what this line requires. The prev-tx carve-out of :234 is ' +
       'not driven, and no test in this repository drives it, because a 64-byte ' +
       'transaction has no room for the P2TR output an envelope input has to spend.',
   },
@@ -619,6 +683,26 @@ export const TABLE: Requirement[] = [
       'to exactly the txid the chain expects and every other check on it passes. A ' +
       'verifier without the rule walks through it and numbers the sat off a coinbase it ' +
       'never applied the terminal rules to.',
+  },
+  {
+    id: 'verifier-step-cap',
+    section: 'Genealogy bundle',
+    title: 'a verifier MUST bound the number of funding steps it reads',
+    quote:
+      'A verifier MUST\n' +
+      "bound the number of funding steps it reads; the reference verifier's cap is\n" +
+      '10,000.',
+    binds: 'verifiers',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'that the cap is there without a caller supplying one, which is what separates ' +
+      'this from the row below: that one passes its own cap in. Both sides of the ' +
+      'default are driven, 10,001 steps refused and 10,000 admitted, so the number the ' +
+      'sentence names is the boundary rather than a figure the message happens to ' +
+      'print. The steps are junk, because the bound is read off the array length above ' +
+      'every evidence read, which is the property that makes it a guard against a ' +
+      'hostile document rather than a limit on honest ones.',
   },
   {
     id: 'step-cap-distinguishable',
@@ -682,10 +766,28 @@ export const TABLE: Requirement[] = [
       'the reveal, a fee tail, an uncommitted tapscript and the step cap.',
   },
   {
+    id: 'input-count-refusal-terminal',
+    section: 'Build loop',
+    title: 'a builder MUST treat a refusal raised on the count of inputs as terminal',
+    quote: "reveal's input count is such data, so a builder MUST treat a refusal raised on",
+    binds: 'builders',
+    status: 'tested here',
+    file: 'fetch',
+    why:
+      'the named instance of the rule above it, and the only honest thin assertion is a ' +
+      'source read of the terminal arm in both loops, which is worth saying plainly ' +
+      'rather than dressing up. No builder raises the class today, as the taxonomy ' +
+      'comment beside its row records, so neither arm is reachable through a build and ' +
+      'satbuilder.test.ts asserts twice that a multi-input build ends at the ' +
+      'witness-section class instead. What is driven is the machinery that would have ' +
+      'to agree with the arms: the class is the one the table marks committed at build, ' +
+      'so the recording path cannot reach it however the loop is entered.',
+  },
+  {
     id: 'record-cause-and-walk-again',
     section: 'Build loop',
     title: "a builder MUST record the rest as that backend's cause and walk again with the next one",
-    quote: "A builder MUST record the rest as that backend's cause and walk",
+    quote: 'A builder MUST record the rest as that',
     binds: 'builders',
     status: 'tested here',
     file: 'fetch',
@@ -701,10 +803,11 @@ export const TABLE: Requirement[] = [
     section: 'Build loop',
     title: 'a builder MUST derive each recorded refusal from data the named backend served, having checked the reveal hash first',
     quote:
-      'A builder MUST derive each recorded refusal\n' +
-      'from reveal bytes and from a coinbase height the named backend itself served,\n' +
-      "and MUST have checked the served reveal's stripped hash against the\n" +
-      "inscription id's txid before deriving anything from those bytes.",
+      'A builder MUST\n' +
+      'derive each recorded refusal from reveal bytes and from a coinbase height the\n' +
+      "named backend itself served, and MUST have checked the served reveal's\n" +
+      "stripped hash against the inscription id's txid before deriving anything from\n" +
+      'those bytes.',
     binds: 'builders',
     status:
       'tested at packages/fetch/test/satbuilder.test.ts: never records a refusal derived from wrong-txid reveal bytes',
@@ -757,6 +860,31 @@ export const TABLE: Requirement[] = [
       'same arrangement are driven beside it.',
   },
   {
+    id: 'unanimity-means-served-data',
+    section: 'Build loop',
+    title:
+      "a builder MUST NOT report a refusal as reaching every configured backend unless each rests on that backend's own served data",
+    quote:
+      'A builder MUST NOT report a\n' +
+      "refusal as reaching every configured backend unless each backend's refusal rests\n" +
+      'on reveal bytes and a terminal coinbase height that backend itself served, with\n' +
+      "the served reveal's stripped hash checked against the inscription id's txid.",
+    binds: 'builders',
+    status:
+      'tested at packages/fetch/test/satbuilder.test.ts: refuses unanimity over a coinbase height one member alone served',
+    file: 'fetch',
+    why:
+      'the marker read as a claim about provenance, where the two rows above it read it ' +
+      'as a count. The cited test builds against members where one alone served the ' +
+      'height the refusal turns on and reads the marker false; "keeps unanimity when ' +
+      'each member served the fee-tail coinbase status itself" is the other side of it, ' +
+      'and the reveal-bytes half of the sentence has the same pair. The re-assert here ' +
+      'is the mechanism that keeps the claim true, which is the hash check seen from ' +
+      'the marker: a lead serving bytes for another transaction raises a class the loop ' +
+      'cannot record as a refusal, so it lands in the group that puts unanimity out of ' +
+      'reach instead of joining the count.',
+  },
+  {
     id: 'caller-must-not-read-partial',
     section: 'Build loop',
     title: 'a caller MUST NOT read a domain refusal short of every configured backend as proof about the chain',
@@ -794,6 +922,29 @@ export const TABLE: Requirement[] = [
       'fifteenth run; satbuilder.test.ts drives the pool and the raw-block server. The ' +
       're-assert here drives the anchor itself: an attester that also served bytes agrees ' +
       'and the vote still fails for want of an independent one.',
+  },
+
+  // -------------------------------------------------------------------------
+  // What sat identity proofs cannot say
+  // -------------------------------------------------------------------------
+  {
+    id: 'first-inscription-trusted',
+    section: 'What sat identity proofs cannot say',
+    title: 'a caller that needs first-inscription status MUST treat it as trusted',
+    quote:
+      'A caller that needs first-inscription status\n' +
+      'MUST treat it as trusted, since no path proof answers a global question over\n' +
+      'every inscription ever made.',
+    binds: 'callers, this repository included',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'a rule about what a caller may read, so what the library owes it is that nothing ' +
+      'here offers the status as proven for a caller to over-read. The verified result ' +
+      'is read field by field off a bundle that verifies and carries no answer to the ' +
+      'question, and neither the verifier nor the builder names one anywhere in its ' +
+      'source. What the test cannot reach is a caller obeying the rule, since obeying ' +
+      'it means consulting an index this repository does not ship.',
   },
 ];
 

@@ -41,9 +41,9 @@ firstSat(h)     = sum over g < h of subsidy(g)
 TOTAL_SATS      = firstSat(33 * 210000) = 2099999997690000
 ```
 
-Numbering follows the *theoretical* subsidy. An underpaid or unclaimed subsidy
-does not shift the numbers of later blocks, because ordinals depend on how many
-sats could have been mined rather than on how many were.
+Implementations MUST number sats by the *theoretical* subsidy. An underpaid or
+unclaimed subsidy MUST NOT shift the numbers of later blocks, because ordinals
+depend on how many sats could have been mined rather than on how many were.
 
 Derived attributes are functions of the number alone:
 
@@ -111,8 +111,8 @@ MUST record the way the index was proven in `indexProof`:
 - with no section, a single-input reveal needs nothing more
   (`single-input`).
 
-A reveal with more than one input and no witness section is refused. The
-verifier MUST refuse it distinguishably from a forgery
+A verifier MUST refuse a reveal with more than one input and no witness
+section. The verifier MUST refuse it distinguishably from a forgery
 (`EnvelopeIndexUnprovenError`), naming the reveal's input count and the
 requested index, since such a bundle can be honest and merely unable to
 prove its numbering. The verifier MUST refuse before selecting an envelope,
@@ -155,7 +155,8 @@ input's funding output. Input values MUST come from the referenced previous
 transactions, and each previous transaction's bytes MUST hash to the txid the
 input names.
 
-Prev txs are aligned from input 0 and form a prefix of the input list. A
+A bundle MUST align prev txs from input 0 so that they form a prefix of
+the input list, and a verifier MUST read them at those positions. A
 verifier whose supplied values do not reach the position MUST reject and say so
 rather than assume the sat came from an input it cannot value.
 
@@ -241,11 +242,12 @@ steps, and MUST reject a coinbase appearing as a funding step rather than as
 the terminal element. The terminal coinbase needs no duplicate test: its txid
 is named by the last funding step's input, every walked element is pinned the
 same way, and a coinbase in any earlier position is rejected by the preceding
-rule, so a duplicate terminal element has no reachable form. A verifier-side step cap (default 10,000) bounds hostile bundles.
-Builders carry their own cap, since a walk spends a request per step against a
-live backend; the reference builder defaults to 4,096 and exposes it as
-`--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past 800
-funding steps, so a builder cap below four figures refuses real work. A
+rule, so a duplicate terminal element has no reachable form. A verifier MUST
+bound the number of funding steps it reads; the reference verifier's cap is
+10,000. Builders carry their own cap, since a walk spends a request per step
+against a live backend; the reference builder defaults to 4,096 and exposes it
+as `--max-steps`. Deep ancestries are ordinary: mainnet has inscriptions past
+800 funding steps, so a builder cap below four figures refuses real work. A
 verifier that refuses a bundle for exceeding its cap MUST report that refusal
 distinguishably from a bundle it found invalid, since a bundle deeper than the
 cap may be honest and the caller may raise the cap and read it.
@@ -262,22 +264,22 @@ was derived from. A builder MUST NOT treat a build-time refusal as terminal whil
 another backend is configured unless the refusal was derived from data the
 reveal txid commits. A refusal becomes terminal once a verifier raises it,
 because the bundle a verifier refused had already bound its witness. The
-reveal's input count is such data, so a refusal raised on the count of inputs
-is terminal. A builder MUST record the rest as that backend's cause and walk
-again leading with the next one. A builder MUST derive each recorded refusal
-from reveal bytes and from a coinbase height the named backend itself served,
-and MUST have checked the served reveal's stripped hash against the
-inscription id's txid before deriving anything from those bytes.
-A builder that has exhausted every configured
-backend SHOULD report the refusal in the class each backend raised, and SHOULD
-name every backend that led an attempt reporting it. A builder MUST report
+reveal's input count is such data, so a builder MUST treat a refusal raised on
+the count of inputs as terminal. A builder MUST record the rest as that
+backend's cause and walk again leading with the next one. A builder MUST
+derive each recorded refusal from reveal bytes and from a coinbase height the
+named backend itself served, and MUST have checked the served reveal's
+stripped hash against the inscription id's txid before deriving anything from
+those bytes. A builder that has exhausted every configured backend SHOULD
+report the refusal in the class each backend raised, and SHOULD name every
+backend that led an attempt reporting it. A builder MUST report
 whether every configured backend reached that same refusal, and MUST name the
 backends that produced no usable answer and the backends that led no attempt
 when they did not. A builder MUST report a refusal as reaching every
 configured backend only when at least two backends were configured, since one
-backend agreeing with itself is one server's word. A refusal reported as
-reaching every configured backend means each backend's refusal rests on
-reveal bytes and a terminal coinbase height that backend itself served, with
+backend agreeing with itself is one server's word. A builder MUST NOT report a
+refusal as reaching every configured backend unless each backend's refusal rests
+on reveal bytes and a terminal coinbase height that backend itself served, with
 the served reveal's stripped hash checked against the inscription id's txid.
 A caller MUST NOT read a
 domain refusal short of every configured backend as proof about the chain.
@@ -297,10 +299,10 @@ independent attester for it.
 ## What sat identity proofs cannot say
 
 That this inscription is the *first* one on the sat. A genealogy names the sat
-an envelope was bound to; whether some earlier envelope was bound to the same
-sat is a global question over every inscription ever made, and no path proof
-answers it. Callers who care about first-inscription status need an index, and
-should treat that part as trusted.
+an envelope was bound to, and answering whether some earlier envelope was bound
+to the same sat needs an index. A caller that needs first-inscription status
+MUST treat it as trusted, since no path proof answers a global question over
+every inscription ever made.
 
 Rarity is a statement about the sat's position in the issuance schedule.
 Whether the wider market recognizes any given tier is outside this spec.

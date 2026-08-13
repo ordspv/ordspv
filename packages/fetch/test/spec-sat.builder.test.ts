@@ -23,6 +23,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CoinbaseHeightUnprovenError,
   CustodyUnsupportedError,
+  EnvelopeIndexUnprovenError,
   hexToBytes,
   parseHeader,
 } from '@ordspv/core';
@@ -37,6 +38,7 @@ import {
 import {
   EsploraBackend,
   REFUSAL_CLASS_FACTS,
+  RevealSourceError,
   isRecordableBuildRefusal,
   makeHeaderTrust,
 } from '../src/index.js';
@@ -168,6 +170,25 @@ describe('SPEC-SAT conformance: the build loop', () => {
     ).toBe(entries.length - 1);
   });
 
+  conformance('input-count-refusal-terminal', () => {
+    // terminal is an arm in each loop rather than a property of the class, and
+    // the only honest assertion is a source read of the two arms: no builder
+    // raises the class, which the taxonomy comment beside its row records, so
+    // neither arm is reachable through a build
+    for (const file of ['satbuilder.ts', 'custodybuilder.ts']) {
+      const source = readFileSync(join(ROOT, `packages/fetch/src/${file}`), 'utf8');
+      expect(source, file).toContain('if (e instanceof EnvelopeIndexUnprovenError) throw e;');
+    }
+
+    // what is driven is the machinery that would have to agree with those
+    // arms: the recording path cannot reach the class however the loop is
+    // entered, because the table marks its deciding data committed at build
+    expect(REFUSAL_CLASS_FACTS.EnvelopeIndexUnprovenError.committedAtBuild).toBe(true);
+    expect(isRecordableBuildRefusal(new EnvelopeIndexUnprovenError('reveal spends 2 inputs'))).toBe(
+      false,
+    );
+  });
+
   conformance('record-cause-and-walk-again', () => {
     // the cause is kept and attributed rather than folded into a count: two
     // backends refused, and the report names each with what it said
@@ -241,6 +262,27 @@ describe('SPEC-SAT conformance: the build loop', () => {
     // the same arrangement with two configured backends does reach it
     const two = sharedDomainRefusal([refusal(A, 'fee tail'), refusal(B, 'fee tail')], 2);
     expect(two?.unanimous).toBe(true);
+  });
+
+  conformance('unanimity-means-served-data', () => {
+    // the hash check seen from the marker, which is what keeps the marker's
+    // claim true: a lead serving bytes for another transaction raises a class
+    // the loop cannot record as a refusal, so it lands in the group that puts
+    // unanimity out of reach rather than joining the count
+    const wrongTx = new RevealSourceError(
+      'reveal tx failed at the leading backend https://b.test: backend served aa.. for requested bb..',
+    );
+    expect(isRecordableBuildRefusal(wrongTx)).toBe(false);
+    const withNoAnswer = sharedDomainRefusal([refusal(A, 'fee tail')], 2, [
+      { baseUrl: B, error: wrongTx },
+    ]);
+    expect(withNoAnswer?.unanimous).toBe(false);
+    expect(withNoAnswer?.message).toContain('produced no usable answer');
+
+    // and the arrangement the marker is for, where every configured backend
+    // led an attempt of its own and refused on what it served itself
+    const both = sharedDomainRefusal([refusal(A, 'fee tail'), refusal(B, 'fee tail')], 2);
+    expect(both?.unanimous).toBe(true);
   });
 
   conformance('caller-must-not-read-partial', () => {
