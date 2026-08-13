@@ -1,6 +1,6 @@
 {
   "name": "@ordspv/fetch",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "description": "ord:// resolver: verified fetch of inscription content over untrusted gateways/backends.",
   "exports": {
@@ -8,7 +8,7 @@
     "./headersync": "./src/headersync.ts"
   },
   "dependencies": {
-    "@ordspv/core": "0.3.3"
+    "@ordspv/core": "0.3.4"
   },
   "repository": {
     "type": "git",
