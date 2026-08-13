@@ -17,6 +17,12 @@ import { parseOrdUri, type ParsedOrdUri } from './uri.js';
 
 export type VerificationMode = 'none' | 'L1' | 'L2' | 'L3';
 
+/** one backend's failure inside a loop that tried several (`OrdResolveError.causes`) */
+export interface BackendCause {
+  baseUrl: string;
+  message: string;
+}
+
 export class OrdResolveError extends Error {
   constructor(
     public readonly code:
@@ -29,6 +35,15 @@ export class OrdResolveError extends Error {
       | 'INTEGRITY_INDETERMINATE'
       | 'BACKEND',
     message: string,
+    /**
+     * When this error stands for a whole loop of backends failing, each
+     * backend's own failure in the order they were tried. The aggregate
+     * message names them too; this carries the same facts without the prose,
+     * so a caller can tell one kind of failure from another (every backend
+     * answering HTTP 404 is an absent inscription; one of them timing out is
+     * not) instead of parsing a sentence.
+     */
+    public readonly causes: readonly BackendCause[] = [],
   ) {
     super(message);
     this.name = 'OrdResolveError';
@@ -95,7 +110,13 @@ export interface ResolveResult {
   /** body bytes after content-encoding handling (see `decoded`) */
   body: Uint8Array;
   contentType?: string;
-  /** on-chain content-encoding, if the body is still encoded */
+  /**
+   * On-chain content-encoding, if the body is still encoded. Populated from an
+   * envelope parse and from nothing else, so it is only ever set on the
+   * verified paths; a transport `Content-Encoding` is not this (SPEC-GATEWAY §4
+   * forbids inferring the inscription's encoding from one) and arrives as
+   * `transportContentEncoding` instead.
+   */
   contentEncoding?: string;
   /**
    * tag-9 content-encoding declared by the SERVED source's envelope, from the
@@ -104,6 +125,24 @@ export interface ResolveResult {
    * paths, where the envelope was actually parsed.
    */
   storedContentEncoding?: string;
+  /**
+   * The `Content-Encoding` observed on the HTTP response at L0/L1, recorded as
+   * an observation about the transport and never as a fact about the
+   * inscription. It may be an intermediary's compression, the stored tag-9
+   * encoding, or a header a CDN wrote over plain bytes, and nothing here can
+   * tell those apart (SPEC-GATEWAY §4). Its one load-bearing use is telling a
+   * transport-decoded body apart from a real integrity mismatch (SPEC-URI §4,
+   * `INTEGRITY_INDETERMINATE`).
+   */
+  transportContentEncoding?: string;
+  /**
+   * The `x-ord-content-encoding` an ord server supplied at L0/L1: that server's
+   * attestation about the envelope's tag 9, one of the four sources
+   * SPEC-GATEWAY §4 permits a consumer to read. It is the server's claim and
+   * not a verified fact, which is why it is kept apart from
+   * `storedContentEncoding`, whose value this resolver parsed itself.
+   */
+  attestedContentEncoding?: string;
   /** true when the resolver decoded the on-chain content-encoding */
   decoded: boolean;
   verification: Verification;
@@ -190,15 +229,19 @@ export class OrdResolver {
   private async withEsplora<T>(
     fn: (e: EsploraBackend) => Promise<T>,
   ): Promise<{ value: T; source: EsploraBackend }> {
-    const errors: string[] = [];
+    const causes: BackendCause[] = [];
     for (const e of this.esploras) {
       try {
         return { value: await fn(e), source: e };
       } catch (err) {
-        errors.push(`${e.baseUrl}: ${(err as Error).message}`);
+        causes.push({ baseUrl: e.baseUrl, message: (err as Error).message });
       }
     }
-    throw new OrdResolveError('BACKEND', `all esplora backends failed:\n${errors.join('\n')}`);
+    throw new OrdResolveError(
+      'BACKEND',
+      `all esplora backends failed:\n${causes.map((c) => `${c.baseUrl}: ${c.message}`).join('\n')}`,
+      causes,
+    );
   }
 
   private async verifyInscription(
@@ -347,7 +390,7 @@ export class OrdResolver {
         'L1 verification requires an #integrity fragment in the URI',
       );
     }
-    const errors: string[] = [];
+    const causes: BackendCause[] = [];
     for (const ord of this.ordServers) {
       try {
         if (parsed.path === 'metadata') {
@@ -372,16 +415,19 @@ export class OrdResolver {
             ? await ord.content(parsed.idString)
             : await ord.undelegatedContent(parsed.idString);
         const body = new Uint8Array(await res.arrayBuffer());
-        const contentEncoding = res.headers.get('content-encoding') ?? undefined;
+        // an observation about this hop, not about the inscription: no
+        // envelope was parsed here, so nothing on this path may populate
+        // `contentEncoding` (SPEC-GATEWAY §4)
+        const transportContentEncoding = res.headers.get('content-encoding') ?? undefined;
         if (parsed.integrity) {
           const actual = bytesToHex(sha256(body));
           if (actual !== parsed.integrity.digestHex) {
             // fetch() may have transparently decoded the transport encoding,
             // in which case the stored-bytes pin cannot be evaluated here.
             throw new OrdResolveError(
-              contentEncoding ? 'INTEGRITY_INDETERMINATE' : 'INTEGRITY',
-              contentEncoding
-                ? `body was transport-decoded (${contentEncoding}); use L2/L3 to check an integrity pin on encoded inscriptions`
+              transportContentEncoding ? 'INTEGRITY_INDETERMINATE' : 'INTEGRITY',
+              transportContentEncoding
+                ? `body was transport-decoded (${transportContentEncoding}); use L2/L3 to check an integrity pin on encoded inscriptions`
                 : `integrity mismatch: body sha256 ${actual}, URI pins ${parsed.integrity.digestHex}`,
             );
           }
@@ -390,7 +436,9 @@ export class OrdResolver {
           uri: parsed,
           body,
           contentType: res.headers.get('content-type') ?? undefined,
-          contentEncoding,
+          transportContentEncoding,
+          // the server's own claim about tag 9, kept as a claim
+          attestedContentEncoding: res.headers.get('x-ord-content-encoding') ?? undefined,
           decoded: false,
           verification: {
             level: mode,
@@ -400,10 +448,14 @@ export class OrdResolver {
         };
       } catch (e) {
         if (e instanceof OrdResolveError && e.code !== 'BACKEND') throw e;
-        errors.push(`${ord.baseUrl}: ${(e as Error).message}`);
+        causes.push({ baseUrl: ord.baseUrl, message: (e as Error).message });
       }
     }
-    throw new OrdResolveError('BACKEND', `all ord gateways failed:\n${errors.join('\n')}`);
+    throw new OrdResolveError(
+      'BACKEND',
+      `all ord gateways failed:\n${causes.map((c) => `${c.baseUrl}: ${c.message}`).join('\n')}`,
+      causes,
+    );
   }
 }
 
@@ -419,6 +471,9 @@ function safeDecodeCbor(bytes: Uint8Array): unknown {
 export function toResponse(result: ResolveResult): Response {
   const headers = new Headers();
   headers.set('content-type', result.contentType ?? 'application/octet-stream');
+  // only the envelope-derived encoding is emitted. `transportContentEncoding`
+  // and `attestedContentEncoding` are somebody else's observation and somebody
+  // else's claim, and re-emitting either would republish it as this hop's
   if (result.contentEncoding) headers.set('content-encoding', result.contentEncoding);
   // attestation: the envelope's tag-9 encoding, NEVER copied from transport
   // headers (SPEC-GATEWAY §5; Content-Encoding is ambiguous through CDNs)
