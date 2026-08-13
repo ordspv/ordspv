@@ -10,16 +10,17 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'extension/src/**/*.ts'],
       reporter: ['text', 'text-summary'],
-      // Ratchet floors: set just under the measured baseline (2026-08-10
-      // after the property tests moved into the suite: 80.02 / 74.69 / 83.30 /
-      // 82.09 across all src incl. the untested CLI and extension UI scripts;
-      // the previous baseline was 75.24 / 66.17 / 80.11 / 78.23 on 2026-07-19).
+      // Ratchet floors: set just under the measured baseline (2026-08-12 after
+      // the custody and satnumber property tests moved into the suite: 81.16 /
+      // 76.31 / 83.87 / 82.81 across all src incl. the untested CLI and
+      // extension UI scripts; the previous baseline was 80.02 / 74.69 / 83.30 /
+      // 82.09 on 2026-08-10, and 75.24 / 66.17 / 80.11 / 78.23 on 2026-07-19).
       // Raise deliberately as coverage grows; never lower to admit a regression.
       thresholds: {
-        statements: 79.8,
-        branches: 74.4,
-        functions: 83,
-        lines: 81.8,
+        statements: 80.9,
+        branches: 76,
+        functions: 83.6,
+        lines: 82.5,
       },
     },
   },
