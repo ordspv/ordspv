@@ -6,9 +6,11 @@ import {
   buildProofBundle,
   DEFAULT_HTTP_TIMEOUT_MS,
   EsploraBackend,
+  OrdResolveError,
   OrdResolver,
   readBodyCapped,
   toResponse,
+  type BackendCause,
   type FetchFn,
 } from '@ordspv/fetch';
 import { ByteLru } from './lru.js';
@@ -88,6 +90,85 @@ const CONTENT_CSP = [
   "default-src *:*/content/ *:*/blockheight *:*/blockhash *:*/blockhash/ *:*/blocktime *:*/r/ 'unsafe-eval' 'unsafe-inline' data: blob:",
 ];
 const IMMUTABLE = 'public, max-age=1209600, immutable';
+/**
+ * SPEC-GATEWAY §4's deliberate divergence from ord, on every content response
+ * this gateway serves from either personality.
+ */
+const NOSNIFF = { 'x-content-type-options': 'nosniff' } as const;
+
+/**
+ * Whether a request's `Accept-Encoding` admits a content coding.
+ *
+ * Implemented, which is RFC 9110 §12.5.3 as far as one stored coding needs it:
+ * the comma-separated token list, `*` as the fallback when no token names the
+ * coding, and a `q` of zero as a refusal. An absent header admits everything.
+ * An empty header admits nothing but identity, which is what the RFC says a
+ * sender with no coding support looks like, so a non-identity coding is
+ * refused.
+ *
+ * Not implemented, and not needed here: q-value ORDERING. A gateway holding one
+ * stored encoding has nothing to choose between, so preference among several
+ * codings cannot change this answer. Also not implemented are the identity
+ * special cases beyond the empty-field rule, because this is only ever asked
+ * about a coding the envelope declared, and `identity` is not one.
+ *
+ * A `q` that does not parse as a number is read as a refusal. That is the
+ * fail-closed direction: the alternative is handing a client bytes it did not
+ * agree to decode under a label its HTTP stack will not act on.
+ */
+export function acceptsEncoding(header: string | undefined, encoding: string): boolean {
+  if (header === undefined) return true;
+  const wanted = encoding.trim().toLowerCase();
+  let wildcard: boolean | undefined;
+  for (const element of header.split(',')) {
+    const [rawToken, ...params] = element.split(';');
+    const token = rawToken.trim().toLowerCase();
+    if (token === '') continue;
+    const q = params.map((p) => p.trim().toLowerCase()).find((p) => p.startsWith('q='));
+    const admitted = q === undefined || Number(q.slice(2)) > 0;
+    // a token naming the coding settles it; `*` only speaks where none does
+    if (token === wanted) return admitted;
+    if (token === '*') wildcard = admitted;
+  }
+  return wildcard ?? false;
+}
+
+/** node gives repeated headers as an array; the RFC reads them as one list */
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.join(', ') : value;
+}
+
+/**
+ * SPEC-GATEWAY §4's negotiation, applied to a response about to be sent.
+ * Answers 406 and returns true when the response carries a `Content-Encoding`
+ * the request does not admit, in which case the caller must send nothing more.
+ *
+ * Only reachable when the resolver could not decode the stored encoding, which
+ * is an unknown tag-9 value or a recognized one whose decode failed or ran past
+ * its output bound. A decoded body carries no `Content-Encoding` and so
+ * negotiates nothing, which is the `MAY decompress br server-side` arm of the
+ * same sentence and is where the common cases land.
+ *
+ * `headers` is mutated to carry `Vary`, so one client's negotiated answer is
+ * not reused for a client that negotiated differently, by this gateway's own
+ * LRU or by any shared cache in front of it.
+ */
+function refusedEncoding(
+  req: IncomingMessage,
+  res: ServerResponse,
+  headers: Record<string, string>,
+): boolean {
+  const encoding = headers['content-encoding'];
+  if (encoding === undefined) return false;
+  headers['vary'] = 'accept-encoding';
+  if (acceptsEncoding(headerValue(req.headers['accept-encoding']), encoding)) return false;
+  sendJson(res, 406, {
+    error:
+      `the stored bytes are ${encoding}-encoded, this gateway could not decode them, ` +
+      `and the request's Accept-Encoding does not admit ${encoding}`,
+  });
+  return true;
+}
 
 /** upstream Cache-Control directives that veto insertion into the LRU */
 function upstreamForbidsCaching(cacheControl: string | null): boolean {
@@ -274,8 +355,10 @@ export function createGateway(options: GatewayOptions = {}): Server {
       if (immutable && !forbidden) {
         headers['cache-control'] = IMMUTABLE;
       }
+      // §4's header set is scoped to /content/<id>, which is the same surface
+      // `immutable` selects, so nosniff travels with the CSP headers
       const extra: Record<string, string | string[]> = immutable
-        ? { 'content-security-policy': CONTENT_CSP }
+        ? { 'content-security-policy': CONTENT_CSP, ...NOSNIFF }
         : {};
 
       const mayCache = immutable && !forbidden && cacheMaxBytes > 0;
@@ -370,7 +453,12 @@ export function createGateway(options: GatewayOptions = {}): Server {
       const hit = cache.get(cacheKey);
       if (hit) {
         mCacheHits.inc();
-        return send(res, hit.status, hit.body, { ...hit.headers, 'x-cache': 'HIT' });
+        // the LRU is keyed on the route and holds one canonical body, so the
+        // negotiation runs again per request rather than being inherited from
+        // whichever client happened to miss first
+        const headers = { ...hit.headers, 'x-cache': 'HIT' };
+        if (refusedEncoding(req, res, headers)) return;
+        return send(res, hit.status, hit.body, headers);
       }
       mCacheMisses.inc();
     }
@@ -404,7 +492,7 @@ export function createGateway(options: GatewayOptions = {}): Server {
         });
       } catch (e) {
         mUpstreamErrors.inc();
-        return sendJson(res, 502, { error: (e as Error).message });
+        return sendJson(res, statusForFailure(e), { error: (e as Error).message });
       }
     }
 
@@ -421,10 +509,13 @@ export function createGateway(options: GatewayOptions = {}): Server {
         const headers: Record<string, string> = {};
         response.headers.forEach((v, k) => (headers[k] = v));
         headers['content-security-policy'] = CONTENT_CSP.join(', ');
+        Object.assign(headers, NOSNIFF);
+        // above sendCached, so a refused body never enters the LRU
+        if (refusedEncoding(req, res, headers)) return;
         return sendCached(res, cacheKey, new Uint8Array(await response.arrayBuffer()), headers);
       } catch (e) {
         mUpstreamErrors.inc();
-        return sendJson(res, 502, { error: (e as Error).message });
+        return sendJson(res, statusForFailure(e), { error: (e as Error).message });
       }
     }
 
@@ -484,16 +575,89 @@ export function createGateway(options: GatewayOptions = {}): Server {
   });
 }
 
+/**
+ * Every configured backend failed, carrying each one's cause so the caller can
+ * tell an absent inscription from an unreachable upstream.
+ */
+export class AllBackendsFailed extends Error {
+  constructor(
+    message: string,
+    readonly causes: readonly BackendCause[],
+  ) {
+    super(message);
+    this.name = 'AllBackendsFailed';
+  }
+}
+
+/**
+ * Whether one backend's failure says the inscription is not there, as opposed
+ * to saying this backend could not answer.
+ *
+ * Four shapes qualify. The backend's own 404 means it looked and the
+ * transaction is not in its index. A source saying the transaction was not
+ * found says the same in words, which is how the Core-RPC path puts it. An
+ * unconfirmed reveal means there is nothing on chain to prove yet. No envelope
+ * at the requested index means the transaction is there and carries no such
+ * inscription, which is the most definite absence of the four.
+ *
+ * `tx <txid> not found in block <hash>` is excluded on purpose, although it
+ * reads like an absence and the general clause below would otherwise take it:
+ * it is one source's status disagreeing with its own block data, which is bad
+ * upstream data. Answering 404 to it would tell a caller the inscription does
+ * not exist on the strength of a source contradicting itself.
+ *
+ * Exported because the sidecar answers the same question about the same
+ * builder's errors, and two copies of this reasoning would drift.
+ */
+export function saysNotFound(message: string): boolean {
+  if (/ not found in block /i.test(message)) return false;
+  return (
+    /-> HTTP 404\b/.test(message) ||
+    /\bnot found\b/i.test(message) ||
+    /\bis not confirmed\b/i.test(message) ||
+    /\bno envelope at index\b/i.test(message)
+  );
+}
+
+/**
+ * The status for a whole backend loop having failed: 404 only when every
+ * backend that was asked said the inscription is not there.
+ *
+ * Unanimity is the rule because one backend timing out while another answers
+ * 404 is not an absence: the one that might have found it never spoke. With no
+ * backends configured nothing said anything, so that is not an absence either.
+ */
+function statusForCauses(causes: readonly BackendCause[]): 404 | 502 {
+  return causes.length > 0 && causes.every((c) => saysNotFound(c.message)) ? 404 : 502;
+}
+
+/**
+ * SPEC-GATEWAY §3's error table, applied to whatever a resolve or a build
+ * threw. `NO_CONTENT` is an absence of its own: the inscription resolved and
+ * the referent the caller asked for has no bytes.
+ */
+function statusForFailure(e: unknown): 404 | 502 {
+  if (e instanceof AllBackendsFailed) return statusForCauses(e.causes);
+  if (e instanceof OrdResolveError) {
+    if (e.code === 'NO_CONTENT') return 404;
+    if (e.code === 'BACKEND') return statusForCauses(e.causes);
+  }
+  return 502;
+}
+
 async function tryBackends<T>(backends: EsploraBackend[], fn: (e: EsploraBackend) => Promise<T>): Promise<T> {
-  const errors: string[] = [];
+  const causes: BackendCause[] = [];
   for (const b of backends) {
     try {
       return await fn(b);
     } catch (e) {
-      errors.push(`${b.baseUrl}: ${(e as Error).message}`);
+      causes.push({ baseUrl: b.baseUrl, message: (e as Error).message });
     }
   }
-  throw new Error(`all backends failed: ${errors.join('; ')}`);
+  throw new AllBackendsFailed(
+    `all backends failed: ${causes.map((c) => `${c.baseUrl}: ${c.message}`).join('; ')}`,
+    causes,
+  );
 }
 
 /** graceful shutdown: stop accepting, drain in-flight, force-close after grace */

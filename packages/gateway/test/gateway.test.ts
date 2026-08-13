@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hexToBytes, parseTx, verifyProofBundle, type ProofBundleJson } from '@ordspv/core';
 import type { FetchFn } from '@ordspv/fetch';
-import { createGateway } from '../src/index.js';
+import { acceptsEncoding, createGateway, saysNotFound } from '../src/index.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/insc0');
 const EXTENDED = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures/extended');
@@ -147,5 +147,95 @@ describe('gateway', () => {
   it('rejects malformed ids', async () => {
     const res = await fetch(`${base}/ord/v1/proof/zzz`);
     expect(res.status).toBe(400);
+  });
+
+  it('answers 404 for a well-formed id no backend can find, 502 when one is down', async () => {
+    // every backend looked and said the transaction is not in its index, so
+    // the inscription is absent rather than the data being unavailable
+    const missing = `${'ab'.repeat(32)}i0`;
+    for (const path of [`/ord/v1/proof/${missing}`, `/content/${missing}`]) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status, path).toBe(404);
+      // the route matched and the lookup came back empty; this is not the
+      // unknown-route fallback, which is the other 404 this gateway serves
+      const body = (await res.json()) as { error: string; routes?: string[] };
+      expect(body.routes, path).toBeUndefined();
+      expect(body.error, path).toContain('404');
+    }
+
+    // the same request against a backend that could not answer at all: one
+    // that might have found it never spoke, so this is not an absence
+    const down = createGateway({
+      upstream: U,
+      esplora: [E],
+      anchorSources: [E2, E3],
+      mode: 'verify',
+      fetchFn: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    await new Promise<void>((r) => down.listen(0, () => r()));
+    const downBase = `http://127.0.0.1:${(down.address() as AddressInfo).port}`;
+    try {
+      for (const path of [`/ord/v1/proof/${missing}`, `/content/${missing}`]) {
+        expect((await fetch(`${downBase}${path}`)).status, path).toBe(502);
+      }
+    } finally {
+      await new Promise<void>((r) => down.close(() => r()));
+    }
+  });
+});
+
+describe('saysNotFound', () => {
+  it('reads a backend 404, an unconfirmed reveal and a missing envelope as absence', () => {
+    expect(saysNotFound('https://esplora.test/tx/abcd/status -> HTTP 404')).toBe(true);
+    expect(saysNotFound('reveal tx abcd is not confirmed')).toBe(true);
+    expect(saysNotFound('no envelope at index 3 in abcd')).toBe(true);
+  });
+
+  it('reads everything else as the backend failing, including a self-contradiction', () => {
+    // this one reads like an absence and is not: the backend's status pointed
+    // at a block whose own contents disagree, which is bad upstream data
+    expect(saysNotFound('tx abcd not found in block 0000dead')).toBe(false);
+    expect(saysNotFound('https://esplora.test/tx/abcd/hex -> HTTP 503')).toBe(false);
+    expect(saysNotFound('connect ECONNREFUSED 127.0.0.1:80')).toBe(false);
+    expect(saysNotFound('response exceeded cap of 1024 bytes')).toBe(false);
+    // a 404 for something other than the lookup is still the backend's 404,
+    // which is the conservative direction: it names a resource that is absent
+    expect(saysNotFound('https://esplora.test/block/0000/raw -> HTTP 4040')).toBe(false);
+  });
+});
+
+describe('acceptsEncoding', () => {
+  it('admits everything when no header was sent, and nothing but identity when it is empty', () => {
+    // RFC 9110 §12.5.3: absent means no preference; empty means the sender
+    // supports no content coding at all
+    expect(acceptsEncoding(undefined, 'br')).toBe(true);
+    expect(acceptsEncoding('', 'br')).toBe(false);
+  });
+
+  it('matches tokens case-insensitively and around whitespace', () => {
+    expect(acceptsEncoding('gzip, br', 'br')).toBe(true);
+    expect(acceptsEncoding('  GZIP ,  BR  ', 'br')).toBe(true);
+    expect(acceptsEncoding('gzip, deflate', 'br')).toBe(false);
+    expect(acceptsEncoding('gzip, deflate', 'x-unknown-42')).toBe(false);
+  });
+
+  it('reads a zero q as a refusal and any other q as admission', () => {
+    expect(acceptsEncoding('br;q=0', 'br')).toBe(false);
+    expect(acceptsEncoding('br;q=0.000', 'br')).toBe(false);
+    expect(acceptsEncoding('br;q=0.001', 'br')).toBe(true);
+    expect(acceptsEncoding('br; q=1', 'br')).toBe(true);
+    // a q that is not a number is refused rather than ignored: the fail-closed
+    // direction is not handing over bytes the client did not agree to decode
+    expect(acceptsEncoding('br;q=high', 'br')).toBe(false);
+  });
+
+  it('lets the wildcard speak only where no token names the coding', () => {
+    expect(acceptsEncoding('*', 'x-unknown-42')).toBe(true);
+    expect(acceptsEncoding('*;q=0', 'x-unknown-42')).toBe(false);
+    // an explicit token wins over the wildcard in both directions
+    expect(acceptsEncoding('*;q=0, br', 'br')).toBe(true);
+    expect(acceptsEncoding('*, br;q=0', 'br')).toBe(false);
   });
 });

@@ -16,7 +16,7 @@ import {
   type EsploraTxStatus,
   type ProofBackend,
 } from '@ordspv/fetch';
-import { ByteLru, TokenBucketLimiter } from '@ordspv/gateway';
+import { ByteLru, saysNotFound, TokenBucketLimiter } from '@ordspv/gateway';
 
 /**
  * Proof sidecar: SPEC-VERIFICATION proof bundles served straight from a
@@ -300,8 +300,12 @@ export function createSidecar(options: SidecarOptions): Server {
         return res.end(Buffer.from(body));
       } catch (e) {
         const message = (e as Error).message;
-        const status = /not found|not confirmed|no envelope/i.test(message) ? 404 : 502;
-        return sendJson(res, status, { error: message });
+        // the gateway's predicate, because both answer this question about the
+        // same builder's errors. It differs from the pattern that used to be
+        // here in one case: `tx <txid> not found in block <hash>` is the
+        // builder's status disagreeing with its own block data, so it reports
+        // as upstream-unavailable rather than as an absent inscription
+        return sendJson(res, saysNotFound(message) ? 404 : 502, { error: message });
       }
     })().catch((e) => sendJson(res, 500, { error: (e as Error).message }));
   });

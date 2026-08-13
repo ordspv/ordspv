@@ -22,6 +22,7 @@
  */
 
 import type { AddressInfo } from 'node:net';
+import { brotliCompressSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +38,7 @@ import {
   type ParsedTx,
   type ProofBundleJson,
 } from '@ordspv/core';
-import type { FetchFn } from '@ordspv/fetch';
+import { OrdResolver, toResponse, type FetchFn } from '@ordspv/fetch';
 import {
   buildBlock,
   commitTx,
@@ -154,14 +155,15 @@ const TABLE: Requirement[] = [
     title: 'a gateway MUST return 406 when it neither decompresses nor may send the stored encoding',
     quote: '`--decompress` parity) and otherwise MUST return `406`;',
     binds: 'gateways',
-    status:
-      'unimplemented, reported as a finding: no 406 exists anywhere in packages/gateway/src',
+    status: 'tested here',
     why:
-      'the verify path serves stored encoded bytes with Content-Encoding whatever the ' +
-      'request admits, so a client sending `Accept-Encoding: identity` receives 200 and ' +
-      'bytes it did not agree to decode. Reachable whenever the tag-9 encoding is one ' +
-      'the decompressor does not handle, or when decoding a recognized one fails. The ' +
-      'test is written and reported rather than committed, per the brief protocol.',
+      'both arms of the sentence are driven. The MAY: a stored br body is decompressed ' +
+      'server-side, carries no Content-Encoding and negotiates nothing, so it is served ' +
+      'to a request admitting neither br nor anything else. The MUST: a tag-9 value ' +
+      'nothing decodes is refused 406 for a request that does not admit it, on a cold ' +
+      'cache and on a warm one, and served to a request that does. What the parsing ' +
+      'does not implement is q-value ordering, which cannot change an answer about one ' +
+      'stored coding; acceptsEncoding is unit-tested separately for the token grammar.',
   },
   {
     id: 'consumer-encoding',
@@ -173,14 +175,15 @@ const TABLE: Requirement[] = [
       '  `x-ord-content-encoding` attestation header (§5), and MUST NOT infer it from\n' +
       '  `Content-Encoding` or any other transport header.',
     binds: 'consumers of gateway responses, this repository included',
-    status:
-      'unimplemented, reported as a finding: OrdResolver at L0/L1 copies the transport header',
+    status: 'tested here',
     why:
-      'the sentence binds consumers, and this repository ships one: the resolver reading ' +
-      'an ord server at L0/L1. It reports `contentEncoding` straight off the response ' +
-      'header, in a field documented as the on-chain encoding, and never reads the ' +
-      '`x-ord-content-encoding` channel §5 exists to provide. The verified paths take ' +
-      'their encoding from the envelope parse and are not affected.',
+      'the sentence binds consumers and this repository ships one: OrdResolver reading ' +
+      'an ord server at L0/L1. The test drives §4\'s own wild case, plain bytes served ' +
+      'with `content-encoding: br`, and asserts the on-chain field stays undefined ' +
+      'while the transport observation and the server\'s x-ord-content-encoding ' +
+      'attestation each arrive under a name that says what they are. It also asserts ' +
+      'the label does not travel onward through toResponse. The verified paths take ' +
+      'their encoding from the envelope parse and are asserted here for the contrast.',
   },
   {
     id: 'attestation-source',
@@ -335,6 +338,15 @@ function blockRoutes(block: TestBlock, height: number): Record<string, Route> {
   return routes;
 }
 
+/**
+ * Node's fetch sends `accept-encoding: gzip, deflate` whether the caller asks
+ * for it or not, and the stored coding on the fixtures below is one nothing
+ * decodes, so a request that sets nothing is refused by §4's negotiation. A
+ * client that wants those bytes has to admit their coding, and so does a test
+ * that wants to reach the headers on a 200.
+ */
+const ADMIT_STORED = { 'accept-encoding': 'x-unknown-42' };
+
 const PNG_BODY = 'a plain inscription body';
 /** the ordinary case: content type, a body, no delegation and no encoding */
 const PLAIN = inscribe({ fields: [[1, 'text/plain']], body: [PNG_BODY] });
@@ -349,10 +361,25 @@ const ENCODED_DELEGATE = inscribe({
   body: ['stored bytes nothing decodes'],
 });
 const DELEGATING = inscribe({ fields: [[11, delegateField(ENCODED_DELEGATE.id)]] });
+/** a stored encoding this gateway CAN decode, which is §4's `MAY decompress` arm */
+const BROTLI_BODY = 'a body stored brotli-compressed on chain';
+const BROTLI = inscribe({
+  fields: [
+    [1, 'text/plain'],
+    [9, 'br'],
+  ],
+  body: [new Uint8Array(brotliCompressSync(Buffer.from(BROTLI_BODY)))],
+});
 
-const BLOCK = buildBlock([PLAIN.reveal, UNTYPED.reveal, ENCODED_DELEGATE.reveal, DELEGATING.reveal]);
+const BLOCK = buildBlock([
+  PLAIN.reveal,
+  UNTYPED.reveal,
+  ENCODED_DELEGATE.reveal,
+  DELEGATING.reveal,
+  BROTLI.reveal,
+]);
 const CHAIN_ROUTES: Record<string, Route> = blockRoutes(BLOCK, HEIGHT);
-for (const i of [PLAIN, UNTYPED, ENCODED_DELEGATE, DELEGATING]) {
+for (const i of [PLAIN, UNTYPED, ENCODED_DELEGATE, DELEGATING, BROTLI]) {
   CHAIN_ROUTES[`${E}/tx/${i.commit.txid}/hex`] = bytesToHex(i.commit.raw);
 }
 
@@ -453,7 +480,9 @@ describe('SPEC-GATEWAY conformance', () => {
     );
 
     // §5's two conditional headers, under their conditions
-    const delegated = await fetch(`${verify()}/content/${DELEGATING.id}`);
+    const delegated = await fetch(`${verify()}/content/${DELEGATING.id}`, {
+      headers: ADMIT_STORED,
+    });
     expect(delegated.status).toBe(200);
     expect(delegated.headers.get('x-ord-delegate')).toBe(ENCODED_DELEGATE.id);
     expect(delegated.headers.get('x-ord-content-encoding')).toBe('x-unknown-42');
@@ -526,6 +555,107 @@ describe('SPEC-GATEWAY conformance', () => {
     const untyped = await fetch(`${verify()}/content/${UNTYPED.id}`);
     expect(untyped.status).toBe(200);
     expect(untyped.headers.get('content-type')).toBe('application/octet-stream');
+
+    // §4's stated divergence from ord, on the same responses and on the
+    // proxied surface the same section scopes itself to
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const proxied = await fetch(`${proxy()}/content/${PLAIN.id}`);
+    expect(proxied.status).toBe(200);
+    expect(proxied.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  conformance('encoding-406', async () => {
+    // the MAY arm first: a stored br body this gateway decompresses itself
+    // leaves no Content-Encoding to negotiate, so nothing is refused. The
+    // fixture is a real brotli body, so the decode has to actually work
+    const decodable = await fetch(`${verify()}/content/${BROTLI.id}`, {
+      headers: { 'accept-encoding': 'identity' },
+    });
+    expect(decodable.status).toBe(200);
+    expect(decodable.headers.get('content-encoding')).toBeNull();
+    expect(await decodable.text()).toBe(BROTLI_BODY);
+
+    // the MUST arm: a tag-9 value nothing decodes stays on the bytes, so the
+    // request's Accept-Encoding decides. Cold cache, since this id has not
+    // been asked for yet in this test
+    for (const header of ['identity', 'gzip, deflate', 'x-unknown-42;q=0', '']) {
+      const refused = await fetch(`${verify()}/content/${ENCODED_DELEGATE.id}`, {
+        headers: { 'accept-encoding': header },
+      });
+      expect(refused.status, `accept-encoding: ${header}`).toBe(406);
+      expect(refused.headers.get('content-type')).toContain('application/json');
+      expect((await refused.json()) as { error: string }).toMatchObject({
+        error: expect.stringContaining('x-unknown-42'),
+      });
+    }
+
+    // and admitted three ways, the last of them warming the LRU
+    for (const header of ['x-unknown-42', 'gzip, x-unknown-42;q=0.5', '*']) {
+      const served = await fetch(`${verify()}/content/${ENCODED_DELEGATE.id}`, {
+        headers: { 'accept-encoding': header },
+      });
+      expect(served.status, `accept-encoding: ${header}`).toBe(200);
+      expect(served.headers.get('content-encoding')).toBe('x-unknown-42');
+      // a cache in front of this one must not reuse the answer across requests
+      expect(served.headers.get('vary')).toBe('accept-encoding');
+    }
+
+    // the LRU is warm now, and a hit must negotiate rather than inherit the
+    // negotiation of whichever client happened to miss first
+    const afterHit = await fetch(`${verify()}/content/${ENCODED_DELEGATE.id}`, {
+      headers: { 'accept-encoding': 'identity' },
+    });
+    expect(afterHit.status).toBe(406);
+  });
+
+  conformance('consumer-encoding', async () => {
+    // §4's own wild case: an ord server behind a CDN serving PLAIN bytes under
+    // `content-encoding: br`, while its §5 attestation says what the envelope
+    // actually declared. A consumer that reads the transport header as the
+    // inscription's encoding gets both of those wrong at once
+    const plain = new TextEncoder().encode('not compressed by anybody');
+    const id = PLAIN.id;
+    const consumer = new OrdResolver({
+      ordGateways: [U],
+      verification: 'none',
+      fetchFn: async (url: string) =>
+        url === `${U}/r/undelegated-content/${id}`
+          ? new Response(plain.slice(), {
+              headers: {
+                'content-type': 'text/plain',
+                'content-encoding': 'br',
+                'x-ord-content-encoding': 'gzip',
+              },
+            })
+          : new Response('no', { status: 404 }),
+    });
+    const result = await consumer.resolve(`ord:${id}`);
+
+    // the on-chain field is not inferred from a transport header, and nothing
+    // on this path parsed an envelope, so it stays empty
+    expect(result.contentEncoding).toBeUndefined();
+    expect(result.storedContentEncoding).toBeUndefined();
+    // the two things that were actually observed, each under its own name
+    expect(result.transportContentEncoding).toBe('br');
+    expect(result.attestedContentEncoding).toBe('gzip');
+    // and the transport label does not travel onward as this hop's claim
+    const relayed = toResponse(result);
+    expect(relayed.headers.get('content-encoding')).toBeNull();
+    expect(relayed.headers.get('x-ord-content-encoding')).toBeNull();
+
+    // the contrast: on a verified path the encoding comes from the envelope
+    // parse, which is the first source the sentence permits
+    const verified = new OrdResolver({
+      esplora: [E],
+      anchorSources: [E2, E3],
+      verification: 'L2',
+      powLimitBits: null,
+      fetchFn: stub(CHAIN_ROUTES),
+    });
+    const fromEnvelope = await verified.resolve(`ord:${ENCODED_DELEGATE.id}`);
+    expect(fromEnvelope.contentEncoding).toBe('x-unknown-42');
+    expect(fromEnvelope.storedContentEncoding).toBe('x-unknown-42');
+    expect(fromEnvelope.transportContentEncoding).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -535,14 +665,16 @@ describe('SPEC-GATEWAY conformance', () => {
   conformance('attestation-source', async () => {
     // the addressed inscription declares no encoding and the delegate does, so
     // a header taken from the wrong envelope would be absent rather than wrong
-    const res = await fetch(`${verify()}/content/${DELEGATING.id}`);
+    const res = await fetch(`${verify()}/content/${DELEGATING.id}`, { headers: ADMIT_STORED });
     expect(res.status).toBe(200);
     expect(res.headers.get('x-ord-content-encoding')).toBe('x-unknown-42');
     // never copied from an upstream response: the upstream claims gzip on
     // everything it serves, and this path does not consult it at all
     expect(LYING_UPSTREAM_HEADERS['x-ord-content-encoding']).toBe('gzip');
     // and the same value on a served source that is the addressed inscription
-    const direct = await fetch(`${verify()}/content/${ENCODED_DELEGATE.id}`);
+    const direct = await fetch(`${verify()}/content/${ENCODED_DELEGATE.id}`, {
+      headers: ADMIT_STORED,
+    });
     expect(direct.headers.get('x-ord-content-encoding')).toBe('x-unknown-42');
     // an inscription whose envelope declares nothing gets no attestation
     const plain = await fetch(`${verify()}/content/${PLAIN.id}`);
@@ -637,10 +769,6 @@ describe('SPEC-GATEWAY conformance', () => {
     // the rows this suite does not assert, kept visible rather than counted:
     // a reader of the list below sees the coverage gap without reading the file
     const notTested = TABLE.filter((r) => r.status !== 'tested here').map((r) => r.id);
-    expect(notTested).toEqual([
-      'encoding-406',
-      'consumer-encoding',
-      'clients-ignore',
-    ]);
+    expect(notTested).toEqual(['clients-ignore']);
   });
 });
