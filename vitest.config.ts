@@ -20,10 +20,10 @@ export default defineConfig({
       // 83.30 / 82.09 on 2026-08-10).
       // Raise deliberately as coverage grows; never lower to admit a regression.
       thresholds: {
-        statements: 81.6,
-        branches: 77.6,
-        functions: 83.8,
-        lines: 83.1,
+        statements: 81.7,
+        branches: 77.7,
+        functions: 83.9,
+        lines: 83.2,
       },
     },
   },
