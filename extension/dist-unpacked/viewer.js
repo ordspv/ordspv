@@ -3518,8 +3518,11 @@
   function decodeIntegrity(fragment) {
     const eq = fragment.indexOf("=");
     const value = fragment.slice(eq + 1);
-    if (!value.startsWith("sha256-")) throw new Error(`unsupported integrity algorithm in "${fragment}"`);
-    const digest = value.slice("sha256-".length);
+    const prefix = "sha256-";
+    if (value.slice(0, prefix.length).toLowerCase() !== prefix) {
+      throw new Error(`unsupported integrity algorithm in "${fragment}"`);
+    }
+    const digest = value.slice(prefix.length);
     if (HEX64_RE.test(digest)) return { algorithm: "sha256", digestHex: digest.toLowerCase() };
     if (B64_RE.test(digest)) {
       const b64 = digest.replace(/-/g, "+").replace(/_/g, "/");
@@ -3538,7 +3541,9 @@
     if (hash !== -1) {
       const fragment = decodeURIComponent(rest.slice(hash + 1));
       rest = rest.slice(0, hash);
-      if (fragment.startsWith("integrity=")) integrity = decodeIntegrity(fragment);
+      const eq = fragment.indexOf("=");
+      const key = eq === -1 ? "" : fragment.slice(0, eq).toLowerCase();
+      if (key === "integrity") integrity = decodeIntegrity(fragment);
       else if (fragment.length > 0) throw new Error(`unknown ord URI fragment "${fragment}"`);
     }
     const lower = rest.toLowerCase();
@@ -3552,8 +3557,9 @@
     const id = parseInscriptionId(segments[0]);
     let path = "undelegated";
     if (segments.length === 2) {
-      if (segments[1] === "content") path = "content";
-      else if (segments[1] === "metadata") path = "metadata";
+      const segment = segments[1].toLowerCase();
+      if (segment === "content") path = "content";
+      else if (segment === "metadata") path = "metadata";
       else throw new Error(`unknown ord URI path "/${segments[1]}"`);
     } else if (segments.length > 2) {
       throw new Error(`ord URI has too many path segments: ${input}`);
@@ -4114,12 +4120,14 @@
 
   // packages/fetch/src/resolver.ts
   var OrdResolveError = class extends Error {
-    constructor(code, message) {
+    constructor(code, message, causes = []) {
       super(message);
       this.code = code;
+      this.causes = causes;
       this.name = "OrdResolveError";
     }
     code;
+    causes;
   };
   var DEFAULT_ESPLORA = ["https://mempool.space/api", "https://blockstream.info/api"];
   var DEFAULT_ORD_GATEWAYS = ["https://ordinals.com"];
@@ -4170,16 +4178,20 @@
     }
     // ---------- verified path (chain data, untrusted servers) ----------
     async withEsplora(fn) {
-      const errors = [];
+      const causes = [];
       for (const e of this.esploras) {
         try {
           return { value: await fn(e), source: e };
         } catch (err) {
-          errors.push(`${e.baseUrl}: ${err.message}`);
+          causes.push({ baseUrl: e.baseUrl, message: err.message });
         }
       }
-      throw new OrdResolveError("BACKEND", `all esplora backends failed:
-${errors.join("\n")}`);
+      throw new OrdResolveError(
+        "BACKEND",
+        `all esplora backends failed:
+${causes.map((c) => `${c.baseUrl}: ${c.message}`).join("\n")}`,
+        causes
+      );
     }
     async verifyInscription(idString, level) {
       const parsed = parseOrdUri(idString);
@@ -4300,7 +4312,7 @@ ${errors.join("\n")}`);
           "L1 verification requires an #integrity fragment in the URI"
         );
       }
-      const errors = [];
+      const causes = [];
       for (const ord of this.ordServers) {
         try {
           if (parsed.path === "metadata") {
@@ -4322,13 +4334,13 @@ ${errors.join("\n")}`);
           }
           const res = parsed.path === "content" ? await ord.content(parsed.idString) : await ord.undelegatedContent(parsed.idString);
           const body = new Uint8Array(await res.arrayBuffer());
-          const contentEncoding = res.headers.get("content-encoding") ?? void 0;
+          const transportContentEncoding = res.headers.get("content-encoding") ?? void 0;
           if (parsed.integrity) {
             const actual = bytesToHex(sha2562(body));
             if (actual !== parsed.integrity.digestHex) {
               throw new OrdResolveError(
-                contentEncoding ? "INTEGRITY_INDETERMINATE" : "INTEGRITY",
-                contentEncoding ? `body was transport-decoded (${contentEncoding}); use L2/L3 to check an integrity pin on encoded inscriptions` : `integrity mismatch: body sha256 ${actual}, URI pins ${parsed.integrity.digestHex}`
+                transportContentEncoding ? "INTEGRITY_INDETERMINATE" : "INTEGRITY",
+                transportContentEncoding ? `body was transport-decoded (${transportContentEncoding}); use L2/L3 to check an integrity pin on encoded inscriptions` : `integrity mismatch: body sha256 ${actual}, URI pins ${parsed.integrity.digestHex}`
               );
             }
           }
@@ -4336,7 +4348,9 @@ ${errors.join("\n")}`);
             uri: parsed,
             body,
             contentType: res.headers.get("content-type") ?? void 0,
-            contentEncoding,
+            transportContentEncoding,
+            // the server's own claim about tag 9, kept as a claim
+            attestedContentEncoding: res.headers.get("x-ord-content-encoding") ?? void 0,
             decoded: false,
             verification: {
               level: mode,
@@ -4346,11 +4360,15 @@ ${errors.join("\n")}`);
           };
         } catch (e) {
           if (e instanceof OrdResolveError && e.code !== "BACKEND") throw e;
-          errors.push(`${ord.baseUrl}: ${e.message}`);
+          causes.push({ baseUrl: ord.baseUrl, message: e.message });
         }
       }
-      throw new OrdResolveError("BACKEND", `all ord gateways failed:
-${errors.join("\n")}`);
+      throw new OrdResolveError(
+        "BACKEND",
+        `all ord gateways failed:
+${causes.map((c) => `${c.baseUrl}: ${c.message}`).join("\n")}`,
+        causes
+      );
     }
   };
   function safeDecodeCbor(bytes) {
