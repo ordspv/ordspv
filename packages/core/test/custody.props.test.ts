@@ -157,6 +157,23 @@ describe('satpoint parse and format round-trip', () => {
     }
   });
 
+  it('bounds the vout at the 32-bit outpoint field, so no parse rounds', () => {
+    // `vout` is a JS number, so an unbounded parse returned the nearest double
+    // for a decimal run past 2^53 and named an outpoint the string did not:
+    // `formatSatpoint` printed 100000000000000000000 back for the run below.
+    // The grammar admits any run of digits, so the bound does the refusing
+    const txid = randTxid(() => 0.75);
+    expect(parseSatpoint(`${txid}:4294967295:0`).vout).toBe(0xffffffff);
+    expect(() => parseSatpoint(`${txid}:4294967296:0`)).toThrow(
+      /satpoint vout out of range: 4294967296/,
+    );
+    const rounding = `${txid}:99999999999999999999:0`;
+    expect(() => parseSatpoint(rounding)).toThrow(/satpoint vout out of range/);
+    // the offset is a bigint and is bounded by nothing here, which is correct:
+    // it is a sat count inside one output and no double is ever built for it
+    expect(parseSatpoint(`${txid}:0:99999999999999999999`).offset).toBe(99999999999999999999n);
+  });
+
   it('refuses drawn corruptions of a valid satpoint', () => {
     forEachCase(0xc05d_0003, 200, (r) => {
       const txid = randTxid(r);

@@ -437,6 +437,59 @@ describe('verifyCustodyBundle', () => {
     expect(() => verifyCustodyBundle(b)).toThrow('hop 0 (reveal): missing valid hop object');
   });
 
+  it('names a prev tx entry of the wrong type instead of surfacing a TypeError', () => {
+    // the list's shape is checked and its elements were not, so an entry that
+    // is not a string reached .trim() outside any catch. The document is still
+    // refused either way; what moved is whether the reason names the entry or
+    // reads as a fault in the verifier
+    for (const value of [123, null, {}, [], true] as unknown[]) {
+      const b = singleHopBundle();
+      (b.hops[0].prevTxs as unknown[])[0] = value;
+      let err: Error | undefined;
+      try {
+        verifyCustodyBundle(b);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, JSON.stringify(value)).toMatch(
+        /^hop 0 \(reveal\): prev tx for envelope input 0 is not a hex string \(got /,
+      );
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+    // the type is named in words, because typeof answers "object" for the two
+    // shapes a hand-written bundle is most likely to hold here
+    const withNull = singleHopBundle();
+    (withNull.hops[0].prevTxs as unknown[])[0] = null;
+    expect(() => verifyCustodyBundle(withNull)).toThrow(/\(got null\)/);
+    const withArray = singleHopBundle();
+    (withArray.hops[0].prevTxs as unknown[])[0] = [commitHex];
+    expect(() => verifyCustodyBundle(withArray)).toThrow(/\(got an array\)/);
+    // an absent entry keeps its own message, which says what is missing
+    const absent = singleHopBundle();
+    absent.hops[0].prevTxs = [];
+    expect(() => verifyCustodyBundle(absent)).toThrow(
+      'hop 0 (reveal): no prev tx for envelope input 0, so its commitment cannot be checked',
+    );
+  });
+
+  it('names the same entry through provenInputValues, the other reader', () => {
+    // the envelope binding reads the envelope input's entry alone, so an entry
+    // at another index reaches the value walk instead. Its parse catches its
+    // own failures, so the TypeError arrived inside a "cannot parse" message
+    const tx = parseTx(hexToBytes(revealHex));
+    let err: Error | undefined;
+    try {
+      provenInputValues(tx, [123 as unknown as string], 0);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toBe('prev tx 0 is not a hex string (got a number)');
+    expect(err?.message).not.toContain('is not a function');
+    // and the honest list still proves the value
+    expect(provenInputValues(tx, [commitHex], 0).length).toBe(1);
+  });
+
   it('names the same absences on a later hop through the walk', () => {
     const outValue = revealTx.outputs[0].value;
     const spend = buildTx([{ txid: revealTx.txid, vout: 0 }], [outValue - 200n]);

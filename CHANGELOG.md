@@ -3,6 +3,38 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A prev tx entry that is not a string read as a fault in the verifier.**
+  Both bundle verifiers check that `prevTxs` is a list and neither checked its
+  elements, so an entry that arrived as a number, `null`, an object, an array
+  or a boolean reached `.trim()`. In `verifyEnvelopeBinding` that call sits
+  outside any catch, so the reader was handed `prevHex.trim is not a
+  function`; in `provenInputValues` the parse catches its own failures, so the
+  same TypeError arrived wrapped in a "cannot parse" message. A bundle is
+  untrusted JSON and the module holds a standard for that, which is that an
+  absent or malformed field names itself rather than reading as an internal
+  fault. Both readers now name the entry and the reason, and the type is named
+  in words, since `typeof` answers "object" for the two shapes a hand-written
+  bundle is most likely to hold here. The document was refused before and is
+  refused now, under the same category and the same exit code, so what changed
+  is the sentence the reader gets.
+- **`parseSatpoint` rounded a vout it could not represent.** The grammar
+  admits any run of digits and the vout is read into a JS number, so a decimal
+  run past 2^53 became the nearest double: `<txid>:99999999999999999999:0`
+  parsed to vout 1e20 and `formatSatpoint` printed it back as
+  100000000000000000000, an outpoint the string never named. The vout is now
+  bounded at `0xffffffff`, which is the width of the field on the wire and the
+  bound `parseInscriptionId` already applies to its own index, so the two
+  parsers in the package agree about a number they cannot carry. The offset
+  keeps its unbounded run of digits, because it is read as a bigint and no
+  double is built for it. No in-repo caller could reach a wrong answer through
+  this: `verifyCustodyBundle` parses `finalSatpoint` for a comparison against
+  a satpoint recomputed from parsed transactions, where a rounded vout could
+  only fail to match, and no CLI command takes a satpoint argument.
+
 ## [0.3.2] - 2026-08-12
 
 ### Added

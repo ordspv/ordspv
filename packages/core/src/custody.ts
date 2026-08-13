@@ -63,10 +63,21 @@ export function formatSatpoint(sp: Satpoint): string {
   return `${sp.txid}:${sp.vout}:${sp.offset}`;
 }
 
+/** widest output index an outpoint may carry; the field is a u32 on the wire */
+const MAX_VOUT = 0xffffffff;
+
 export function parseSatpoint(s: string): Satpoint {
   const m = /^([0-9a-fA-F]{64}):(\d+):(\d+)$/.exec(s);
   if (!m) throw new Error(`invalid satpoint: ${s}`);
-  return { txid: m[1].toLowerCase(), vout: Number(m[2]), offset: BigInt(m[3]) };
+  // the offset is a bigint and carries any run of digits, while the vout is a
+  // JS number: past 2^53 `Number` rounds, so an unbounded parse returned an
+  // outpoint the string did not name and `formatSatpoint` printed the rounded
+  // one back. The bound is the one `parseInscriptionId` applies to its index
+  const vout = Number(m[2]);
+  if (!Number.isSafeInteger(vout) || vout > MAX_VOUT) {
+    throw new Error(`satpoint vout out of range: ${m[2]}`);
+  }
+  return { txid: m[1].toLowerCase(), vout, offset: BigInt(m[3]) };
 }
 
 /** A custody path step that v1 cannot follow (sat left the output sat space). */
@@ -143,6 +154,17 @@ function mapToOutputs(tx: ParsedTx, position: bigint): Satpoint | undefined {
 }
 
 /**
+ * What an untrusted JSON value is, in words a refusal can carry. `typeof`
+ * alone answers "object" for `null` and for an array, which are the two shapes
+ * a hand-written bundle is most likely to hold where a hex string belongs.
+ */
+function describeType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+/**
  * A bundle's prev tx list is aligned to the transaction's inputs, so an entry
  * past the input count corresponds to nothing and would be read by nothing.
  * Both verifiers refuse it rather than ignore it, so that SPEC-SAT's "verifiers
@@ -177,6 +199,13 @@ export function provenInputValues(tx: ParsedTx, prevTxsHex: string[], upTo: numb
   }
   const values: bigint[] = [];
   for (let i = 0; i <= upTo; i++) {
+    // untrusted JSON: an entry of the wrong type must name itself and the
+    // reason. The parse below catches its own failures, so without this the
+    // TypeError from .trim() arrived as "cannot parse: ... is not a function",
+    // which reads as an internal fault rather than as a defect in the document
+    if (typeof prevTxsHex[i] !== 'string') {
+      throw new Error(`prev tx ${i} is not a hex string (got ${describeType(prevTxsHex[i])})`);
+    }
     let prev: ParsedTx;
     try {
       prev = parseTx(hexToBytes(prevTxsHex[i].trim()));
@@ -262,6 +291,14 @@ export function verifyEnvelopeBinding(
   }
   const role = `envelope input ${k}`;
   const prevHex = prevTxsHex[k];
+  // untrusted JSON, so the entry names itself: an absent one is the empty
+  // string's case below, and one of the wrong type reached .trim() and threw
+  // a TypeError outside any catch, which reads as an internal fault
+  if (prevHex !== undefined && typeof prevHex !== 'string') {
+    throw new Error(
+      `${label}: prev tx for ${role} is not a hex string (got ${describeType(prevHex)})`,
+    );
+  }
   if (prevHex === undefined || prevHex.trim() === '') {
     throw new Error(`${label}: no prev tx for ${role}, so its commitment cannot be checked`);
   }

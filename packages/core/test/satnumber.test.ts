@@ -413,6 +413,34 @@ describe('verifySatGenealogy', () => {
     );
   });
 
+  it('names a reveal prev tx entry of the wrong type instead of surfacing a TypeError', () => {
+    // the same reader as the custody verifier's, reached under this label:
+    // the list's shape was checked and its elements were not, so an entry that
+    // is not a string reached .trim() outside any catch
+    for (const value of [123, null, {}, [], true] as unknown[]) {
+      const b = bundle();
+      (b.reveal.prevTxs as unknown[])[0] = value;
+      let err: Error | undefined;
+      try {
+        verifySatGenealogy(b, FIXTURE_OPTS);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message, JSON.stringify(value)).toMatch(
+        /^reveal: prev tx for envelope input 0 is not a hex string \(got /,
+      );
+      expect(err?.message).not.toContain('is not a function');
+      expect(err?.message).not.toContain("reading '");
+    }
+    // a funding step's entries reach the value walk instead, which names the
+    // index it was reading
+    const funded = bundle();
+    (funded.funding[0].prevTxs as unknown[])[0] = 123;
+    expect(() => verifySatGenealogy(funded, FIXTURE_OPTS)).toThrow(
+      'prev tx 0 is not a hex string (got a number)',
+    );
+  });
+
   it('names one-level-down absences on the endpoint hops instead of surfacing TypeErrors', () => {
     const cases: [string[], string][] = [
       [['reveal', 'block'], 'reveal: missing valid block section'],
