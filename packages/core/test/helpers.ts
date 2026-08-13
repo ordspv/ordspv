@@ -11,11 +11,13 @@ import {
   parseTx,
   serializeFull,
   sha256,
+  sha256d,
   tapLeafHash,
   tapMerkleRoot,
   checkProofOfWork,
   parseHeader,
   ZERO32,
+  type CustodyHopJson,
   type ParsedTx,
   type ProofBundleJson,
 } from '../src/index.js';
@@ -281,6 +283,133 @@ export function buildBlock(nonCoinbaseTxs: ParsedTx[], opts: { bits?: number } =
     txCount: txs.length,
     txidBranch: (pos: number) => buildMerkleBranch(txids, pos).map(internalToDisplay),
     wtxidBranch: (pos: number) => buildMerkleBranch(wtxidLeaves, pos).map(internalToDisplay),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// raw-tx builders for genealogy fixtures
+//
+// Values and scripts are all the backward arithmetic reads, so these assemble
+// bytes directly rather than going through the envelope helpers above. They
+// were local to satnumber.test.ts until the SPEC-SAT conformance suite needed
+// the same coinbase, funding chain and reveal; a genealogy fixture is a whole
+// chain and rebuilding one per file is how two files drift apart.
+// ---------------------------------------------------------------------------
+
+function u32le(n: number): Uint8Array {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, n, true);
+  return b;
+}
+
+function u64le(n: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, n, true);
+  return b;
+}
+
+function varint(n: number): Uint8Array {
+  if (n > 0xfc) throw new Error('test varint only supports small counts');
+  return new Uint8Array([n]);
+}
+
+export interface OutSpec {
+  value: bigint;
+  spk?: Uint8Array;
+}
+
+/** A legacy (no-witness) transaction from outpoints and output specs. */
+export function buildTx(
+  inputs: { txid: string; vout: number; scriptSig?: Uint8Array }[],
+  outputs: OutSpec[],
+): { hex: string; tx: ParsedTx } {
+  const parts: Uint8Array[] = [u32le(2), varint(inputs.length)];
+  for (const inp of inputs) {
+    const sig = inp.scriptSig ?? new Uint8Array([0x51]);
+    parts.push(
+      hexToBytes(inp.txid).reverse(),
+      u32le(inp.vout),
+      varint(sig.length),
+      sig,
+      u32le(0xffffffff),
+    );
+  }
+  parts.push(varint(outputs.length));
+  for (const o of outputs) {
+    const spk = o.spk ?? new Uint8Array([0x51]);
+    parts.push(u64le(o.value), varint(spk.length), spk);
+  }
+  parts.push(u32le(0));
+  const raw = concatBytes(...parts);
+  return { hex: bytesToHex(raw), tx: parseTx(raw) };
+}
+
+/** A coinbase: one input spending the null prevout. */
+export function buildCoinbase(
+  outputs: OutSpec[],
+  scriptSig?: Uint8Array,
+): { hex: string; tx: ParsedTx } {
+  return buildTx([{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig }], outputs);
+}
+
+/** segwit tx with a witness stack per input, so a reveal can have several */
+export function buildSegwitTx(
+  inputs: { txid: string; vout: number; witness?: Uint8Array[] }[],
+  outputs: OutSpec[],
+): { hex: string; tx: ParsedTx } {
+  const raw = serializeFull({
+    version: 2,
+    inputs: inputs.map((i) => ({
+      prevTxidLE: hexToBytes(i.txid).reverse(),
+      prevTxid: i.txid,
+      vout: i.vout,
+      scriptSig: new Uint8Array(0),
+      sequence: 0xfffffffd,
+      witness: i.witness ?? [],
+    })),
+    outputs: outputs.map((o) => ({ value: o.value, scriptPubKey: o.spk ?? new Uint8Array([0x51]) })),
+    locktime: 0,
+  });
+  return { hex: bytesToHex(raw), tx: parseTx(raw) };
+}
+
+/**
+ * Easiest-PoW header over a single-tx block, whose merkle root is the lone
+ * txid. `prevHashLE` defaults to zeros, which is what every genealogy fixture
+ * uses; a chain of hops that has to link block to block passes its own.
+ */
+export function mineSingleTxBlock(
+  txidLE: Uint8Array,
+  prevHashLE: Uint8Array = new Uint8Array(32),
+): { headerHex: string; hash: string } {
+  const bits = 0x207fffff;
+  for (let nonce = 0; nonce < 200000; nonce++) {
+    const header = concatBytes(
+      u32le(2),
+      prevHashLE,
+      txidLE,
+      u32le(1700000000),
+      u32le(bits),
+      u32le(nonce),
+    );
+    const hashLE = sha256d(header);
+    if (hashLE[31] === 0) return { headerHex: bytesToHex(header), hash: internalToDisplay(hashLE) };
+  }
+  throw new Error('failed to mine test header');
+}
+
+/** An anchored endpoint hop: the transaction alone in its own mined block. */
+export function anchoredHop(
+  txidLE: Uint8Array,
+  hex: string,
+  height: number,
+  prevTxs: string[],
+): CustodyHopJson {
+  const mined = mineSingleTxBlock(txidLE);
+  return {
+    block: { height, hash: mined.hash, header: mined.headerHex, txCount: 1 },
+    tx: { hex, pos: 0, txidBranch: [] },
+    prevTxs,
   };
 }
 
