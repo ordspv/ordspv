@@ -5,6 +5,80 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The gateway negotiates a stored content encoding and answers `406`.**
+  SPEC-GATEWAY §4 requires a gateway either to decompress a stored encoding
+  server side or to refuse when the request's `Accept-Encoding` does not admit
+  it. Nothing in the gateway read `Accept-Encoding` and no 406 existed, so a
+  client asking for `identity` received 200 and bytes it had not agreed to
+  decode, under a label its HTTP stack would not act on. The verified content
+  path now parses the header and answers 406 with the JSON error shape the
+  other refusals use. Only responses the resolver could not decode reach it,
+  which is an unknown tag-9 value or a recognized encoding whose decode failed
+  or ran past its output bound; a body decoded server side carries no
+  `Content-Encoding` and negotiates nothing. The parsing implements the
+  comma-separated token list of RFC 9110 §12.5.3, `*` where no token names the
+  coding, and a `q` of zero as a refusal. A `q` that does not parse is read as
+  a refusal, which is the fail-closed direction. Q-value ordering is not
+  implemented, because a gateway holding one stored encoding has nothing to
+  choose between. An absent header admits everything and an empty one admits
+  identity alone. Such responses now carry `Vary: accept-encoding`, and a
+  cache hit runs the negotiation again, so one client's answer is never
+  reused for a client that negotiated differently. `acceptsEncoding` is
+  exported for callers that need the same judgement.
+- **`X-Content-Type-Options: nosniff` on content responses.** SPEC-GATEWAY §4
+  names it as a deliberate divergence from ord and nothing set it. It is now
+  on the verified content responses and on the proxied `/content/<id>`
+  surface, which is the scope that section gives itself.
+- **`OrdResolveError.causes`.** An error standing for a whole backend loop
+  carries each backend's own failure beside the aggregate message, so a caller
+  can tell an absent inscription from an unreachable upstream without parsing
+  a sentence. The gateway is the first reader.
+
+### Changed
+
+- **`ResolveResult.contentEncoding` is populated only from an envelope parse
+  now.** Scripted readers of that field should read this entry. At L0 and L1
+  the resolver copied the transport response's `Content-Encoding` into it,
+  and the field is documented as the inscription's on-chain encoding.
+  SPEC-GATEWAY §4 binds consumers against inferring the encoding from a
+  transport header and gives the case observed in the wild, ordinals.com
+  behind Cloudflare serving unencoded text with `content-encoding: br`: that
+  arrived as `contentEncoding: 'br'` over bytes it did not describe, and
+  `toResponse` emitted it onward. No envelope is parsed at L0 or L1, so the
+  field is undefined there. The two observations that path does make each have
+  a name of their own: `transportContentEncoding` is the header as it was
+  seen, and `attestedContentEncoding` is the `x-ord-content-encoding` an ord
+  server supplied, which is that server's claim rather than a verified fact.
+  The transport value keeps its one load-bearing use, telling a
+  transport-decoded body apart from a real integrity mismatch. `toResponse`
+  emits neither of them, since re-emitting either would republish somebody
+  else's observation as this hop's own. The verified paths took their encoding
+  from the envelope parse already and are unchanged.
+- **The gateway answers `404` for an inscription no backend can find.**
+  SPEC-GATEWAY §3's error table assigns 404 to an unknown inscription, and the
+  gateway's only 404 was the unknown-route fallback, so a well-formed id
+  nothing could find exhausted the backend loop and answered 502. The proof
+  endpoint and the verified content path now answer 404 when every backend
+  that was asked said the inscription is absent, and keep 502 otherwise.
+  Unanimity is the rule because one backend timing out while another answers
+  404 leaves the question open, since the one that might have found it never
+  spoke. The sidecar classifies through the same exported predicate rather
+  than a second copy of the reasoning, which moves one case there: `tx <txid>
+  not found in block <hash>` reads like an absence and is a source
+  disagreeing with its own block data, so it reports as 502 rather than 404.
+- **`parseOrdUri` folds case where SPEC-URI requires it.** The path segment,
+  the fragment key and the `sha256-` algorithm prefix were compared exactly,
+  so `ord:<id>/CONTENT`, `#INTEGRITY=` and `#integrity=SHA256-` were refused.
+  The rationale the spec gives for the rule is QR alphanumeric mode, which is
+  uppercase-only, so the case the rule exists to serve was the case that
+  failed. All three fold now, and a URI uppercased end to end with a hex
+  digest resolves identically to its lowercase twin. The base64 digest form
+  does not fold: its alphabet is case-significant, so folding it would name
+  different bytes. SPEC-URI §2 states that carve-out and binds resolvers to
+  fold the frame around such a digest and to leave the value alone.
+
 ### Fixed
 
 - **A prev tx entry that is not a string read as a fault in the verifier.**
