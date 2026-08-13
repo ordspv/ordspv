@@ -3,6 +3,60 @@
 All notable changes to the `@ordspv/*` packages are documented here. This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The proof endpoint and the sidecar refuse a bundle that contradicts a
+  compiled-in checkpoint.** SPEC-VERIFICATION §4 binds a verifier to consult a
+  compiled-in checkpoint where one applies. `ord-resolve verify` and
+  `OrdResolver` did; the gateway's `/ord/v1/proof` and the sidecar called
+  `verifyProofBundle` with no `trustHeader` hook, so a bundle whose claimed
+  height contradicted a checkpoint was verified, relayed and cached. Reaching
+  it needed no forgery: a backend controls the height it reports, so relabelling
+  a header it really holds to a checkpointed height was enough. Both surfaces
+  now pass `checkpointTrustHeader`, and such a bundle is refused before it
+  reaches the response or the LRU.
+- **Checkpoints are configurable, the way the proof-of-work floor already
+  was.** `MAINNET_CHECKPOINTS` are mainnet block hashes, so a gateway or
+  sidecar on another chain would have refused every honest bundle its own node
+  served at a checkpointed height. `checkpoints` is an option on
+  `GatewayOptions` and `SidecarOptions`, defaulting to the mainnet set so an
+  operator who configures nothing keeps mainnet protection, and the gateway
+  reads `CHECKPOINTS` from the environment as `off` or as a comma-separated
+  list of `<height>:<hash>` pairs. An entry that does not read leaves the whole
+  variable on the default and says so on stderr, since a partial set is a
+  weaker chain view than either. SPEC-GATEWAY §7 documents it and the reference
+  signet deployment sets `off`. The gateway threads the same set to its
+  resolver, so both of its verifying surfaces move together.
+
+### Fixed
+
+- **SPEC-VERIFICATION §9's first negative vector named a reason no
+  implementation can give.** It paired a tampered content byte with a txid
+  mismatch, and §1 of the same spec states that an inscription id's txid does
+  not commit to the content. Measured on inscription 0: the txid is unchanged,
+  the wtxid moves, and the failure is the BIP-341 fold at L2 and the witness
+  commitment at L3. The vector now states that, which is the reason the fifth
+  vector on the same line already named. Documentation only; no code behaved
+  the way the old text described.
+
+### Changed
+
+- **Eight sentences that were normative in force now carry RFC 2119 keywords
+  and name who they bind.** No behaviour changes. SPEC-VERIFICATION: the L3
+  check list is "all MUST" the way the L2 list was, a bundle MUST carry every
+  32-byte hash in display order and every transaction as hex, a resolver MUST
+  verify `/metadata` at the same level as content, and a gallery reader MUST
+  skip an undecodable entry rather than invalidating the list. SPEC-URI: a
+  resolver MUST NOT let anything outside the chain data decide a referent, MUST
+  count every envelope flat across inputs with cursed and unbound included, and
+  MUST hash the stored body pushes before any decoding. SPEC-GATEWAY: a
+  verify-personality gateway MUST serve `/content/<id>` only after verifying
+  locally. The gallery sentence gained a clause while it was being promoted: an
+  Items array that is present and empty is a gallery with no members, which is
+  what the code does and what the old wording left open.
+
 ## [0.3.3] - 2026-08-13
 
 ### Added
