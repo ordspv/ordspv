@@ -29,11 +29,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: envelope + proof-bundle fuzz (heavy budget)
+      - name: envelope + bundle fuzz (heavy budget)
         shell: bash
         run: |
           echo "FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED"
-          npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts
+          npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts packages/core/test/custodybundle.fuzz.test.ts
       - name: job summary
         if: always()
         shell: bash
@@ -43,5 +43,5 @@ jobs:
             echo
             echo "A failure here is a seeded, reproducible counterexample. Reproduce with:"
             echo
-            echo "    FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts"
+            echo "    FUZZ_ITERS=$FUZZ_ITERS FUZZ_SEED=$FUZZ_SEED npx vitest run packages/core/test/envelope.fuzz.test.ts packages/core/test/proofbundle.fuzz.test.ts packages/core/test/custodybundle.fuzz.test.ts"
           } >> "$GITHUB_STEP_SUMMARY"
