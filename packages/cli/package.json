@@ -1,6 +1,6 @@
 {
   "name": "@ordspv/cli",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "description": "CLI for resolving and verifying ord:// URIs.",
   "bin": {
@@ -10,8 +10,8 @@
     ".": "./src/main.ts"
   },
   "dependencies": {
-    "@ordspv/core": "0.3.2",
-    "@ordspv/fetch": "0.3.2"
+    "@ordspv/core": "0.3.3",
+    "@ordspv/fetch": "0.3.3"
   },
   "repository": {
     "type": "git",
