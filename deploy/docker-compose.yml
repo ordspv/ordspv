@@ -46,6 +46,11 @@ services:
       # gateway that leaves this unset refuses every header it is served.
       # Drop the line on mainnet; "off" disables the floor.
       POW_LIMIT_BITS: "0x1e0377ae"          # signet powLimit
+      # ADJUST: network. The compiled-in checkpoints are MAINNET block hashes,
+      # so a signet gateway that reaches a checkpointed height would refuse
+      # every honest bundle electrs served it. Drop the line on mainnet; set
+      # <height>:<hash> pairs to pin a signet set of your own.
+      CHECKPOINTS: "off"
       RATE_LIMIT: "10"
       RATE_BURST: "40"
       CACHE_MAX_BYTES: "268435456"

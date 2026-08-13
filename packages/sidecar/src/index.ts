@@ -9,6 +9,7 @@ import {
 } from '@ordspv/core';
 import {
   buildProofBundle,
+  checkpointTrustHeader,
   readBodyCapped,
   DEFAULT_HTTP_TIMEOUT_MS,
   type EsploraBlockInfo,
@@ -199,6 +200,14 @@ export interface SidecarOptions {
    * passes that chain's limit, or null to disable the floor.
    */
   powLimitBits?: number | null;
+  /**
+   * Compiled-in `height → hash` pairs the self-check below holds every bundle
+   * to (SPEC-VERIFICATION §4). Defaults to `MAINNET_CHECKPOINTS`, so a sidecar
+   * that configures nothing gets mainnet protection; a sidecar in front of a
+   * signet or regtest node passes that chain's pairs, or an empty map, because
+   * mainnet hashes at those heights contradict every honest bundle it builds.
+   */
+  checkpoints?: ReadonlyMap<number, string>;
 }
 
 const IMMUTABLE = 'public, max-age=1209600, immutable';
@@ -223,6 +232,8 @@ export function createSidecar(options: SidecarOptions): Server {
   const limiter = new TokenBucketLimiter(ratePerSec, options.rateBurst ?? 40);
   const cacheMaxBytes = options.cacheMaxBytes ?? 32 * 1024 * 1024;
   const cache = new ByteLru(cacheMaxBytes, options.cacheMaxEntryBytes ?? 4 * 1024 * 1024);
+  // built once, and with the argument left undefined it is the mainnet set
+  const trustHeader = checkpointTrustHeader(options.checkpoints);
 
   return createServer((req, res) => {
     void (async () => {
@@ -284,10 +295,14 @@ export function createSidecar(options: SidecarOptions): Server {
       try {
         const bundle = await buildProofBundle(backend, parseInscriptionId(id), level);
         // never relay a bundle we cannot verify, and never relay one that
-        // verifies for an inscription other than the one this request named
+        // verifies for an inscription other than the one this request named.
+        // The checkpoint hook is SPEC-VERIFICATION §4's requirement on a
+        // verifier: a node answering a height a checkpoint pins to another hash
+        // is refused here rather than served and cached
         verifyProofBundle(bundle, {
           powLimitBits: options.powLimitBits,
           expectedInscriptionId: id,
+          trustHeader,
         });
         const body = new TextEncoder().encode(JSON.stringify(bundle));
         const headers = {

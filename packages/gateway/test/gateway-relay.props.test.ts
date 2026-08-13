@@ -296,6 +296,46 @@ describe('gateway configuration read from the environment', () => {
     }
   });
 
+  it('CHECKPOINTS reaches the set, switched off, and as pairs', () => {
+    // the same shape of problem as POW_LIMIT_BITS, one layer up: the compiled-in
+    // checkpoints are mainnet hashes, so a gateway on another chain that reaches
+    // a checkpointed height would refuse every honest bundle its own node served
+    expect(gatewayOptionsFromEnv({}).checkpoints, 'unset means the mainnet set')
+      .toBeUndefined();
+    expect(gatewayOptionsFromEnv({ CHECKPOINTS: 'off' }).checkpoints, 'the signet setting')
+      .toEqual(new Map());
+    expect(gatewayOptionsFromEnv({ CHECKPOINTS: 'OFF' }).checkpoints).toEqual(new Map());
+
+    const hash = '000000000000000000029730547464f056f8b6e2e0a02eaf69c24389983a04f5';
+    const other = `${'ab'.repeat(22)}00000000000000000000`;
+    expect(gatewayOptionsFromEnv({ CHECKPOINTS: `767430:${hash}` }).checkpoints)
+      .toEqual(new Map([[767430, hash]]));
+    expect(
+      gatewayOptionsFromEnv({ CHECKPOINTS: ` 767430:${hash.toUpperCase()} , 800000:${other} ` })
+        .checkpoints,
+      'whitespace trimmed and hashes folded, so a pasted set reads the same either way',
+    ).toEqual(
+      new Map([
+        [767430, hash],
+        [800000, other],
+      ]),
+    );
+
+    // an unreadable entry lands the WHOLE variable on the default: half a
+    // checkpoint set is a weaker chain view than either the operator's or ours
+    for (const bad of [
+      '767430',
+      `:${hash}`,
+      `767430:${hash.slice(0, 63)}`,
+      `abc:${hash}`,
+      `-1:${hash}`,
+      `1.5:${hash}`,
+      `767430:${hash},garbage`,
+    ]) {
+      expect(gatewayOptionsFromEnv({ CHECKPOINTS: bad }).checkpoints, bad).toBeUndefined();
+    }
+  });
+
   it('a readable count is passed through, zero included', () => {
     expect(gatewayOptionsFromEnv({ RATE_LIMIT: '25' }).rateLimitPerSec).toBe(25);
     expect(gatewayOptionsFromEnv({ RATE_LIMIT: '0' }).rateLimitPerSec, 'zero disables by design')

@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { inscriptionIdError, parseInscriptionId, verifyProofBundle } from '@ordspv/core';
 import {
   buildProofBundle,
+  checkpointTrustHeader,
   DEFAULT_HTTP_TIMEOUT_MS,
   EsploraBackend,
   OrdResolveError,
@@ -61,6 +62,15 @@ export interface GatewayOptions {
    * floor.
    */
   powLimitBits?: number | null;
+  /**
+   * Compiled-in `height → hash` pairs this gateway holds every bundle to
+   * (SPEC-VERIFICATION §4), on the proof endpoint and on the content it
+   * resolves. Defaults to `MAINNET_CHECKPOINTS`, so a gateway that configures
+   * nothing gets mainnet protection; a gateway fronting another chain passes
+   * that chain's pairs, or an empty map, because mainnet hashes at a signet or
+   * regtest height contradict every honest bundle served there.
+   */
+  checkpoints?: ReadonlyMap<number, string>;
   fetchFn?: FetchFn;
   /** LRU budget across cached bodies (default 256 MiB; 0 disables) */
   cacheMaxBytes?: number;
@@ -270,7 +280,17 @@ export function createGateway(options: GatewayOptions = {}): Server {
     fetchFn,
     verification: level,
     powLimitBits: options.powLimitBits,
+    // the resolver reads the same set the proof endpoint does, so an operator
+    // who moved this gateway off mainnet moves both surfaces at once. Left
+    // unthreaded, a signet gateway configured with an empty map would still
+    // hold its verified content path to mainnet hashes
+    checkpoints: options.checkpoints,
   });
+
+  // SPEC-VERIFICATION §4: the proof endpoint verifies offline, so the checkpoint
+  // set is the only chain view it has. Built once, and with the argument left
+  // undefined it is the mainnet set
+  const trustHeader = checkpointTrustHeader(options.checkpoints);
 
   const cacheMaxBytes = count('cacheMaxBytes', options.cacheMaxBytes, 256 * 1024 * 1024);
   const cacheMaxEntry = count('cacheMaxEntryBytes', options.cacheMaxEntryBytes, 8 * 1024 * 1024);
@@ -481,10 +501,14 @@ export function createGateway(options: GatewayOptions = {}): Server {
         // LRU that would serve it to every later caller. The requested id is
         // named, so a backend that answers with a well-formed bundle for a
         // different inscription is refused here rather than relayed under the
-        // caller's id and cached under the caller's key
+        // caller's id and cached under the caller's key. The checkpoint hook is
+        // what SPEC-VERIFICATION §4 binds a verifier to: a backend controls the
+        // height it claims, and relabelling a genuine header to a checkpointed
+        // height needs no forgery at all
         verifyProofBundle(bundle, {
           powLimitBits: options.powLimitBits,
           expectedInscriptionId: id,
+          trustHeader,
         });
         return sendCached(res, cacheKey, new TextEncoder().encode(JSON.stringify(bundle)), {
           'content-type': 'application/vnd.ord.proof+json; version=1',
@@ -729,6 +753,45 @@ function envPowLimitBits(env: Record<string, string | undefined>): number | null
 }
 
 /**
+ * Read the checkpoint set out of the environment: `off` for no checkpoints, or
+ * a comma-separated list of `height:hash` pairs in display order.
+ *
+ * `MAINNET_CHECKPOINTS` are mainnet block hashes, so a gateway on another chain
+ * that reaches a checkpointed height would refuse every honest bundle its own
+ * node served, the way the mainnet proof-of-work floor refused every signet
+ * header before `POW_LIMIT_BITS` existed. `off` is what the reference signet
+ * deployment sets; compiling a signet set is a separate decision.
+ *
+ * An unreadable pair leaves the whole variable on the mainnet default and says
+ * so, because a partially applied checkpoint set is a weaker chain view than
+ * either the set the operator asked for or the one the default gives.
+ */
+function envCheckpoints(
+  env: Record<string, string | undefined>,
+): ReadonlyMap<number, string> | undefined {
+  const raw = env.CHECKPOINTS;
+  if (raw === undefined || raw.trim() === '') return undefined;
+  if (raw.trim().toLowerCase() === 'off') return new Map();
+  const pairs = new Map<number, string>();
+  for (const entry of raw.split(',')) {
+    const [heightText, hash] = entry.trim().split(':');
+    // digits before Number(), because `Number('')` is 0 and an entry that
+    // stated no height at all would otherwise land on genesis, which is a real
+    // checkpoint. The tip vote learned the same lesson at headertrust.ts
+    const height = /^[0-9]+$/.test(heightText ?? '') ? Number(heightText) : NaN;
+    if (!Number.isSafeInteger(height) || !/^[0-9a-f]{64}$/i.test(hash ?? '')) {
+      console.error(
+        `CHECKPOINTS entry "${entry.trim()}" is not <height>:<64-hex block hash> or "off"; ` +
+          `using the mainnet checkpoints`,
+      );
+      return undefined;
+    }
+    pairs.set(height, hash.toLowerCase());
+  }
+  return pairs;
+}
+
+/**
  * Read a deployment's environment into gateway options.
  *
  * This is the layer where a typo becomes a running configuration, so it is
@@ -753,6 +816,7 @@ export function gatewayOptionsFromEnv(
     mode: normalizeMode(env.GATEWAY_MODE),
     verification: env.GATEWAY_LEVEL === 'L3' ? 'L3' : 'L2',
     powLimitBits: envPowLimitBits(env),
+    checkpoints: envCheckpoints(env),
     cacheMaxBytes: envCount(env, 'CACHE_MAX_BYTES'),
     cacheMaxEntryBytes: envCount(env, 'CACHE_MAX_ENTRY_BYTES'),
     upstreamTimeoutMs: envCount(env, 'UPSTREAM_TIMEOUT_MS'),
