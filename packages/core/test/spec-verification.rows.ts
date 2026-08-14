@@ -1,6 +1,6 @@
 /**
- * The accounting table for SPEC-VERIFICATION.md, shared by the two files that
- * speak for it.
+ * The accounting table for SPEC-VERIFICATION.md, shared by the three files
+ * that speak for it.
  *
  * Most of the spec binds `@ordspv/core`, so the main suite is
  * `packages/core/test/spec-verification.conformance.test.ts`. The rows whose
