@@ -13,7 +13,10 @@ export default defineConfig({
       // Ratchet floors: set just under the measured baseline (2026-08-13 after
       // the SPEC-CUSTODY conformance files:
       // 82.1 / 78.11 / 84.13 / 83.6 across all src incl. the untested CLI and
-      // extension UI scripts; the previous baseline was
+      // extension UI scripts. Re-measured the same day after the SPEC-CUSTODY
+      // promotions and the three keyword re-measurement tests, and unchanged
+      // to the digit: those nine tests drive code the suites already covered,
+      // so there is nothing to raise the floors onto. Earlier baselines were
       // 82.05 / 78.07 / 84.13 / 83.54 on 2026-08-13,
       // 81.97 / 77.94 / 84.13 / 83.45 on 2026-08-13,
       // 81.84 / 77.75 / 84.1 / 83.32 on 2026-08-13,
