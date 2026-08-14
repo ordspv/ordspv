@@ -29,7 +29,7 @@
  *
  * THE KEYWORD FILTER. Measured on this file: 37 occurrences of MUST over 35
  * lines, 7 of them MUST NOT, and 4 of REQUIRED, three of which are the lines
- * above and the fourth of which shares :242 with a MUST. That is 38 normative
+ * above and the fourth of which shares :240 with a MUST. That is 38 normative
  * lines, and no SHALL or RECOMMENDED anywhere. The conformance file
  * re-measures all of it, so a keyword the filter does not carry fails a test
  * rather than passing unseen. Outside the set by that choice: six SHOULD, one

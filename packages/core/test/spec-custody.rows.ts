@@ -34,7 +34,7 @@
  *
  * QUOTES ANCHOR AT LINE BOUNDARIES. The accounting maps each MUST-bearing line
  * to exactly one row, so two requirements that share a line must share a row
- * (`:104`, `:222`), and two requirements on adjacent lines need quotes that
+ * (`:105`, `:223`), and two requirements on adjacent lines need quotes that
  * split at the newline between them rather than mid-sentence. That is why some
  * fragments begin or end mid-sentence.
  */
@@ -492,7 +492,7 @@ export const TABLE: Requirement[] = [
       'recording path consults. Why no build raises it is driven rather than asserted: a ' +
       'real two-input build gets a section under the default mode, and the same routes ' +
       'without the raw block end at the availability class instead. SPEC-SAT states the ' +
-      'same sentence at its `:265`.',
+      'same sentence at its `:267`.',
   },
   {
     id: 'verifier-refusal-terminal',
