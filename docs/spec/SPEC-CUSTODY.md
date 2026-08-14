@@ -25,11 +25,12 @@ it asserts is trusted.
 Given the reveal transaction, the envelope's input `k`, and an optional
 pointer (tag 2):
 
-- default: the absolute input-space position `sum(inputValue[0..k-1])`, mapped
-  through the outputs in order;
+- default: implementations MUST take the absolute input-space position
+  `sum(inputValue[0..k-1])` and map it through the outputs in order;
 - a pointer strictly less than the total output sats instead indexes the
   output sat space directly; a pointer at or past that total MUST be ignored;
-- zero-value outputs occupy no sat space;
+- zero-value outputs occupy no sat space, so implementations MUST skip them
+  when mapping a position through the outputs;
 - an inscription whose envelope input has zero value, or whose envelope
   carries an unrecognized even field, is UNBOUND: ord assigns it to the
   all-zeros unbound outpoint, not to any output, regardless of pointer or
@@ -86,8 +87,8 @@ which one it used in the `indexProof` field of the verified result:
   envelope and there is nothing to renumber. This says nothing about whether
   the observed tapscript was executed; that is the residual below.
 
-A reveal with more than one input and no witness section is refused. The
-verifier MUST refuse it distinguishably from a forgery
+A verifier MUST refuse a reveal with more than one input and no witness
+section. The verifier MUST refuse it distinguishably from a forgery
 (`EnvelopeIndexUnprovenError` in the reference implementation), since such a
 bundle can be perfectly honest and simply unable to prove its numbering, and
 the refusal MUST name the reveal's input count and the requested index. The
@@ -148,9 +149,9 @@ reveal txid commits; it MUST record the rest as that backend's cause and build
 against the next one. A position that lands outside the sat space of the
 transaction it was resolved against is derived from the pointer and the
 envelope input in that same witness, so it is one backend's claim too. The
-reveal's input count is such data, so a refusal raised on the count of inputs
-is terminal. A refusal becomes terminal once a
-verifier raises it, because the bundle a verifier refused had already bound
+reveal's input count is such data, so a builder MUST treat a refusal raised on
+the count of inputs as terminal. A builder MUST treat a refusal as terminal once
+a verifier raises it, because the bundle a verifier refused had already bound
 its witness through the envelope binding above. A builder that has exhausted
 every configured backend SHOULD report the refusal in the class each backend
 raised, and SHOULD name every backend that led an attempt reporting it. A
@@ -226,11 +227,11 @@ Previous transactions need no 64-byte check: none of them is folded into a
 tree, and each is pinned by the txid the input spending it names, so hashing to
 that txid is the whole of what they have to satisfy.
 
-A hop's `prevTxs` list is aligned to its transaction's inputs, entry `i` to
-input `i`. A bundle MUST NOT supply more `prevTxs` entries than the hop's
-transaction has inputs, since an entry past the input count corresponds to no
-input, and verifiers MUST refuse a hop that supplies one rather than ignore
-the surplus.
+A bundle MUST align a hop's `prevTxs` list to its transaction's inputs, entry
+`i` to input `i`, and a verifier MUST read them at those positions. A bundle
+MUST NOT supply more `prevTxs` entries than the hop's transaction has inputs,
+since an entry past the input count corresponds to no input, and verifiers MUST
+refuse a hop that supplies one rather than ignore the surplus.
 
 Builders carry a hop cap, since the walk spends requests per hop against a
 live backend; the reference builder defaults to 64 confirmed transfers and

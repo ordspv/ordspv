@@ -41,6 +41,7 @@ import {
   row,
 } from '../../core/test/spec-custody.rows.js';
 import {
+  CustodyError,
   CustodyHopLimitError,
   EsploraBackend,
   REFUSAL_CLASS_FACTS,
@@ -53,7 +54,13 @@ import {
 } from '../src/index.js';
 import { sharedDomainRefusal, type DomainRefusal } from '../src/failover.js';
 import type { FetchFn } from '../src/backends.js';
-import { buildBlock } from '../../core/test/helpers.js';
+import {
+  buildBlock,
+  commitTx,
+  envelopeScript,
+  revealTx,
+  taprootCommit,
+} from '../../core/test/helpers.js';
 import {
   E,
   E2,
@@ -132,6 +139,45 @@ function singleInputRoutes(withRawBlock: boolean): {
     );
   }
   return { setup, routes };
+}
+
+/**
+ * A two-input reveal, envelope 0 on input 0. Only input 0's previous
+ * transaction is fetched, since the envelope's index decides how far the
+ * values have to reach, so input 1 spends a prevout nothing serves.
+ */
+function multiInputRoutes(withRawBlock: boolean): {
+  id: string;
+  routes: Record<string, Route>;
+} {
+  const script = envelopeScript(
+    { fields: [[1, 'text/plain']], body: ['custody'] },
+    { checksigPrefix: true },
+  );
+  const second = envelopeScript(
+    { fields: [[1, 'text/plain']], body: ['second'] },
+    { checksigPrefix: true },
+  );
+  const tap = taprootCommit(script);
+  const commit = commitTx(tap.scriptPubKey);
+  const reveal = revealTx(
+    [
+      { script, controlBlock: tap.controlBlock },
+      { script: second, controlBlock: taprootCommit(second).controlBlock },
+    ],
+    { prevTxidLE: commit.txidLE, vout: 0 },
+  );
+  const block = buildBlock([reveal]);
+  const routes = routesForBlock(block, 100, 120);
+  routes[`${E}/tx/${commit.txid}/hex`] = bytesToHex(commit.raw);
+  routes[`${E}/tx/${reveal.txid}/outspend/0`] = { spent: false };
+  if (withRawBlock) {
+    routes[`${E}/block/${block.blockHash}/raw`] = serializeBlock(
+      hexToBytes(block.headerHex),
+      block.txs,
+    );
+  }
+  return { id: `${reveal.txid}i0`, routes };
 }
 
 /**
@@ -279,6 +325,81 @@ describe('SPEC-CUSTODY conformance: the builder and the resolver', () => {
     expect(attempts[0].cause, 'the first attempt led with nothing behind it').toBeUndefined();
     expect(attempts[1].cause, "the second carries the first backend's cause").toBeDefined();
     expect(attempts[1].cause!.message).toContain(reveal.txid);
+  });
+
+  conformance('input-count-refusal-terminal', async () => {
+    // no build raises the class, so the arm is read rather than driven and
+    // what the read asserts is placement: the terminal check sits above the
+    // recording path in the walk loop, so no rotation can reach the class
+    // however the loop is entered
+    const source = readFileSync(join(ROOT, 'packages/fetch/src/custodybuilder.ts'), 'utf8');
+    const terminal = source.indexOf('if (e instanceof EnvelopeIndexUnprovenError) throw e;');
+    const recorded = source.indexOf(
+      'if (isRecordableBuildRefusal(e) || e instanceof SatPositionError) {',
+    );
+    const verified = source.indexOf('verifyCustodyBundle(built.bundle');
+    expect(terminal, "the walk loop's catch carries the arm").toBeGreaterThan(0);
+    expect(terminal, 'above the recording path').toBeLessThan(recorded);
+    expect(recorded, 'and the whole walk loop above the verification').toBeLessThan(verified);
+
+    // the table the recording path consults agrees with the arm: the deciding
+    // data is committed at build, so the predicate refuses the class outright
+    expect(REFUSAL_CLASS_FACTS.EnvelopeIndexUnprovenError.committedAtBuild).toBe(true);
+    expect(isRecordableBuildRefusal(new EnvelopeIndexUnprovenError('reveal spends 2 inputs'))).toBe(
+      false,
+    );
+
+    // and why no build raises it, driven rather than asserted: a real
+    // two-input build is given a section under the default mode, so the reveal
+    // shape the verifier would refuse never leaves the builder
+    const served = multiInputRoutes(true);
+    const backend = new EsploraBackend(E, stubFetch(served.routes));
+    const built = await buildCustodyBundle(served.id, backend, { powLimitBits: null });
+    expect(built.bundle.hops[0].witness, 'when-needed emits one for a multi-input reveal').toBeDefined();
+    expect(verifyCustodyBundle(built.bundle, { powLimitBits: null }).indexProof).toBe('wtxid');
+
+    // the same routes without the raw block end at availability instead, which
+    // is the other way out and still not the index class
+    const withheld = multiInputRoutes(false);
+    const e = (await buildCustodyBundle(withheld.id, new EsploraBackend(E, stubFetch(withheld.routes)), {
+      powLimitBits: null,
+    }).catch((x: unknown) => x)) as Error;
+    expect(e).toBeInstanceOf(WitnessSectionUnavailableError);
+    expect(e).not.toBeInstanceOf(EnvelopeIndexUnprovenError);
+  });
+
+  conformance('verifier-refusal-terminal', async () => {
+    // both classes a verifier raises leave `fetchCustody` as themselves,
+    // between the verification call and the wrap everything else takes
+    const source = readFileSync(join(ROOT, 'packages/fetch/src/custodybuilder.ts'), 'utf8');
+    const verified = source.indexOf('verifyCustodyBundle(built.bundle');
+    const unproven = source.indexOf(
+      'if (e instanceof EnvelopeIndexUnprovenError) throw e;',
+      verified,
+    );
+    const domain = source.indexOf('if (e instanceof CustodyUnsupportedError) throw e;', verified);
+    const wrapped = source.indexOf("throw new CustodyError('VERIFY_FAILED'", verified);
+    expect(verified, 'the builder verifies what it built').toBeGreaterThan(0);
+    expect(unproven, 'the index refusal leaves unwrapped').toBeGreaterThan(verified);
+    expect(unproven).toBeLessThan(wrapped);
+    expect(domain, 'and so does the domain refusal').toBeGreaterThan(verified);
+    expect(domain).toBeLessThan(wrapped);
+
+    // what those arms preserve: the wrapper answers false to both `instanceof`
+    // tests, so wrapping would erase the distinction a caller discriminates on
+    const wrapper = new CustodyError('VERIFY_FAILED', 'bundle refused');
+    expect(wrapper).not.toBeInstanceOf(CustodyUnsupportedError);
+    expect(wrapper).not.toBeInstanceOf(EnvelopeIndexUnprovenError);
+
+    // the arms are read rather than driven because the walk computes the same
+    // satpoints the verification recomputes, so a bundle the walk completed is
+    // one the verifier accepts. That much is driven: the build reaches its own
+    // verification and passes it
+    const { setup, routes } = singleInputRoutes(true);
+    const built = await buildCustodyBundle(setup.id, new EsploraBackend(E, stubFetch(routes)), {
+      powLimitBits: null,
+    });
+    expect(verifyCustodyBundle(built.bundle, { powLimitBits: null }).hops).toBe(1);
   });
 
   conformance('report-reach-and-no-answer-group', () => {

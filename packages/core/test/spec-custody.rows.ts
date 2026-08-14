@@ -5,28 +5,29 @@
  * Most of the spec binds `@ordspv/core` (`custody.ts`), so the main suite is
  * `packages/core/test/spec-custody.conformance.test.ts`. The rows whose code
  * lives in `@ordspv/fetch` are the builder's witness-section duty, its
- * walk-and-refuse accounting, its hop cap, the attester bar and the resolver's
- * tip liveness (`custodybuilder.ts`, `failover.ts`, `headertrust.ts`), driven
- * from `packages/fetch/test/spec-custody.builder.test.ts`. The table itself is
- * one array so the split cannot lose a row: the accounting test in the core
- * file sums the whole spec against every row here, whichever file drives it.
+ * walk-and-refuse accounting, the two refusals it must treat as terminal, its
+ * hop cap, the attester bar and the resolver's tip liveness
+ * (`custodybuilder.ts`, `failover.ts`, `headertrust.ts`), driven from
+ * `packages/fetch/test/spec-custody.builder.test.ts`. The table itself is one
+ * array so the split cannot lose a row: the accounting test in the core file
+ * sums the whole spec against every row here, whichever file drives it.
  *
  * Which sentences bind which package does not follow the section headings.
- * `:127` and `:134` sit in the envelope binding section and bind builders, and
- * `:256` sits under "What custody proofs cannot say" and binds the resolver in
+ * `:128` and `:135` sit in the envelope binding section and bind builders, and
+ * `:257` sits under "What custody proofs cannot say" and binds the resolver in
  * fetch. Every row is assigned by reading the code it asserts.
  *
- * THE KEYWORD FILTER. Measured on this file: 42 occurrences of MUST over 38
+ * THE KEYWORD FILTER. Measured on this file: 49 occurrences of MUST over 45
  * lines, 5 of them MUST NOT, and no REQUIRED, SHALL or RECOMMENDED anywhere.
  * The normative set here is therefore every line matching `/\bMUST\b/`, which
- * catches MUST NOT as well. A sixth MUST NOT is split across the `:250`/`:251`
+ * catches MUST NOT as well. A sixth MUST NOT is split across the `:251`/`:252`
  * line break, so a per-line count sees five; it falls inside the
  * `builder-not-an-attester` row either way, since that row's quote spans both
- * lines and `:250` carries the MUST.
+ * lines and `:251` carries the MUST.
  *
  * Outside the set by that choice, and named in the rows whose sentences carry
  * them so a reader can see they were read rather than missed: five SHOULD
- * lines (`:123`, `:155`, `:156`, `:165`, `:174`) and one OPTIONAL (`:205`, the
+ * lines (`:124`, `:156`, `:157`, `:166`, `:175`) and one OPTIONAL (`:206`, the
  * `witness` field in the bundle-format block). OPTIONAL and SHOULD state no
  * requirement a MUST filter should be catching. This spec has no RFC 2119
  * boilerplate line, so nothing is excluded by name.
@@ -96,6 +97,46 @@ export const TABLE: Requirement[] = [
   // -------------------------------------------------------------------------
   // Genesis satpoint
   // -------------------------------------------------------------------------
+  {
+    id: 'default-genesis-position',
+    section: 'Genesis satpoint',
+    title:
+      'implementations MUST take the absolute input-space position sum(inputValue[0..k-1]) and map it through the outputs in order',
+    quote:
+      '- default: implementations MUST take the absolute input-space position\n' +
+      '  `sum(inputValue[0..k-1])` and map it through the outputs in order;',
+    binds: 'implementations deriving a genesis satpoint',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'the definition every other rule in the section is stated against, and the two ends ' +
+      'of the sum are what a test can separate. It is driven on a two-input reveal whose ' +
+      'first input is 700 sats and whose outputs are 500 then 450: the envelope at input 1 ' +
+      'lands 200 sats into output 1, and the envelope at input 0 lands at the first sat, ' +
+      'which is the empty sum. The two answers a different reading gives are refused rather ' +
+      'than accepted from the claim, since the sentence is about which position is taken: a ' +
+      'verifier starting at zero says output 0, and one not walking the outputs in order ' +
+      'says 700 sats into an output that holds 500.',
+  },
+  {
+    id: 'zero-value-outputs-skipped',
+    section: 'Genesis satpoint',
+    title: 'implementations MUST skip zero-value outputs when mapping a position through the outputs',
+    quote:
+      '- zero-value outputs occupy no sat space, so implementations MUST skip them\n' +
+      '  when mapping a position through the outputs;',
+    binds: 'implementations mapping a position through outputs',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'skipping is only visible where an unskipped output would have answered, so a leading ' +
+      'zero-value output is the sharp arm: the first sat of the transaction is in output 1, ' +
+      'and an implementation indexing outputs by position rather than by sat space names ' +
+      'output 0 at offset 0, which is a location holding no sat. An interior one is driven ' +
+      'beside it through a pointer landing exactly where it sits, and a later hop is driven ' +
+      'too, since the sentence says "a position" and one mapping serves both the reveal and ' +
+      'every transfer.',
+  },
   {
     id: 'pointer-out-of-range-ignored',
     section: 'Genesis satpoint',
@@ -247,6 +288,23 @@ export const TABLE: Requirement[] = [
       'refuses. A section that is present but carries no data is driven beside it, since ' +
       'untrusted JSON can hold `"witness": 0` and presence rather than truth is what the ' +
       'guard reads.',
+  },
+  {
+    id: 'multi-input-no-section-refused',
+    section: 'Envelope binding',
+    title: 'a verifier MUST refuse a reveal with more than one input and no witness section',
+    quote: 'A verifier MUST refuse a reveal with more than one input and no witness',
+    binds: 'verifiers',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'that the refusal happens at all, where the two rows after it are about how it reads ' +
+      'and when it fires. It is driven at index 0, which is the case a verifier could think ' +
+      'it knows without proof: the first envelope it finds is the one the id asks for, ' +
+      'whatever the other input carries. The same two-input reveal with a section is read, ' +
+      'and so is a single-input reveal with none, so the refusal is the input count meeting ' +
+      'the absent proof rather than anything else in the document. SPEC-SAT states the same ' +
+      'sentence at its `:114` and this lands the pair.',
   },
   {
     id: 'unproven-index-distinguishable',
@@ -418,6 +476,45 @@ export const TABLE: Requirement[] = [
       'produced is carried on the attempt that followed it rather than folded into a count.',
   },
   {
+    id: 'input-count-refusal-terminal',
+    section: 'Envelope binding',
+    title: 'a builder MUST treat a refusal raised on the count of inputs as terminal',
+    quote: "reveal's input count is such data, so a builder MUST treat a refusal raised on",
+    binds: 'builders',
+    status: 'tested here',
+    file: 'fetch',
+    why:
+      'the named instance of the exemption in the sentence above it, and no build raises ' +
+      'the class, so the arm itself is read rather than driven and that is worth saying ' +
+      'plainly. What the read asserts is placement rather than presence: the terminal arm ' +
+      'sits above the recording path in the walk loop, so no rotation can reach the class ' +
+      'however the loop is entered. The table is asserted to agree, since it is what the ' +
+      'recording path consults. Why no build raises it is driven rather than asserted: a ' +
+      'real two-input build gets a section under the default mode, and the same routes ' +
+      'without the raw block end at the availability class instead. SPEC-SAT states the ' +
+      'same sentence at its `:265`.',
+  },
+  {
+    id: 'verifier-refusal-terminal',
+    section: 'Envelope binding',
+    title: 'a builder MUST treat a refusal as terminal once a verifier raises it',
+    quote:
+      'the count of inputs as terminal. A builder MUST treat a refusal as terminal once\n' +
+      'a verifier raises it, because the bundle a verifier refused had already bound\n' +
+      'its witness through the envelope binding above.',
+    binds: 'builders',
+    status: 'tested here',
+    file: 'fetch',
+    why:
+      'the other half of what a builder may stop on, and unreachable through a build for a ' +
+      'reason the test states: the walk computes the same satpoints the verification ' +
+      'recomputes, so a bundle the walk completed is one the verifier accepts, and the mode ' +
+      'enum has no value that emits a sectionless multi-input reveal. The read asserts both ' +
+      'classes leave unwrapped between the verification call and the generic wrap, and what ' +
+      'the arms preserve is driven: the wrapper class answers false to both `instanceof` ' +
+      'tests, so wrapping would erase the distinction a caller discriminates on.',
+  },
+  {
     id: 'report-reach-and-no-answer-group',
     section: 'Envelope binding',
     title: 'a builder MUST report whether every configured backend reached the refusal and MUST name the backends that produced no usable answer and those that led no attempt',
@@ -578,14 +675,36 @@ export const TABLE: Requirement[] = [
       'reveal witness is then rewritten under an unchanged txid.',
   },
   {
+    id: 'prevtx-alignment',
+    section: 'Custody bundle',
+    title:
+      "a bundle MUST align a hop's prevTxs to its inputs, entry i to input i, and a verifier MUST read them at those positions",
+    quote:
+      "A bundle MUST align a hop's `prevTxs` list to its transaction's inputs, entry\n" +
+      '`i` to input `i`, and a verifier MUST read them at those positions.',
+    binds: 'bundles and verifiers',
+    status: 'tested here',
+    file: 'core',
+    why:
+      'positional rather than matched by txid, which is only visible where the entries ' +
+      'differ and where an entry before the tracked input is load-bearing. The hop the row ' +
+      'drives spends the tracked outpoint at input 1 behind an unrelated funding input, so ' +
+      "the walk reads both entries and input 0's value shifts the answer by its whole " +
+      "amount. Swapping them is refused at entry 0, and so is supplying the tracked input's " +
+      'entry alone, which is the sharper arm: that entry is the one the answer needs, it is ' +
+      'correct, and it is still refused for not sitting at its position. A verifier matching ' +
+      'by txid accepts both. That the alignment decides the answer rather than only the ' +
+      'hashing is driven beside them, by refusing the satpoint a verifier ignoring input 0 ' +
+      'would fold to. SPEC-SAT states the twin at its `:158`.',
+  },
+  {
     id: 'prevtx-surplus-refused',
     section: 'Custody bundle',
     title: 'a bundle MUST NOT supply more prevTxs entries than the hop has inputs and verifiers MUST refuse one that does',
     quote:
-      "input `i`. A bundle MUST NOT supply more `prevTxs` entries than the hop's\n" +
-      'transaction has inputs, since an entry past the input count corresponds to no\n' +
-      'input, and verifiers MUST refuse a hop that supplies one rather than ignore\n' +
-      'the surplus.',
+      "MUST NOT supply more `prevTxs` entries than the hop's transaction has inputs,\n" +
+      'since an entry past the input count corresponds to no input, and verifiers MUST\n' +
+      'refuse a hop that supplies one rather than ignore the surplus.',
     binds: 'bundles and verifiers',
     status: 'tested here',
     file: 'core',

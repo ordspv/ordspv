@@ -251,6 +251,47 @@ function multiBundle3(): CustodyBundleJson {
   };
 }
 
+/**
+ * A two-input reveal carrying an envelope on each input, its witness section
+ * attached so the numbering is proven, and the caller stating the satpoint it
+ * expects the walk to fold to. The input values are the row's own, since the
+ * position rules are about what the inputs before the envelope's hold.
+ */
+function multiChain(
+  v0: bigint,
+  v1: bigint,
+  outputs: OutSpec[],
+): { reveal: ParsedTx; bundle(index: number, claim: string): CustodyBundleJson } {
+  const commit = buildTx(
+    [{ txid: T1, vout: commitSeed++ }],
+    [
+      { value: v0, spk: taprootCommit(ENV).scriptPubKey },
+      { value: v1, spk: taprootCommit(ENV_B).scriptPubKey },
+    ],
+  );
+  const reveal = buildSegwitTx(
+    [
+      { txid: commit.tx.txid, vout: 0, witness: [SIG, ENV, taprootCommit(ENV).controlBlock] },
+      { txid: commit.tx.txid, vout: 1, witness: [SIG, ENV_B, taprootCommit(ENV_B).controlBlock] },
+    ],
+    outputs,
+  );
+  const block = buildBlock([reveal.tx]);
+  return {
+    reveal: reveal.tx,
+    bundle(index: number, claim: string): CustodyBundleJson {
+      const hop = revealHop(block, 1, reveal.hex, [commit.hex, commit.hex]);
+      hop.witness = section(block, 1);
+      return {
+        version: 1,
+        inscriptionId: `${reveal.tx.txid}i${index}`,
+        hops: [hop],
+        finalSatpoint: claim,
+      };
+    },
+  };
+}
+
 /** a multi-input bundle, with the witness section unless `bare` is set */
 function multiBundle(index: number, bare = false): CustodyBundleJson {
   const hop = revealHop(blockM, 1, revealM.hex, [commitM.hex, commitM.hex]);
@@ -299,6 +340,66 @@ describe('SPEC-CUSTODY conformance', () => {
   // -------------------------------------------------------------------------
   // Genesis satpoint
   // -------------------------------------------------------------------------
+
+  conformance('default-genesis-position', () => {
+    // the sum runs over the inputs BEFORE the envelope's own, and the result
+    // is mapped through the outputs in order. Input 0 holds 700 sats and the
+    // outputs are 500 then 450, so the envelope at input 1 starts 200 sats
+    // into output 1
+    const chain = multiChain(700n, 20_000n, [{ value: 500n }, { value: 450n }]);
+    const at1 = verifyCustodyBundle(chain.bundle(1, `${chain.reveal.txid}:1:200`), NO_POW_FLOOR);
+    expect(at1.genesis.vout, 'the position walked past output 0').toBe(1);
+    expect(at1.genesis.offset).toBe(200n);
+    expect(at1.indexProof, 'the numbering is proven, so the position is the only rule left').toBe(
+      'wtxid',
+    );
+
+    // the empty sum at k = 0, which is the same rule with nothing before it
+    const at0 = verifyCustodyBundle(chain.bundle(0, `${chain.reveal.txid}:0:0`), NO_POW_FLOOR);
+    expect(at0.genesis.vout).toBe(0);
+    expect(at0.genesis.offset).toBe(0n);
+
+    // the two answers a different reading of the sentence gives, refused by
+    // the recomputation rather than accepted from the claim
+    for (const [what, claim] of [
+      ['a verifier starting the sum at the envelope input', `${chain.reveal.txid}:0:0`],
+      ['one not mapping the position through the outputs in order', `${chain.reveal.txid}:0:700`],
+    ] as const) {
+      expect(() => verifyCustodyBundle(chain.bundle(1, claim), NO_POW_FLOOR), what).toThrow(
+        /path folds to/,
+      );
+    }
+  });
+
+  conformance('zero-value-outputs-skipped', () => {
+    // a leading zero-value output is the sharp arm: the first sat of the
+    // transaction is in output 1, and an implementation indexing outputs by
+    // position rather than by sat space names a location holding no sat
+    const leading = revealChain(ENV, [{ value: 0n }, { value: 900n }]);
+    const g = verifyCustodyBundle(leading.bundle(), NO_POW_FLOOR).genesis;
+    expect(g.vout, 'output 0 occupies no sat space').toBe(1);
+    expect(g.offset).toBe(0n);
+
+    // an interior one, reached by a pointer landing exactly where it sits
+    const interior = revealChain(envelope([[1, 'text/plain'], pointerField(500)], 'custody'), [
+      { value: 500n },
+      { value: 0n },
+      { value: 450n },
+    ]);
+    const gi = verifyCustodyBundle(interior.bundle(), NO_POW_FLOOR).genesis;
+    expect(gi.vout, 'the position skips the empty output between them').toBe(2);
+    expect(gi.offset).toBe(0n);
+
+    // and on a later hop, since one mapping serves the reveal and every
+    // transfer and the sentence speaks of "a position" rather than of genesis
+    const onward = laterHop(leading.reveal.tx, [{ value: 0n }, { value: 900n }], 800_010, {
+      vout: 1,
+    });
+    const b = leading.bundle();
+    b.hops.push(onward.hop);
+    b.finalSatpoint = `${onward.spend.tx.txid}:1:0`;
+    expect(verifyCustodyBundle(b, NO_POW_FLOOR).satpoint.vout).toBe(1);
+  });
 
   conformance('pointer-out-of-range-ignored', () => {
     // "ignored" is a claim about which of two answers comes back, not about a
@@ -534,6 +635,20 @@ describe('SPEC-CUSTODY conformance', () => {
     const falsy = SINGLE.bundle();
     (falsy.hops[0] as { witness?: unknown }).witness = 0;
     expect(() => verifyCustodyBundle(falsy, NO_POW_FLOOR)).toThrow();
+  });
+
+  conformance('multi-input-no-section-refused', () => {
+    // driven at index 0, the case a verifier could think it knows without
+    // proof: the first envelope it finds is the one the id names, whatever the
+    // other input carries
+    expect(() => verifyCustodyBundle(multiBundle(0, true), NO_POW_FLOOR)).toThrow(
+      EnvelopeIndexUnprovenError,
+    );
+
+    // the same reveal with a section is read, and so is a single-input reveal
+    // with none, so the refusal is the input count meeting the absent proof
+    expect(verifyCustodyBundle(multiBundle(0), NO_POW_FLOOR).indexProof).toBe('wtxid');
+    expect(verifyCustodyBundle(SINGLE.bundle(), NO_POW_FLOOR).indexProof).toBe('single-input');
   });
 
   conformance('unproven-index-distinguishable', () => {
@@ -929,6 +1044,52 @@ describe('SPEC-CUSTODY conformance', () => {
     expect(() => verifyCustodyBundle(tampered, NO_POW_FLOOR)).toThrow(/taproot commitment/);
   });
 
+  conformance('prevtx-alignment', () => {
+    // the tracked outpoint is spent at input 1, behind an unrelated funding
+    // input, so the walk reads both entries and input 0's value shifts the
+    // answer by its whole amount. Every other two-input fixture here spends
+    // one commit twice, where a swap would prove nothing
+    const fundX = buildTx([{ txid: T1, vout: commitSeed++ }], [{ value: 5_000n }]);
+    const spend = buildTx(
+      [
+        { txid: fundX.tx.txid, vout: 0 },
+        { txid: SINGLE.reveal.tx.txid, vout: 0 },
+      ],
+      [{ value: 14_000n }],
+    );
+    const blk = buildBlock([spend.tx]);
+    const hop = revealHop(blk, 1, spend.hex, [fundX.hex, SINGLE.reveal.hex], 800_010);
+
+    const good = SINGLE.bundle();
+    good.hops.push(hop);
+    good.finalSatpoint = `${spend.tx.txid}:0:5000`;
+    expect(
+      verifyCustodyBundle(good, NO_POW_FLOOR).satpoint.offset,
+      "the position is input 0's value plus the tracked offset",
+    ).toBe(5_000n);
+
+    // swapped: both entries are real transactions this hop's inputs name, so a
+    // verifier matching by txid rather than by position accepts it
+    const swapped = clone(good);
+    swapped.hops[1].prevTxs = [SINGLE.reveal.hex, fundX.hex];
+    expect(() => verifyCustodyBundle(swapped, NO_POW_FLOOR)).toThrow(/prev tx 0 hashes to/);
+
+    // the sharper arm: the entry the answer needs, correct, and supplied
+    // alone. The list is a prefix from input 0, so it is read at position 0
+    // and refused for not being there
+    const trackedOnly = clone(good);
+    trackedOnly.hops[1].prevTxs = [SINGLE.reveal.hex];
+    expect(() => verifyCustodyBundle(trackedOnly, NO_POW_FLOOR)).toThrow(
+      /need prev txs for inputs 0\.\.1/,
+    );
+
+    // and the alignment decides the answer rather than only the hashing: what
+    // a verifier ignoring input 0 would fold to is refused
+    const ignoring = clone(good);
+    ignoring.finalSatpoint = `${spend.tx.txid}:0:0`;
+    expect(() => verifyCustodyBundle(ignoring, NO_POW_FLOOR)).toThrow(/path folds to/);
+  });
+
   conformance('prevtx-surplus-refused', () => {
     // the surplus entry is a copy of one the bundle already carries, so every
     // entry a verifier reads hashes correctly and only the count refuses it
@@ -972,8 +1133,8 @@ describe('SPEC-CUSTODY conformance', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * SPEC-CUSTODY states every requirement with MUST: 42 occurrences over 38
-   * lines, 5 of them MUST NOT per line and a sixth split across the :250/:251
+   * SPEC-CUSTODY states every requirement with MUST: 49 occurrences over 45
+   * lines, 5 of them MUST NOT per line and a sixth split across the :251/:252
    * break, and no REQUIRED, SHALL or RECOMMENDED anywhere in the file. The
    * pattern catches MUST NOT as well, since it contains MUST. The spec has no
    * RFC 2119 boilerplate line, so no line is excluded by name.
@@ -1022,9 +1183,9 @@ describe('SPEC-CUSTODY conformance', () => {
     for (const keyword of ['REQUIRED', 'SHALL', 'RECOMMENDED']) {
       expect(SPEC.match(new RegExp(`\\b${keyword}\\b`, 'g')), keyword).toBeNull();
     }
-    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(42);
+    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(49);
     expect(SPEC.match(/\bMUST NOT\b/g)).toHaveLength(5);
-    expect(SPEC.split('\n').filter((l) => /\bMUST\b/.test(l))).toHaveLength(38);
+    expect(SPEC.split('\n').filter((l) => /\bMUST\b/.test(l))).toHaveLength(45);
     expect(SPEC.match(/\bSHOULD\b/g)).toHaveLength(5);
     expect(SPEC.match(/\bOPTIONAL\b/g)).toHaveLength(1);
   });
