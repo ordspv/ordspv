@@ -11,19 +11,21 @@ export default defineConfig({
       include: ['packages/*/src/**/*.ts', 'extension/src/**/*.ts'],
       reporter: ['text', 'text-summary'],
       // Ratchet floors: set just under the measured baseline (2026-08-13 after
-      // the 0.3.4 checkpoint hook and the eight spec promotions:
-      // 81.97 / 77.94 / 84.13 / 83.45 across all src incl. the untested CLI and
+      // the SPEC-CUSTODY conformance files:
+      // 82.1 / 78.11 / 84.13 / 83.6 across all src incl. the untested CLI and
       // extension UI scripts; the previous baseline was
+      // 82.05 / 78.07 / 84.13 / 83.54 on 2026-08-13,
+      // 81.97 / 77.94 / 84.13 / 83.45 on 2026-08-13,
       // 81.84 / 77.75 / 84.1 / 83.32 on 2026-08-13,
       // 81.71 / 77.54 / 84.1 / 83.26 on 2026-08-13,
       // 81.16 / 76.31 / 83.87 / 82.81 on 2026-08-12, and 80.02 / 74.69 /
       // 83.30 / 82.09 on 2026-08-10).
       // Raise deliberately as coverage grows; never lower to admit a regression.
       thresholds: {
-        statements: 81.7,
-        branches: 77.7,
+        statements: 81.8,
+        branches: 77.8,
         functions: 83.9,
-        lines: 83.2,
+        lines: 83.3,
       },
     },
   },
