@@ -1062,6 +1062,37 @@ describe('SPEC-VERIFICATION conformance', () => {
     expect(claimed.size).toBe(normative.length);
   });
 
+  /**
+   * The filter choice itself, measured rather than assumed. A SHALL added to
+   * this spec would state a requirement the accounting above cannot see, so
+   * the choice is re-measured here and fails when the file gains a keyword the
+   * pattern does not carry. The REQUIRED count is measured beside the MUST
+   * count because widening the pattern was a judgement call: three lines carry
+   * REQUIRED alone and a fourth shares its line with a MUST, so the two counts
+   * differing by three is what the widening buys. SHOULD, OPTIONAL and MAY
+   * state no requirement, so they are counted rather than banned: a reader can
+   * see what the filter leaves outside it.
+   */
+  it('SPEC-VERIFICATION.md: MUST and REQUIRED are the only RFC 2119 requirement keywords in the file', () => {
+    for (const keyword of ['SHALL', 'RECOMMENDED']) {
+      expect(SPEC.match(new RegExp(`\\b${keyword}\\b`, 'g')), keyword).toBeNull();
+    }
+    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(37);
+    expect(SPEC.match(/\bMUST NOT\b/g)).toHaveLength(7);
+    expect(SPEC.match(/\bREQUIRED\b/g)).toHaveLength(4);
+
+    const lines = SPEC.split('\n');
+    expect(lines.filter((l) => NORMATIVE.test(l))).toHaveLength(38);
+    expect(
+      lines.filter((l) => /\bMUST\b/.test(l)),
+      'the three the widened pattern adds carry REQUIRED alone',
+    ).toHaveLength(35);
+
+    expect(SPEC.match(/\bSHOULD\b/g)).toHaveLength(6);
+    expect(SPEC.match(/\bOPTIONAL\b/g)).toHaveLength(1);
+    expect(SPEC.match(/\bMAY\b/g)).toHaveLength(3);
+  });
+
   it('SPEC-VERIFICATION.md: the table says how each requirement is covered', () => {
     for (const r of TABLE) {
       expect(r.why.length, `${r.id} has no reasoning`).toBeGreaterThan(20);

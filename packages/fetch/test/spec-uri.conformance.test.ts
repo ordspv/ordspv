@@ -849,6 +849,36 @@ describe('SPEC-URI conformance', () => {
     expect(claimed.size).toBe(normative.length);
   });
 
+  /**
+   * The filter choice itself, measured rather than assumed. A REQUIRED or a
+   * SHALL added to this spec would state a requirement the accounting above
+   * cannot see, so the choice is re-measured here and fails when the file
+   * gains a keyword the filter does not carry. The counts include the keyword
+   * definition line, which contributes two MUST, one SHOULD and one MAY and
+   * states no requirement of its own. SHOULD and MAY are counted rather than
+   * banned: a reader can see what the filter leaves outside it. The accounting
+   * matches on the substring rather than on the word, so the two are compared
+   * here, since a word merely containing MUST would enter the normative set
+   * through the substring and through nothing else.
+   */
+  it('SPEC-URI.md: MUST is the only RFC 2119 requirement keyword in the file', () => {
+    for (const keyword of ['REQUIRED', 'SHALL', 'RECOMMENDED']) {
+      expect(SPEC.match(new RegExp(`\\b${keyword}\\b`, 'g')), keyword).toBeNull();
+    }
+    expect(SPEC.match(/\bMUST\b/g)).toHaveLength(21);
+    expect(SPEC.match(/\bMUST NOT\b/g)).toHaveLength(4);
+
+    const lines = SPEC.split('\n');
+    expect(lines.filter((l) => l.includes('MUST'))).toHaveLength(18);
+    expect(
+      lines.filter((l) => /\bMUST\b/.test(l)),
+      'the substring filter is safe only while it picks the same lines as the word',
+    ).toHaveLength(18);
+
+    expect(SPEC.match(/\bSHOULD\b/g)).toHaveLength(9);
+    expect(SPEC.match(/\bMAY\b/g)).toHaveLength(3);
+  });
+
   it('SPEC-URI.md: the table says how each requirement is covered', () => {
     for (const r of TABLE) {
       expect(r.why.length, `${r.id} has no reasoning`).toBeGreaterThan(20);

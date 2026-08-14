@@ -22,10 +22,19 @@
  *
  * One difference from the SPEC-URI and SPEC-GATEWAY suites: this spec states
  * three requirements with REQUIRED and no MUST (the bundle-format fields at
- * :119, :126 and :127), so the normative set here is every line carrying
+ * :121, :128 and :129), so the normative set here is every line carrying
  * either keyword. Filtering on MUST alone would have left those three
  * unaccounted for in silence, which is the failure mode the accounting exists
  * to end.
+ *
+ * THE KEYWORD FILTER. Measured on this file: 37 occurrences of MUST over 35
+ * lines, 7 of them MUST NOT, and 4 of REQUIRED, three of which are the lines
+ * above and the fourth of which shares :242 with a MUST. That is 38 normative
+ * lines, and no SHALL or RECOMMENDED anywhere. The conformance file
+ * re-measures all of it, so a keyword the filter does not carry fails a test
+ * rather than passing unseen. Outside the set by that choice: six SHOULD, one
+ * OPTIONAL and three MAY. This spec has no RFC 2119 boilerplate line, so
+ * nothing is excluded by name.
  */
 
 import { readFileSync } from 'node:fs';
