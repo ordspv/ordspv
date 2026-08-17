@@ -5,6 +5,6 @@
   "description": "typedoc environment. typedoc drives the JS TypeScript compiler API, which the root typescript (the native 7.x compiler) no longer ships; this file: package makes npm nest typedoc together with its own typescript 6.0.x under tools/docs/node_modules, leaving the root toolchain on 7.x. Installed by the ordinary root npm ci; the root `npm run docs` script calls the nested typedoc bin.",
   "dependencies": {
     "typedoc": "^0.28.20",
-    "typescript": "6.0.x"
+    "typescript": "7.0.x"
   }
 }
